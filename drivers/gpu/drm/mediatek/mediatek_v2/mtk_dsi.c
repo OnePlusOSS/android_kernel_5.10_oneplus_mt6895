@@ -5884,7 +5884,7 @@ unsigned long long mtk_dsi_get_frame_hrt_bw_base_by_mode(
 		bw_base = bw_base / bpp / 100;
 	}
 
-	DDPDBG("%s Frame Bw:%llu, mode_idx:%d\n", __func__, bw_base, mode_idx)
+	DDPDBG("%s Frame Bw:%llu, mode_idx:%d\n", __func__, bw_base, mode_idx);
 	return bw_base;
 }
 
