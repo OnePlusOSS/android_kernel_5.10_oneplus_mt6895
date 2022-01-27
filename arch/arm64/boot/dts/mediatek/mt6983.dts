@@ -6682,6 +6682,7 @@
 		interrupts = <GIC_SPI 345 IRQ_TYPE_LEVEL_HIGH 0>;
 		clocks = <&dispsys_config_clk CLK_DISPSYS_CONFIG_DISP_AAL0>;
 		aal_dre3 = <&disp_mdp_aal0>;
+		aal_dre3_en = <0>;
 		mtk_aal_support = <1>;
 		mtk_dre30_support = <0>;
 	};
