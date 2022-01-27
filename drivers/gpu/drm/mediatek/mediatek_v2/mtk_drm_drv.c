@@ -4804,6 +4804,8 @@ static const struct drm_ioctl_desc mtk_ioctls[] = {
 			  DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(MTK_AAL_GET_SIZE, mtk_drm_ioctl_aal_get_size,
 			  DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(MTK_AAL_SET_TRIGGER_STATE, mtk_drm_ioctl_aal_set_trigger_state,
+			  DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(MTK_HDMI_GET_DEV_INFO, mtk_drm_dp_get_dev_info,
 			  DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(MTK_HDMI_AUDIO_ENABLE, mtk_drm_dp_audio_enable,
