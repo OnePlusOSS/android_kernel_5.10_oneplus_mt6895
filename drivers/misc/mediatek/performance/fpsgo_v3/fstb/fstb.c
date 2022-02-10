@@ -987,6 +987,9 @@ out:
 	}
 	switch (iter->sbe_state) {
 	case -1:
+		eara_fps = -1;
+		tolerence_fps = 0;
+		break;
 	case 0:
 		break;
 	case 1:
