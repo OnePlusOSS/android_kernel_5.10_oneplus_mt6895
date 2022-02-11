@@ -185,8 +185,10 @@ static irqreturn_t emimpu_violation_irq(int irq, void *dev_id)
 					violation = true;
 			}
 
-			if (!violation)
-				continue;
+			if (!violation) {
+				pr_info("%s: emi:%d smpu = 0", __func__, emi_id);
+				goto clear_violation;
+			}
 		}
 
 		/*
