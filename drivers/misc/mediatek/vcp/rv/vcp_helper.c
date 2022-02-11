@@ -226,10 +226,6 @@ static void vcp_disable_dapc(void)
 		1, 0, 0, 0, 0, 0, &res);
 	dsb(SY); /* may take lot of time */
 
-	mutex_lock(&vcp_A_notify_mutex);
-	vcp_extern_notify(VCP_EVENT_STOP);
-	mutex_unlock(&vcp_A_notify_mutex);
-
 	/* Turn off MMuP security */
 	onoff = 0;
 	arm_smccc_smc(MTK_SIP_KERNEL_DAPC_MMUP_CONTROL,
@@ -688,9 +684,15 @@ int reset_vcp(int reset)
 		clk_set_parent(vcpsel, vcp26m);	/* guarantee status sync */
 		clk_set_parent(vcpsel, vcpclk);
 
-		arm_smccc_smc(MTK_SIP_TINYSYS_VCP_CONTROL,
+		if (reset == VCP_ALL_SUSPEND) {
+			arm_smccc_smc(MTK_SIP_TINYSYS_VCP_CONTROL,
 				MTK_TINYSYS_VCP_KERNEL_OP_RESET_RELEASE,
 				0, 0, 0, 0, 0, 0, &res);
+		} else {
+			arm_smccc_smc(MTK_SIP_TINYSYS_VCP_CONTROL,
+				MTK_TINYSYS_VCP_KERNEL_OP_RESET_RELEASE,
+				1, 0, 0, 0, 0, 0, &res);
+		}
 
 		pr_notice("[VCP] %s: R_CORE0_SW_RSTN_CLR %x %x %x ret %lu\n", __func__,
 			readl(DRAM_RESV_ADDR_REG), readl(DRAM_RESV_SIZE_REG),
@@ -809,6 +811,10 @@ void vcp_disable_pm_clk(enum feature_id id)
 		del_timer(&vcp_ready_timer[VCP_A_ID].tl);
 #endif
 		vcp_disable_dapc();
+		mutex_lock(&vcp_A_notify_mutex);
+		vcp_extern_notify(VCP_EVENT_STOP);
+		mutex_unlock(&vcp_A_notify_mutex);
+
 		ret = pm_runtime_put_sync(vcp_io_devs[VCP_IOMMU_256MB1]);
 		if (ret)
 			pr_debug("[VCP] %s: pm_runtime_put_sync\n", __func__);
@@ -893,7 +899,7 @@ static int vcp_pm_event(struct notifier_block *notifier
 			vcp_enable_irqs();
 #if VCP_RECOVERY_SUPPORT
 			cpuidle_pause_and_lock();
-			reset_vcp(VCP_ALL_ENABLE);
+			reset_vcp(VCP_ALL_SUSPEND);
 			waitCnt = vcp_wait_ready_sync(RTOS_FEATURE_ID);
 			cpuidle_resume_and_unlock();
 #endif
