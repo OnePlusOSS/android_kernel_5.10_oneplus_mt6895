@@ -1904,6 +1904,7 @@ static int vb2ops_venc_buf_prepare(struct vb2_buffer *vb)
 
 			buf_att = dma_buf_attach(vb->planes[i].dbuf,
 				&ctx->dev->plat_dev->dev);
+			buf_att->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
 			sgt = dma_buf_map_attachment(buf_att, DMA_TO_DEVICE);
 			if (IS_ERR_OR_NULL(sgt)) {
 				mtk_v4l2_err("dma_buf_map_attachment fail %d.\n", sgt);
@@ -1955,6 +1956,7 @@ static void vb2ops_venc_buf_finish(struct vb2_buffer *vb)
 
 			buf_att = dma_buf_attach(vb->planes[0].dbuf,
 				&ctx->dev->plat_dev->dev);
+			buf_att->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
 			sgt = dma_buf_map_attachment(buf_att, DMA_FROM_DEVICE);
 			if (IS_ERR_OR_NULL(sgt)) {
 				mtk_v4l2_err("dma_buf_map_attachment fail %d.\n", sgt);
@@ -1962,7 +1964,7 @@ static void vb2ops_venc_buf_finish(struct vb2_buffer *vb)
 				return;
 			}
 			mtk_dma_sync_sg_range(sgt, &ctx->dev->plat_dev->dev,
-				vb->planes[0].bytesused, DMA_FROM_DEVICE);
+				vb->planes[0].length, DMA_FROM_DEVICE);
 			dma_buf_unmap_attachment(buf_att, sgt, DMA_FROM_DEVICE);
 
 			dst_mem.dma_addr = vb2_dma_contig_plane_dma_addr(vb, 0);
