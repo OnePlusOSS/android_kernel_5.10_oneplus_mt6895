@@ -230,7 +230,8 @@ struct GED_KPI_MEOW_DVFS_FREQ_PRED {
 };
 static struct GED_KPI_MEOW_DVFS_FREQ_PRED *g_psGIFT;
 
-static int g_target_fps_default = GED_KPI_MAX_FPS;
+int g_target_fps_default = GED_KPI_MAX_FPS;
+int g_target_time_default = GED_KPI_SEC_DIVIDER / GED_KPI_MAX_FPS;
 
 #define GED_KPI_TOTAL_ITEMS 128
 #define GED_KPI_UID(pid, wnd) (pid | ((unsigned long)wnd))
@@ -747,11 +748,17 @@ static GED_BOOL ged_kpi_update_TargetTimeAndTargetFps(
 #endif /* GED_KPI_DEBUG */
 		}
 
-		psHead->target_fps = target_fps;
 		psHead->target_fps_margin = target_fps_margin;
 		psHead->eara_fps_margin = eara_fps_margin;
 		psHead->t_cpu_fpsgo = cpu_time;
-		psHead->t_cpu_target = GED_KPI_SEC_DIVIDER/target_fps;
+		if (target_fps > 0 && target_fps <= GED_KPI_FPS_LIMIT) {
+			psHead->t_cpu_target = (int)((int)GED_KPI_SEC_DIVIDER/target_fps);
+			psHead->target_fps = target_fps;
+		} else {
+			psHead->t_cpu_target = (int)((int)GED_KPI_SEC_DIVIDER/g_target_fps_default);
+			psHead->target_fps = -1;
+		}
+
 		psHead->t_gpu_target = psHead->t_cpu_target;
 		psHead->frc_client = client;
 		ret = GED_TRUE;
@@ -1274,6 +1281,16 @@ static void ged_kpi_work_cb(struct work_struct *psWork)
 						mtk_gpueb_dvfs_set_frame_base_dvfs(0);
 				}
 			}
+			if (main_head == psHead) {
+				if (psHead->target_fps == -1) {
+					psKPI->t_gpu_target = g_target_time_default;
+					ged_log_perf_trace_counter("target_fps_fb",
+						g_target_fps_default, 5566, 0, 0);
+				} else {
+					ged_log_perf_trace_counter("target_fps_fb",
+						psHead->target_fps, 5566, 0, 0);
+				}
+			}
 
 			if (main_head == psHead)
 				gpu_freq_pre = ged_kpi_gpu_dvfs(
@@ -1493,6 +1510,10 @@ static void ged_kpi_work_cb(struct work_struct *psWork)
 	case GED_SET_TARGET_FPS:
 
 		target_FPS = psTimeStamp->i32FrameID;
+
+		ged_log_perf_trace_counter("target_fps_fpsgo",
+				(target_FPS&0x000000ff), 5566, 0, 0);
+
 		ulID = psTimeStamp->ullWnd;
 		eara_fps_margin = psTimeStamp->i32QedBuffer_length;
 		psHead = (struct GED_KPI_HEAD *)ged_hashtable_find(gs_hashtable
@@ -1911,8 +1932,10 @@ void ged_dfrc_fps_limit_cb(unsigned int target_fps)
 	g_target_fps_default =
 		(target_fps > 0 && target_fps <= GED_KPI_FPS_LIMIT) ?
 		target_fps : g_target_fps_default;
+	g_target_time_default = GED_KPI_SEC_DIVIDER / g_target_fps_default;
 #ifdef GED_KPI_DEBUG
-	GED_LOGI("[GED_KPI] dfrc_fps %d\n", g_target_fps_default);
+	GED_LOGI("[GED_KPI] dfrc_fps:%d, dfrc_time %u\n",
+		g_target_fps_default, g_target_time_default);
 #endif /* GED_KPI_DEBUG */
 
 	idle_fw_set_flag = 1;
