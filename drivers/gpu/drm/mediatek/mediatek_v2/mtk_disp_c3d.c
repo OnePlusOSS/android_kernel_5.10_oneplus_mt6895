@@ -52,6 +52,7 @@ static struct DISP_C3D_LUT c3dIocData;
 // define spinlock here
 static DEFINE_SPINLOCK(g_c3d_clock_lock);
 static DEFINE_MUTEX(g_c3d_global_lock);
+static DEFINE_MUTEX(g_c3d_power_lock);
 
 // define Mutex
 static DEFINE_MUTEX(c3d_lut_lock);
@@ -431,77 +432,11 @@ static int disp_c3d_wait_irq(void)
 	return ret;
 }
 
-int mtk_drm_ioctl_c3d_get_irq(struct drm_device *dev, void *data,
-			struct drm_file *file_priv)
-{
-	int ret = 0;
-
-	pr_notice("%s\n", __func__);
-	ret = disp_c3d_wait_irq();
-
-	return ret;
-}
-
-int mtk_drm_ioctl_c3d_eventctl(struct drm_device *dev, void *data,
-	struct drm_file *file_priv)
-{
-	int ret = 0;
-	int *enabled = (int *)data;
-
-	struct mtk_drm_private *private = dev->dev_private;
-	struct mtk_ddp_comp *comp = private->ddp_comp[DDP_COMPONENT_C3D0];
-
-	C3DFLOW_LOG("%d\n", *enabled);
-
-	atomic_set(&g_c3d_eventctl, *enabled);
-	C3DFLOW_LOG("%d\n", atomic_read(&g_c3d_eventctl));
-
-	if (atomic_read(&g_c3d_eventctl) == 1)
-		wake_up_interruptible(&g_c3d_get_irq_wq);
-
-	if (*enabled)
-		mtk_crtc_check_trigger(comp->mtk_crtc, false, true);
-
-	return ret;
-}
-
-int mtk_drm_ioctl_c3d_set_lut(struct drm_device *dev, void *data,
-			struct drm_file *file_priv)
-{
-	int ret = 0;
-	struct mtk_drm_private *private = dev->dev_private;
-	struct mtk_ddp_comp *comp = private->ddp_comp[DDP_COMPONENT_C3D0];
-	struct drm_crtc *crtc = private->crtc[0];
-
-	C3DAPI_LOG("line: %d\n", __LINE__);
-
-	ret = mtk_crtc_user_cmd(crtc, comp, SET_C3DLUT, data);
-
-	mtk_crtc_check_trigger(comp->mtk_crtc, false, true);
-	return ret;
-}
-
-int mtk_drm_ioctl_bypass_c3d(struct drm_device *dev, void *data,
-			struct drm_file *file_priv)
-{
-	int ret = 0;
-	struct mtk_drm_private *private = dev->dev_private;
-	struct mtk_ddp_comp *comp = private->ddp_comp[DDP_COMPONENT_C3D0];
-	struct drm_crtc *crtc = private->crtc[0];
-
-	C3DAPI_LOG("line: %d\n", __LINE__);
-
-	ret = mtk_crtc_user_cmd(crtc, comp, BYPASS_C3D, data);
-
-	mtk_crtc_check_trigger(comp->mtk_crtc, false, true);
-	return ret;
-}
-
 static void disp_c3d_update_sram(struct mtk_ddp_comp *comp,
 	 bool check_sram)
 {
 	//unsigned long flags;
-	unsigned int read_value;
+	unsigned int read_value = 0;
 	int sram_apb = 0, sram_int = 0;
 
 	if (check_sram) {
@@ -531,25 +466,10 @@ static void disp_c3d_update_sram(struct mtk_ddp_comp *comp,
 	disp_c3d_write_sram(comp, false);
 }
 
-void disp_c3d_on_start_of_frame(void)
-{
-	if (!default_comp)
-		return;
-	atomic_set(&g_c3d_get_irq, 1);
-
-	if (atomic_read(&g_c3d_eventctl) == 1)
-		wake_up_interruptible(&g_c3d_get_irq_wq);
-}
-
-void disp_c3d_on_end_of_frame_mutex(void)
-{
-	if (!default_comp)
-		return;
-	atomic_set(&g_c3d_get_irq, 0);
-}
-
+//static int disp_c3d_write_3dlut_to_reg(struct mtk_ddp_comp *comp,
+//	struct cmdq_pkt *handle, const struct DISP_C3D_LUT *c3d_lut)
 static int disp_c3d_write_3dlut_to_reg(struct mtk_ddp_comp *comp,
-	struct cmdq_pkt *handle, const struct DISP_C3D_LUT *c3d_lut)
+	const struct DISP_C3D_LUT *c3d_lut)
 {
 	int c3dBinNum;
 	int i;
@@ -595,6 +515,144 @@ static int disp_c3d_write_3dlut_to_reg(struct mtk_ddp_comp *comp,
 	}
 
 	return 0;
+}
+
+int mtk_drm_ioctl_c3d_get_irq(struct drm_device *dev, void *data,
+			struct drm_file *file_priv)
+{
+	int ret = 0;
+
+	pr_notice("%s\n", __func__);
+	ret = disp_c3d_wait_irq();
+
+	return ret;
+}
+
+int mtk_drm_ioctl_c3d_eventctl(struct drm_device *dev, void *data,
+	struct drm_file *file_priv)
+{
+	int ret = 0;
+	int *enabled = (int *)data;
+
+	C3DFLOW_LOG("%d\n", *enabled);
+
+	atomic_set(&g_c3d_eventctl, *enabled);
+	C3DFLOW_LOG("%d\n", atomic_read(&g_c3d_eventctl));
+
+	if (atomic_read(&g_c3d_eventctl) == 1)
+		wake_up_interruptible(&g_c3d_get_irq_wq);
+
+	return ret;
+}
+
+int mtk_drm_ioctl_c3d_set_lut(struct drm_device *dev, void *data,
+			struct drm_file *file_priv)
+{
+	int ret = 0;
+	struct mtk_drm_private *private = dev->dev_private;
+	struct mtk_ddp_comp *comp = private->ddp_comp[DDP_COMPONENT_C3D0];
+	struct drm_crtc *crtc = private->crtc[0];
+	struct mtk_drm_crtc *mtk_crtc = to_mtk_crtc(crtc);
+
+	C3DAPI_LOG("line: %d\n", __LINE__);
+
+
+	memcpy(&c3dIocData, (struct DISP_C3D_LUT *)data,
+				sizeof(struct DISP_C3D_LUT));
+
+	// 1. kick idle
+	if (!mtk_crtc) {
+		DDPPR_ERR("%s:%d, invalid crtc:0x%p\n",
+				__func__, __LINE__, crtc);
+		return -1;
+	}
+
+	DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
+
+	if (!(mtk_crtc->enabled)) {
+		DDPINFO("%s:%d, slepted\n", __func__, __LINE__);
+		DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+		return 0;
+	}
+
+	mtk_drm_idlemgr_kick(__func__, crtc, 0);
+
+	DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+
+	// 2. lock for protect crtc & power
+	mutex_lock(&g_c3d_power_lock);
+
+	if ((atomic_read(&g_c3d_is_clock_on[index_of_c3d(comp->id)]) == 1)
+			&& (mtk_crtc->enabled)) {
+		disp_c3d_write_3dlut_to_reg(comp, &c3dIocData);
+
+		if ((comp->mtk_crtc) && (comp->mtk_crtc->is_dual_pipe)) {
+			struct mtk_drm_crtc *mtk_crtc = comp->mtk_crtc;
+			struct drm_crtc *crtc = &mtk_crtc->base;
+			struct mtk_drm_private *priv = crtc->dev->dev_private;
+			struct mtk_ddp_comp *comp_c3d1 = priv->ddp_comp[DDP_COMPONENT_C3D1];
+
+			if ((atomic_read(&g_c3d_is_clock_on[index_of_c3d(comp_c3d1->id)]) == 1)
+					&& (mtk_crtc->enabled))
+				disp_c3d_write_3dlut_to_reg(comp_c3d1, &c3dIocData);
+			else {
+				DDPINFO("%s(line: %d): skip write_3dlut(mtk_crtc:%d)\n",
+						__func__, __LINE__, mtk_crtc->enabled ? 1 : 0);
+
+				mutex_unlock(&g_c3d_power_lock);
+
+				return -1;
+			}
+		}
+	} else {
+		DDPINFO("%s(line: %d): skip write_3dlut(mtk_crtc:%d)\n",
+				__func__, __LINE__, mtk_crtc->enabled ? 1 : 0);
+
+		mutex_unlock(&g_c3d_power_lock);
+
+		return -1;
+	}
+
+	mutex_unlock(&g_c3d_power_lock);
+
+
+	ret = mtk_crtc_user_cmd(crtc, comp, SET_C3DLUT, data);
+
+	mtk_crtc_check_trigger(comp->mtk_crtc, false, false);
+	return ret;
+}
+
+int mtk_drm_ioctl_bypass_c3d(struct drm_device *dev, void *data,
+			struct drm_file *file_priv)
+{
+	int ret = 0;
+	struct mtk_drm_private *private = dev->dev_private;
+	struct mtk_ddp_comp *comp = private->ddp_comp[DDP_COMPONENT_C3D0];
+	struct drm_crtc *crtc = private->crtc[0];
+
+	C3DAPI_LOG("line: %d\n", __LINE__);
+
+	ret = mtk_crtc_user_cmd(crtc, comp, BYPASS_C3D, data);
+
+	mtk_crtc_check_trigger(comp->mtk_crtc, false, false);
+	return ret;
+}
+
+void disp_c3d_on_start_of_frame(void)
+{
+	if (!default_comp)
+		return;
+	atomic_set(&g_c3d_get_irq, 1);
+
+	if (atomic_read(&g_c3d_eventctl) == 1)
+		wake_up_interruptible(&g_c3d_get_irq_wq);
+}
+
+void disp_c3d_on_end_of_frame_mutex(void)
+{
+	if (!default_comp)
+		return;
+	atomic_set(&g_c3d_get_irq, 0);
 }
 
 static int disp_c3d_set_1dlut(struct mtk_ddp_comp *comp,
@@ -719,7 +777,7 @@ static int disp_c3d_write_lut_to_reg(struct mtk_ddp_comp *comp,
 	}
 
 	disp_c3d_write_1dlut_to_reg(comp, handle, c3d_lut);
-	disp_c3d_write_3dlut_to_reg(comp, handle, c3d_lut);
+	//disp_c3d_write_3dlut_to_reg(comp, handle, c3d_lut);
 
 	return 0;
 }
@@ -729,11 +787,10 @@ static int disp_c3d_set_lut(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle,
 {
 	int ret = -EFAULT;
 
-	memcpy(&c3dIocData, (struct DISP_C3D_LUT *)data,
-				sizeof(struct DISP_C3D_LUT));
+//	memcpy(&c3dIocData, (struct DISP_C3D_LUT *)data,
+//				sizeof(struct DISP_C3D_LUT));
 
 	ret = disp_c3d_write_lut_to_reg(comp, handle, &c3dIocData);
-	disp_c3d_flip_sram(comp, handle, __func__);
 	if (comp->mtk_crtc->is_dual_pipe) {
 		struct mtk_drm_crtc *mtk_crtc = comp->mtk_crtc;
 		struct drm_crtc *crtc = &mtk_crtc->base;
@@ -741,8 +798,10 @@ static int disp_c3d_set_lut(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle,
 		struct mtk_ddp_comp *comp_c3d1 = priv->ddp_comp[DDP_COMPONENT_C3D1];
 
 		ret = disp_c3d_write_lut_to_reg(comp_c3d1, handle, &c3dIocData);
+		disp_c3d_flip_sram(comp, handle, __func__);
 		disp_c3d_flip_sram(comp_c3d1, handle, __func__);
-	}
+	} else
+		disp_c3d_flip_sram(comp, handle, __func__);
 
 //	atomic_set(&g_c3d_lut_set, 1);
 
@@ -884,10 +943,12 @@ static void mtk_disp_c3d_unprepare(struct mtk_ddp_comp *comp)
 
 	pr_notice("%s, line: %d\n", __func__, __LINE__);
 
+	mutex_lock(&g_c3d_power_lock);
 	spin_lock_irqsave(&g_c3d_clock_lock, flags);
 	atomic_set(&g_c3d_is_clock_on[index_of_c3d(comp->id)], 0);
 	spin_unlock_irqrestore(&g_c3d_clock_lock, flags);
 	mtk_ddp_comp_clk_unprepare(comp);
+	mutex_unlock(&g_c3d_power_lock);
 }
 
 void mtk_disp_c3d_first_cfg(struct mtk_ddp_comp *comp,
