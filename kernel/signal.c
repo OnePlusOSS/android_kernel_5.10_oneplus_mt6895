@@ -59,6 +59,11 @@
 
 #undef CREATE_TRACE_POINTS
 #include <trace/hooks/signal.h>
+
+#ifdef OPLUS_BUG_STABILITY
+#include <soc/oplus/system/oplus_process.h>
+#endif
+
 /*
  * SLAB caches for signal bits.
  */
@@ -1090,6 +1095,16 @@ static int __send_signal(int sig, struct kernel_siginfo *info, struct task_struc
 	assert_spin_locked(&t->sighand->siglock);
 
 	result = TRACE_SIGNAL_IGNORED;
+
+#ifdef OPLUS_BUG_STABILITY
+    if(1) {
+        /*add the SIGKILL print log for some debug*/
+        if((sig == SIGHUP || sig == 33 || sig == SIGKILL || sig == SIGSTOP || sig == SIGABRT || sig == SIGTERM || sig == SIGCONT) && is_key_process(t)) {
+            printk("Some other process %d:%s want to send sig:%d to pid:%d tgid:%d comm:%s\n", current->pid, current->comm,sig, t->pid, t->tgid, t->comm);
+        }
+    }
+#endif
+
 	if (!prepare_signal(sig, t, force))
 		goto ret;
 

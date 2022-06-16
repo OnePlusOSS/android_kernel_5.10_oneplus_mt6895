@@ -64,7 +64,7 @@ static int mtk_disp_tdshp_write_reg(struct mtk_ddp_comp *comp,
 		goto thshp_write_reg_unlock;
 	}
 
-	pr_notice("tdshp_en: %x, tdshp_limit: %x, tdshp_ylev_256: %x",
+	DDPINFO("tdshp_en: %x, tdshp_limit: %x, tdshp_ylev_256: %x",
 			disp_tdshp_regs->tdshp_en, disp_tdshp_regs->tdshp_limit,
 			disp_tdshp_regs->tdshp_ylev_256);
 
@@ -412,7 +412,7 @@ static void mtk_disp_tdshp_config(struct mtk_ddp_comp *comp,
 
 	if (cfg->bpc == 8)
 		cmdq_pkt_write(handle, comp->cmdq_base,
-			comp->regs_pa + DISP_TDSHP_CTRL, ((0x1 << 2) | 0x1), ~0);
+			comp->regs_pa + DISP_TDSHP_CTRL, ((0x0 << 2) | 0x1), ~0);
 	else if (cfg->bpc == 10)
 		cmdq_pkt_write(handle, comp->cmdq_base,
 			comp->regs_pa + DISP_TDSHP_CTRL, ((0x0 << 2) | 0x1), ~0);

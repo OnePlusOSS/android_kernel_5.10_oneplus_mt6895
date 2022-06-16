@@ -30,6 +30,10 @@
 #include "mtk_disp_pmqos.h"
 #include "slbc_ops.h"
 
+#if defined(CONFIG_PXLW_IRIS)
+#include "iris_mtk_api.h"
+#endif
+
 #define MAX_CRTC 3
 #define OVL_LAYER_NR 12L
 #define OVL_PHY_LAYER_NR 4L
@@ -92,7 +96,16 @@ enum DISP_PMQOS_SLOT {
 	(DISP_SLOT_PRESENT_FENCE(MAX_CRTC))
 #define DISP_SLOT_SUBTRACTOR_WHEN_FREE(n)                                      \
 	(DISP_SLOT_SUBTRACTOR_WHEN_FREE_BASE + (0x4 * (n)))
+
+#define DISP_SLOT_RDMA_FB_IDX_BASE (DISP_SLOT_SUBTRACTOR_WHEN_FREE(MAX_PLANE_NR))
+
+#define DISP_SLOT_ESD_READ_BASE DISP_SLOT_SUBTRACTOR_WHEN_FREE(OVL_LAYER_NR)
+#define DISP_SLOT_PMQOS_BW_BASE                                                \
+	(DISP_SLOT_ESD_READ_BASE + (ESD_CHECK_NUM * 2 * 0x4))
+//#define DISP_SLOT_RDMA_FB_IDX (DISP_SLOT_RDMA_FB_IDX_BASE + 0x4)
+
 #define DISP_SLOT_RDMA_FB_IDX (DISP_SLOT_SUBTRACTOR_WHEN_FREE(MAX_PLANE_NR))
+
 #define DISP_SLOT_RDMA_FB_ID (DISP_SLOT_RDMA_FB_IDX + 0x4)
 #define DISP_SLOT_CUR_HRT_IDX (DISP_SLOT_RDMA_FB_ID + 0x4)
 #define DISP_SLOT_CUR_HRT_LEVEL (DISP_SLOT_CUR_HRT_IDX + 0x4)
@@ -116,6 +129,17 @@ enum DISP_PMQOS_SLOT {
 #define DISP_SLOT_DSI_STATE_DBG7_2 (DISP_SLOT_DSI_STATE_DBG7 + 0x4)
 
 #define DISP_SLOT_TE1_EN (DISP_SLOT_DSI_STATE_DBG7_2 + 0x4)
+
+#if defined(CONFIG_PXLW_IRIS)
+#define DISP_SLOT_IRIS_READ_BASE (DISP_SLOT_TE1_EN + 0x4)
+#define DISP_SLOT_IRIS_SIZE (DISP_SLOT_IRIS_READ_BASE + 0x10)
+
+#if DISP_SLOT_IRIS_SIZE > CMDQ_BUF_ALLOC_SIZE
+#error "DISP_SLOT_IRIS_SIZE exceed CMDQ_BUF_ALLOC_SIZE"
+#endif
+
+#endif /* CONFIG_PXLW_IRIS */
+
 #define DISP_SLOT_SIZE (DISP_SLOT_TE1_EN + 0x4)
 
 #if DISP_SLOT_SIZE > CMDQ_BUF_ALLOC_SIZE
@@ -366,6 +390,9 @@ enum MTK_CRTC_PROP {
 	CRTC_PROP_MSYNC2_0_ENABLE,
 	CRTC_PROP_SKIP_CONFIG,
 	CRTC_PROP_OVL_DSI_SEQ,
+	CRTC_PROP_AUTO_MODE,
+	CRTC_PROP_AUTO_FAKE_FRAME,
+	CRTC_PROP_AUTO_MIN_FPS,
 	CRTC_PROP_MAX,
 };
 
@@ -431,8 +458,10 @@ enum MTK_CRTC_COLOR_FMT {
 	EXPR(CLIENT_CFG)                                                       \
 	EXPR(CLIENT_TRIG_LOOP)                                                 \
 	EXPR(CLIENT_SODI_LOOP)                                                 \
+	EXPR(CLIENT_EVENT_LOOP)                                                 \
 	EXPR(CLIENT_SUB_CFG)                                                   \
 	EXPR(CLIENT_DSI_CFG)                                                   \
+	EXPR(CLIENT_PQ)                                                   \
 	EXPR(CLIENT_TYPE_MAX)
 
 enum CRTC_GCE_CLIENT_TYPE { DECLARE_GCE_CLIENT(DECLARE_NUM) };
@@ -456,6 +485,8 @@ enum CRTC_GCE_EVENT_TYPE {
 	EVENT_GPIO_TE1,
 	EVENT_SYNC_TOKEN_DISP_VA_START,
 	EVENT_SYNC_TOKEN_DISP_VA_END,
+	EVENT_SYNC_TOKEN_TE,
+	EVENT_SYNC_TOKEN_PRETE,
 	EVENT_TYPE_MAX,
 };
 
@@ -684,6 +715,7 @@ struct mtk_drm_crtc {
 	struct mtk_crtc_gce_obj gce_obj;
 	struct cmdq_pkt *trig_loop_cmdq_handle;
 	struct cmdq_pkt *sodi_loop_cmdq_handle;
+	struct cmdq_pkt *event_loop_cmdq_handle;
 	struct mtk_drm_plane *planes;
 	unsigned int layer_nr;
 	bool pending_planes;
@@ -750,10 +782,12 @@ struct mtk_drm_crtc {
 	bool vblank_en;
 
 	atomic_t already_config;
+	int config_cnt;
 
 	bool layer_rec_en;
 	unsigned int mode_change_index;
 	int mode_idx;
+	bool res_switch;
 
 	wait_queue_head_t state_wait_queue;
 	bool crtc_blank;
@@ -843,6 +877,9 @@ struct mtk_cmdq_cb_data {
 	void __iomem *mmlsys_reg_va;
 	bool is_mml;
 	unsigned int pres_fence_idx;
+	// #ifdef OPLUS_BUG_STABILITY
+	unsigned int bl;
+	// #endif OPLUS_BUG_STABILITY
 };
 
 extern unsigned int disp_spr_bypass;
@@ -974,6 +1011,10 @@ bool mtk_crtc_with_sodi_loop(struct drm_crtc *crtc);
 void mtk_crtc_stop_sodi_loop(struct drm_crtc *crtc);
 void mtk_crtc_start_sodi_loop(struct drm_crtc *crtc);
 
+bool mtk_crtc_with_event_loop(struct drm_crtc *crtc);
+void mtk_crtc_stop_event_loop(struct drm_crtc *crtc);
+void mtk_crtc_start_event_loop(struct drm_crtc *crtc);
+
 int mtk_crtc_attach_ddp_comp(struct drm_crtc *crtc, int ddp_mode,
 			     bool is_attach);
 void mtk_crtc_change_output_mode(struct drm_crtc *crtc, int aod_en);
@@ -1010,9 +1051,12 @@ unsigned int *mtk_get_gce_backup_slot_va(struct mtk_drm_crtc *mtk_crtc,
 
 dma_addr_t mtk_get_gce_backup_slot_pa(struct mtk_drm_crtc *mtk_crtc,
 			unsigned int slot_index);
+unsigned int mtk_read_dummy_backup_slot_table(struct mtk_drm_crtc *mtk_crtc,
+			unsigned int slot_index);
 
 unsigned int mtk_get_plane_slot_idx(struct mtk_drm_crtc *mtk_crtc, unsigned int idx);
-void mtk_gce_backup_slot_init(struct mtk_drm_crtc *mtk_crtc);
+void mtk_gce_backup_slot_backup(struct mtk_drm_crtc *mtk_crtc);
+void mtk_gce_backup_slot_restore(struct mtk_drm_crtc *mtk_crtc);
 
 void mtk_crtc_mml_racing_resubmit(struct drm_crtc *crtc, struct cmdq_pkt *_cmdq_handle);
 void mtk_crtc_mml_racing_stop_sync(struct drm_crtc *crtc, struct cmdq_pkt *_cmdq_handle);
@@ -1041,4 +1085,14 @@ int mtk_drm_ioctl_set_pq_caps(struct drm_device *dev, void *data,
 void mtk_crtc_prepare_instr(struct drm_crtc *crtc);
 unsigned int check_dsi_underrun_event(void);
 void clear_dsi_underrun_event(void);
+
+/* #ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT */
+void mtk_atomic_hbm_bypass_pq(struct drm_crtc *crtc,
+		struct cmdq_pkt *handle, int en);
+void mtk_drm_send_lcm_cmd_prepare(struct drm_crtc *crtc,
+	struct cmdq_pkt **cmdq_handle);
+void mtk_drm_send_lcm_cmd_flush(struct drm_crtc *crtc,
+	struct cmdq_pkt **cmdq_handle, bool sync);
+/* #endif */ /* OPLUS_FEATURE_ONSCREENFINGERPRINT */
+
 #endif /* MTK_DRM_CRTC_H */

@@ -22,6 +22,12 @@
 #include "mtk-dsp-platform-driver.h"
 #include "mtk-base-afe.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define OPLUS_AUDIO_EVENTID_MTK_UNDERRUN_ERR  10043
+#define OPLUS_MTK_UNDERRUN_FEEDBACK_CNT   (20)
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 static DEFINE_MUTEX(adsp_wakelock_lock);
 
 #define IPIMSG_SHARE_MEM (1024)
@@ -521,6 +527,9 @@ static bool mtk_dsp_check_exception(struct mtk_base_dsp *dsp,
 	/* adsp reset message */
 	if (ipi_msg && ipi_msg->param2 == ADSP_DL_CONSUME_RESET) {
 		pr_info("%s() %s adsp reset\n", __func__, task_name);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dsp->dsp_mem[id].underflow_cnt++;
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		RingBuf_Reset(&dsp->dsp_mem[id].ring_buf);
 		snd_pcm_period_elapsed(dsp->dsp_mem[id].substream);
 		return true;
@@ -530,7 +539,9 @@ static bool mtk_dsp_check_exception(struct mtk_base_dsp *dsp,
 	if (ipi_msg && ipi_msg->param2 == ADSP_DL_CONSUME_UNDERFLOW) {
 		pr_info("%s() %s adsp underflow\n", __func__, task_name);
 		dsp->dsp_mem[id].underflowed = true;
-
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dsp->dsp_mem[id].underflow_cnt++;
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		snd_pcm_period_elapsed(dsp->dsp_mem[id].substream);
 
 		return true;
@@ -763,6 +774,28 @@ static int mtk_dsp_pcm_close(struct snd_soc_component *component,
 	const char *task_name = get_str_by_dsp_dai_id(id);
 
 	pr_info("%s() %s\n", __func__, task_name);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (dsp->dsp_mem[id].underflow_cnt > OPLUS_MTK_UNDERRUN_FEEDBACK_CNT) {
+		if (substream->pcm && substream->runtime) {
+			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_MTK_UNDERRUN_ERR, \
+					MM_FB_KEY_RATELIMIT_5MIN, "payload@@MTK adsp underflow,task_scene=%d,underrun=%d,pcm=%d,sample_rate=%d", \
+					get_dspscene_by_dspdaiid(id), \
+					dsp->dsp_mem[id].underflow_cnt, \
+					substream->pcm->device, \
+					substream->runtime->rate);
+		} else {
+			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_MTK_UNDERRUN_ERR, \
+					MM_FB_KEY_RATELIMIT_5MIN, "payload@@MTK adsp underflow,task_scene=%d,underrun=%d", \
+					get_dspscene_by_dspdaiid(id), \
+					dsp->dsp_mem[id].underflow_cnt);
+		}
+	}
+	pr_info("%s(), task_scene = %d, underflow_cnt = %d\n", __func__,
+			get_dspscene_by_dspdaiid(id), dsp->dsp_mem[id].underflow_cnt);
+	dsp->dsp_mem[id].underflow_cnt = 0;
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 
 	/* send to task with close information */
 	ret = mtk_scp_ipi_send(get_dspscene_by_dspdaiid(id), AUDIO_IPI_MSG_ONLY,
@@ -1270,7 +1303,10 @@ void audio_irq_handler(int irq, void *data, int core_id)
 		goto IRQ_ERROR;
 	}
 
-	tasklet_schedule(&dsp->dsp_tasklet[core_id]);
+	audio_dsp_tasklet(dsp, core_id);
+
+	//tasklet_schedule(&dsp->dsp_tasklet[core_id]);
+
 	return;
 IRQ_ERROR:
 	pr_info("IRQ_ERROR irq[%d] data[%p] core_id[%d] dsp[%p]\n",

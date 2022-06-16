@@ -54,6 +54,10 @@ void mtk_jpeg_enc_start(void __iomem *base)
 
 	value = readl(base + JPEG_ENC_CTRL);
 	value |= JPEG_ENC_CTRL_INT_EN_BIT | JPEG_ENC_CTRL_ENABLE_BIT;
+	value |= JPEG_ENC_CTRL_RDMA_PADDING_EN;
+	value |= JPEG_ENC_CTRL_RDMA_RIGHT_PADDING_EN;
+	value &= ~JPEG_ENC_CTRL_RDMA_PADDING_0_EN;
+
 	writel(value, base + JPEG_ENC_CTRL);
 }
 
@@ -117,7 +121,8 @@ void mtk_jpeg_set_enc_params(struct mtk_jpeg_ctx *ctx,  void __iomem *base)
 	u32 blk_num;
 	u32 img_stride;
 	u32 mem_stride;
-	u32 i, enc_quality;
+	u32 enc_quality;
+	s32 i;
 
 	value = width << 16 | height;
 	writel(value, base + JPEG_ENC_IMG_SIZE);

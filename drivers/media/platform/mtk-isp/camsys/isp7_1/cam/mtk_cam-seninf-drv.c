@@ -798,10 +798,8 @@ static int set_test_model(struct seninf_ctx *ctx, char enable)
 		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_PDAF0);
 	} else if (ctx->is_test_model == 4) {
 		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_RAW0);
-		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_RAW1);
-		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_RAW2);
-		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_PDAF0);
-		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_PDAF1);
+		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_GENERAL0);
+		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_RAW_EXT0);
 	} else if (ctx->is_test_model == 5) {
 		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_RAW0);
 		vc[vc_used++] = mtk_cam_seninf_get_vc_by_pad(ctx, PAD_SRC_RAW_W0);
@@ -841,10 +839,10 @@ static int set_test_model(struct seninf_ctx *ctx, char enable)
 			g_seninf_ops->_set_test_model(ctx,
 					vc[i]->mux, vc[i]->cam, vc[i]->pixel_mode);
 
-			if (vc[i]->out_pad == PAD_SRC_PDAF0) {
+			if (vc[i]->out_pad == PAD_SRC_GENERAL0) {
 				mdelay(40);
-			} else {
-				udelay(40);
+			} else if (vc[i]->out_pad == PAD_SRC_RAW0) {
+				mdelay(10);
 			}
 		}
 	} else {
@@ -1209,6 +1207,62 @@ static int debug_err_detect_initialize(struct seninf_ctx *ctx)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static int mtk_senif_get_ccu_phandle(struct seninf_core *core)
+{
+	struct device *dev = core->dev;
+	struct device_node *node;
+	int ret = 0;
+
+	node = of_find_compatible_node(NULL, NULL, "mediatek,camera_fsync_ccu");
+	if (node == NULL) {
+		dev_info(dev, "of_find mediatek,camera_fsync_ccu fail\n");
+		ret = PTR_ERR(node);
+		goto out;
+	}
+
+	ret = of_property_read_u32(node, "mediatek,ccu_rproc",
+				   &core->rproc_ccu_phandle);
+	if (ret) {
+		dev_info(dev, "fail to get rproc_ccu_phandle:%d\n", ret);
+		ret = -EINVAL;
+		goto out;
+	}
+
+out:
+	return ret;
+}
+
+static int mtk_senif_power_ctrl_ccu(struct seninf_core *core, int on_off)
+{
+	int ret;
+
+	if (on_off) {
+		ret = mtk_senif_get_ccu_phandle(core);
+		if (ret)
+			goto out;
+		core->rproc_ccu_handle = rproc_get_by_phandle(core->rproc_ccu_phandle);
+		if (core->rproc_ccu_handle == NULL) {
+			dev_info(core->dev, "Get ccu handle fail\n");
+			ret = PTR_ERR(core->rproc_ccu_handle);
+			goto out;
+		}
+
+		ret = rproc_boot(core->rproc_ccu_handle);
+		if (ret)
+			dev_info(core->dev, "boot ccu rproc fail\n");
+	} else {
+		if (core->rproc_ccu_handle) {
+			rproc_shutdown(core->rproc_ccu_handle);
+			ret = 0;
+		} else
+			ret = -EINVAL;
+	}
+out:
+	return ret;
+}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 {
 #ifdef SENSOR_SECURE_MTEE_SUPPORT
@@ -1216,6 +1270,9 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 #endif
 	int ret;
 	struct seninf_ctx *ctx = sd_to_ctx(sd);
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct seninf_core *core = ctx->core;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	if (ctx->streaming == enable)
 		return 0;
@@ -1227,6 +1284,7 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 		dev_info(ctx->dev, "no sensor\n");
 		return -EFAULT;
 	}
+	mutex_lock(&ctx->pwr_mutex);
 
 	if (enable) {
 		debug_err_detect_initialize(ctx);
@@ -1239,10 +1297,16 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 					ctx->sensor_pad_idx, &ctx->buffered_pixel_rate);
 
 		get_customized_pixel_rate(ctx, ctx->sensor_sd, &ctx->customized_pixel_rate);
+		#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		mtk_senif_power_ctrl_ccu(core, 1);
+		#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 		ret = pm_runtime_get_sync(ctx->dev);
 		if (ret < 0) {
-			dev_info(ctx->dev, "%s pm_runtime_get_sync ret %d\n", __func__, ret);
+			dev_info(ctx->dev, "pm_runtime_get_sync ret %d\n", ret);
 			pm_runtime_put_noidle(ctx->dev);
+			#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			mtk_senif_power_ctrl_ccu(core, 0);
+			#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 			return ret;
 		}
 
@@ -1290,9 +1354,13 @@ static int seninf_s_stream(struct v4l2_subdev *sd, int enable)
 		g_seninf_ops->_poweroff(ctx);
 		ctx->dbg_last_dump_req = 0;
 		pm_runtime_put_sync(ctx->dev);
+		#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		mtk_senif_power_ctrl_ccu(core, 0);
+		#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	}
 
 	ctx->streaming = enable;
+	mutex_unlock(&ctx->pwr_mutex);
 	return 0;
 }
 
@@ -1490,8 +1558,7 @@ static int seninf_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	ctx->open_refcnt++;
 	core->pid = find_get_pid(current->pid);
 
-	if (ctx->open_refcnt == 1)
-		dev_info(ctx->dev, "%s open_refcnt %d\n", __func__, ctx->open_refcnt);
+	dev_info(ctx->dev, "%s open_refcnt %d\n", __func__, ctx->open_refcnt);
 
 	mutex_unlock(&ctx->mutex);
 
@@ -1505,9 +1572,9 @@ static int seninf_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	mutex_lock(&ctx->mutex);
 	ctx->open_refcnt--;
 
+	dev_info(ctx->dev, "%s open_refcnt %d\n", __func__, ctx->open_refcnt);
 
 	if (!ctx->open_refcnt) {
-		dev_info(ctx->dev, "%s open_refcnt %d\n", __func__, ctx->open_refcnt);
 #ifdef SENINF_DEBUG
 		if (ctx->is_test_streamon)
 			seninf_test_streamon(ctx, 0);
@@ -1725,6 +1792,7 @@ static int seninf_probe(struct platform_device *pdev)
 
 	ctx->open_refcnt = 0;
 	mutex_init(&ctx->mutex);
+	mutex_init(&ctx->pwr_mutex);
 
 	ret = get_csi_port(dev, &port);
 	if (ret) {
@@ -1816,7 +1884,6 @@ static int runtime_suspend(struct device *dev)
 		seninf_core_pm_runtime_put(core);
 		if (ctx->core->dfs.reg && regulator_is_enabled(ctx->core->dfs.reg))
 			regulator_disable(ctx->core->dfs.reg);
-
 	}
 
 	mutex_unlock(&core->mutex);
@@ -1954,8 +2021,7 @@ int mtk_cam_seninf_get_pixelrate(struct v4l2_subdev *sd, s64 *p_pixel_rate)
 int mtk_cam_seninf_check_timeout(struct v4l2_subdev *sd, u64 time_after_sof)
 {
 	struct seninf_ctx *ctx = sd_to_ctx(sd);
-	u64 frame_time = 400000;//400ms
-	int val = 0;
+	int frame_time = 400;//400ms
 	int ret = 0;
 	struct v4l2_subdev *sensor_sd = ctx->sensor_sd;
 	struct v4l2_ctrl *ctrl;
@@ -1966,22 +2032,17 @@ int mtk_cam_seninf_check_timeout(struct v4l2_subdev *sd, u64 time_after_sof)
 		return -EINVAL;
 	}
 
-	val = v4l2_ctrl_g_ctrl(ctrl);
+	frame_time = v4l2_ctrl_g_ctrl(ctrl);
 
-	if (val > 0)
-		frame_time = val;
-	time_after_sof /= 1000;// covert into us
-
-	if ((time_after_sof) > ((frame_time * SOF_TIMEOUT_RATIO) / 100))
+	if ((time_after_sof / 1000) > ((frame_time * SOF_TIMEOUT_RATIO) / 100))
 		ret = -1;
 
-	dev_info(ctx->dev, "%s time_after_sof %llu frame_time %llu in us ret %d ratio %d val %d\n",
+	dev_info(ctx->dev, "%s time_after_sof %llu frame_time %llu ret %d ratio %d\n",
 		__func__,
-		time_after_sof,
+		time_after_sof / 1000,
 		frame_time,
-		ret,
 		SOF_TIMEOUT_RATIO,
-		val);
+		ret);
 	return ret;
 }
 
@@ -2026,13 +2087,7 @@ int mtk_cam_seninf_dump(struct v4l2_subdev *sd, u32 seq_id)
 			ctx->dbg_timeout = val;
 	}
 
-	ret = pm_runtime_get_sync(ctx->dev);
-	if (ret < 0) {
-		dev_info(ctx->dev, "%s pm_runtime_get_sync ret %d\n", __func__, ret);
-		pm_runtime_put_noidle(ctx->dev);
-		return ret;
-	}
-
+	mutex_lock(&ctx->pwr_mutex);
 	if (ctx->streaming) {
 		ret = g_seninf_ops->_debug(sd_to_ctx(sd));
 #if ESD_RESET_SUPPORT
@@ -2043,8 +2098,7 @@ int mtk_cam_seninf_dump(struct v4l2_subdev *sd, u32 seq_id)
 			reset_sensor(sd_to_ctx(sd));
 	} else
 		dev_info(ctx->dev, "%s should not dump during stream off\n", __func__);
-
-	pm_runtime_put_sync(ctx->dev);
+	mutex_unlock(&ctx->pwr_mutex);
 	return ret;
 }
 

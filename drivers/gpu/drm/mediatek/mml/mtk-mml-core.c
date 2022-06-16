@@ -294,6 +294,7 @@ static s32 command_make(struct mml_task *task, u32 pipe)
 		comp = path->nodes[i].comp;
 		cache->label_cnt += call_cfg_op(comp, get_label_count, task, &ccfg[i]);
 	}
+	mml_log("%s label count %u", __func__, cache->label_cnt);
 	reuse->labels = kcalloc(cache->label_cnt, sizeof(*reuse->labels), GFP_KERNEL);
 	if (!reuse->labels) {
 		mml_err("%s not able to alloc label table", __func__);
@@ -424,9 +425,10 @@ static void dump_inout(struct mml_task *task)
 	s32 ret;
 
 	get_frame_str(frame, sizeof(frame), &cfg->info.src);
-	mml_log("in:%s plane:%hhu%s%s job:%u mode:%hhu",
+	mml_log("in:%s plane:%hhu%s%s%s job %u mode %hhu",
 		frame,
 		task->buf.src.cnt,
+		cfg->info.alpha ? " alpha" : "",
 		task->buf.src.fence ? " fence" : "",
 		task->buf.src.flush ? " flush" : "",
 		task->job.jobid,

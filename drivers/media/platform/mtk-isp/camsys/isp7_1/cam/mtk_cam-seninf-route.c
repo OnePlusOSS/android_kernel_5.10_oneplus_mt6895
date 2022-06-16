@@ -147,39 +147,31 @@ void mtk_cam_seninf_get_vcinfo_test(struct seninf_ctx *ctx)
 		vc->out_pad = PAD_SRC_PDAF0;
 		vc->group = 0;
 	} else if (ctx->is_test_model == 4) {
-		vc = &vcinfo->vc[vcinfo->cnt++];
+		vc = &vcinfo->vc[vcinfo->cnt++];/*0*/
 		vc->vc = 0;
 		vc->dt = 0x2b;
 		vc->feature = VC_RAW_DATA;
 		vc->out_pad = PAD_SRC_RAW0;
+		vc->exp_hsize = 4000;
+		vc->exp_vsize = 3000;
 		vc->group = 0;
 
-		vc = &vcinfo->vc[vcinfo->cnt++];
+		vc = &vcinfo->vc[vcinfo->cnt++];/*1*/
 		vc->vc = 0;
 		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_RAW1;
+		vc->feature = VC_GENERAL_EMBEDDED;
+		vc->out_pad = PAD_SRC_GENERAL0;
+		vc->exp_hsize = 1024;
+		vc->exp_vsize = 552;
 		vc->group = 0;
 
-		vc = &vcinfo->vc[vcinfo->cnt++];
+		vc = &vcinfo->vc[vcinfo->cnt++];/*2*/
 		vc->vc = 0;
 		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_RAW2;
-		vc->group = 0;
-
-		vc = &vcinfo->vc[vcinfo->cnt++];
-		vc->vc = 0;
-		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_PDAF0;
-		vc->group = 0;
-
-		vc = &vcinfo->vc[vcinfo->cnt++];
-		vc->vc = 0;
-		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_PDAF1;
+		vc->feature = VC_RAW_PROCESSED_DATA;
+		vc->out_pad = PAD_SRC_RAW_EXT0;
+		vc->exp_hsize = 4000;
+		vc->exp_vsize = 3000;
 		vc->group = 0;
 	} else if (ctx->is_test_model == 5) {
 		vc = &vcinfo->vc[vcinfo->cnt++];

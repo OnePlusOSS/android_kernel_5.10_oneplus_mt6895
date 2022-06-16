@@ -3605,6 +3605,11 @@ int mtk_iommu_register_fault_callback(int port,
 		pr_info("%s fail, port=%d\n", __func__, port);
 		return -1;
 	}
+
+/*	pr_debug("%s, %s, port:0x%x(%s), idx:%d\n",
+		__func__, is_vpu ? "apu_port" : "mm_port",
+		port, m4u_data->plat_data->port_list[type][idx].name,
+		idx);*/
 	if (is_vpu)
 		idx += m4u_data->plat_data->port_nr[type];
 	m4u_data->m4u_cb[idx].port = port;

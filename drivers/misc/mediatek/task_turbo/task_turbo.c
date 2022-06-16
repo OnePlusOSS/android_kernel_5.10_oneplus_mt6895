@@ -28,6 +28,10 @@
 #include <trace/hooks/sysrqcrash.h>
 #include <trace/hooks/cgroup.h>
 #include <trace/hooks/sys.h>
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_perf_sched/sched_assist/sa_fair.h>
+#include <../kernel/oplus_perf_sched/sched_assist/sa_rwsem.h>
+#endif
 
 #include <task_turbo.h>
 
@@ -527,6 +531,16 @@ int find_best_turbo_cpu(struct task_struct *p)
 			    !cpu_active(iter_cpu))
 				continue;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+			/*
+			 * TODO: If turbo task is ux task, should we add more conditions
+			 */
+			/*
+			if (should_ux_task_skip_cpu(p, iter_cpu))
+				continue;
+			*/
+#endif
+
 			/*
 			 * favor tasks that prefer idle cpus
 			 * to improve latency
@@ -635,6 +649,11 @@ static void rwsem_list_add(struct task_struct *task,
 			   struct list_head *head)
 {
 	if (!sub_feat_enable(SUB_FEAT_LOCK)) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+		if (oplus_rwsem_list_add(task, entry, head)) {
+			return;
+		}
+#endif
 		list_add_tail(entry, head);
 		return;
 	}
@@ -654,6 +673,11 @@ static void rwsem_list_add(struct task_struct *task,
 			}
 		}
 	}
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (oplus_rwsem_list_add(task, entry, head)) {
+		return;
+	}
+#endif
 	list_add_tail(entry, head);
 }
 

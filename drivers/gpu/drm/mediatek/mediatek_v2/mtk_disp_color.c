@@ -2994,9 +2994,9 @@ int mtk_drm_ioctl_read_reg(struct drm_device *dev, void *data,
 		rParams->val = readl(va) & rParams->mask;
 
 		// For CCORR COEF, real values need to right shift one bit
-		if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
+	/*	if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
 			pa <= ccorr_comp->regs_pa + CCORR_REG(4))
-			rParams->val = rParams->val >> 1;
+			rParams->val = rParams->val >> 1;*/
 
 		spin_unlock_irqrestore(&g_color_clock_lock, flags);
 	} else {
@@ -3038,10 +3038,10 @@ int mtk_drm_ioctl_write_reg(struct drm_device *dev, void *data,
 		return -EFAULT;
 	}
 
-	// For 6885 CCORR COEF, real values need to left shift one bit
+/*// For 6885 CCORR COEF, real values need to left shift one bit
 	if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
 		pa <= ccorr_comp->regs_pa + CCORR_REG(4))
-		wParams->val = wParams->val << 1;
+		wParams->val = wParams->val << 1;*/
 
 	return mtk_crtc_user_cmd(crtc, comp, WRITE_REG, data);
 }

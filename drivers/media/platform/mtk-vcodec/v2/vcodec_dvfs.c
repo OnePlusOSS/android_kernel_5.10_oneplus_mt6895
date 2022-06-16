@@ -477,13 +477,13 @@ void update_freq(struct mtk_vcodec_dev *dev, int codec_type)
 		list_for_each(item, &dev->vdec_dvfs_inst) {
 			inst = list_entry(item, struct vcodec_inst, list);
 			if (inst) {
-				freq = calc_freq(inst, dev);
+			freq = calc_freq(inst, dev);
 
-				if (freq > dev->vdec_dvfs_params.normal_max_freq)
-					dev->vdec_dvfs_params.allow_oc = 1;
+			if (freq > dev->vdec_dvfs_params.normal_max_freq)
+				dev->vdec_dvfs_params.allow_oc = 1;
 
-				freq_sum += freq;
-				op_rate_sum += inst->op_rate;
+			freq_sum += freq;
+			op_rate_sum += inst->op_rate;
 			} else
 				mtk_v4l2_debug(6, "[VDVFS] %s no inst, skip", __func__);
 

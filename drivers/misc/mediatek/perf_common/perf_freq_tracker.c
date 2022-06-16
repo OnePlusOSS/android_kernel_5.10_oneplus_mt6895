@@ -9,7 +9,9 @@
 
 #include <perf_tracker_internal.h>
 #include <perf_tracker_trace.h>
-
+#ifdef CONFIG_OPLUS_FEATURE_FREQ_LIMIT_DEBUG
+#include <trace/events/power.h>
+#endif
 
 struct h_node {
 	unsigned long addr;
@@ -115,6 +117,174 @@ void remove_freq_qos_hook(void)
 	unregister_trace_android_vh_freq_qos_update_request(mtk_freq_qos_update_request, NULL);
 }
 
+
+#ifdef CONFIG_OPLUS_FEATURE_FREQ_LIMIT_DEBUG
+
+#define LCN 3 //Limit cluster number
+#define LSN 5 //Limit statis number
+
+struct limit_info {
+	char comm[TASK_COMM_LEN];
+	pid_t pid;
+	pid_t tgid;
+	int cid;
+	int freq;
+};
+
+struct cluster_limit_info {
+	int idx;
+	int of; //overflow
+	spinlock_t slock;
+	struct limit_info info[LSN];
+};
+
+struct limit_task_desc {
+	struct cluster_limit_info cinfo[LCN];
+};
+
+static struct limit_task_desc *g_ltd = NULL;
+
+static int limit_info_stastic(struct task_struct *task, int cid, int freq)
+{
+	struct limit_info *info;
+	struct cluster_limit_info *cinfo;
+
+	if (cid >= LCN || cid < 0 || !g_ltd) {
+		return -1;
+	}
+	cinfo = &g_ltd->cinfo[cid];
+
+	spin_lock(&cinfo->slock);
+
+	if (cinfo->idx >= LSN) {
+		cinfo->idx = cinfo->idx % LSN;
+		cinfo->of = 1;
+	}
+	info = &cinfo->info[cinfo->idx];
+
+	memcpy(info->comm, task->comm, TASK_COMM_LEN);
+	info->pid = task->pid;
+	info->tgid = task->tgid;
+	info->cid = cid;
+	info->freq = freq;
+
+	cinfo->idx++;
+
+	spin_unlock(&cinfo->slock);
+
+	return 0;
+}
+
+
+static void limit_info_clear(void)
+{
+	int i, j;
+	struct cluster_limit_info *cinfo;
+
+	if (!g_ltd)
+		return;
+
+	for (i = 0; i < LCN; i++) {
+		cinfo = &g_ltd->cinfo[i];
+		spin_lock(&cinfo->slock);
+		cinfo->idx = 0;
+		cinfo->of = 0;
+		for (j = 0; j < LSN; j++) {
+			memset(&cinfo->info[j], 0, sizeof(struct limit_info));
+		}
+		spin_unlock(&cinfo->slock);
+	}
+}
+
+static inline void limit_info_print(struct limit_info *info)
+{
+	pr_info("MAX_FREQ_LIMIT_DUMP: pid=%d, comm=%s, tgid=%d, cid=%d, freq=%d\n",
+		info->pid, info->comm, info->tgid, info->cid, info->freq);
+}
+
+static void limit_info_dump(void)
+{
+	int i, j;
+	struct cluster_limit_info *cinfo;
+
+	if (!g_ltd)
+		return;
+
+	for (i = 0; i < LCN; i++) {
+		cinfo = &g_ltd->cinfo[i];
+		spin_lock(&cinfo->slock);
+		/* the old print firts */
+		if (cinfo->of) {
+			for (j = cinfo->idx; j < LSN; j++) {
+				limit_info_print(&cinfo->info[j]);
+			}
+		}
+		for (j = 0; j < cinfo->idx; j++) {
+			limit_info_print(&cinfo->info[j]);
+		}
+		spin_unlock(&cinfo->slock);
+	}
+
+}
+
+static void freq_qos_update_debug(void *data, struct freq_qos_request *req, int value)
+{
+	static int need_dump = 0;
+	int cid = find_qos_in_cluster(req->qos);
+	struct task_struct *cur = current;
+
+	if (req->type == FREQ_QOS_MAX && value < 1000000) {
+		/* it can be removed in official version */
+		pr_info("MAX_FREQ_LIMIT: cur_pid=%d, cur_comm=%s, cur_tgid=%d, cid=%d, freq=%d\n",
+				cur->pid, cur->comm, cur->tgid, cid, value);
+		limit_info_stastic(cur, cid, value);
+	}
+
+	/* uise it to determine if trace is being captured, it shouldn't be hooked */
+	if (trace_cpu_idle_enabled()) {
+		if (need_dump == 0) {
+			need_dump++;
+			limit_info_dump();
+			limit_info_clear();
+		}
+	} else {
+		need_dump = 0;
+	}
+}
+
+static int freq_qos_update_debug_init(void)
+{
+	int i;
+	struct limit_task_desc *ltd = kzalloc(sizeof(struct limit_task_desc), GFP_KERNEL);
+	if (!ltd) {
+		pr_info("MAX_FREQ_LIMIT: kzalloc failed!\n");
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < LCN; i++) {
+		spin_lock_init(&ltd->cinfo[i].slock);
+	}
+
+	g_ltd = ltd;
+
+	register_trace_android_vh_freq_qos_update_request(freq_qos_update_debug, NULL);
+
+	return 0;
+}
+
+static void freq_qos_update_debug_exit(void)
+{
+	if (!g_ltd)
+		return;
+
+	unregister_trace_android_vh_freq_qos_update_request(freq_qos_update_debug, NULL);
+
+	kfree(g_ltd);
+	g_ltd = NULL;
+}
+
+#endif /* CONFIG_OPLUS_FEATURE_FREQ_LIMIT_DEBUG */
+
 static void init_cluster_qos_info(void)
 {
 	struct cpufreq_policy *policy;
@@ -140,6 +310,9 @@ void init_perf_freq_tracker(void)
 	// Initialize hash table
 	hash_init(tbl);
 	init_cluster_qos_info();
+#ifdef CONFIG_OPLUS_FEATURE_FREQ_LIMIT_DEBUG
+	freq_qos_update_debug_init();
+#endif
 }
 
 void exit_perf_freq_tracker(void)
@@ -149,6 +322,10 @@ void exit_perf_freq_tracker(void)
 	struct hlist_node *tmp = NULL;
 
 	is_inited = 0;
+
+#ifdef CONFIG_OPLUS_FEATURE_FREQ_LIMIT_DEBUG
+	freq_qos_update_debug_exit();
+#endif
 	remove_freq_qos_hook();
 	// Remove hash table
 	hash_for_each_safe(tbl, bkt, tmp, cur, node) {

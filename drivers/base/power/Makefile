@@ -5,5 +5,7 @@ obj-$(CONFIG_PM_TRACE_RTC)	+= trace.o
 obj-$(CONFIG_PM_GENERIC_DOMAINS)	+=  domain.o domain_governor.o
 obj-$(CONFIG_HAVE_CLK)	+= clock_ops.o
 obj-$(CONFIG_PM_QOS_KUNIT_TEST) += qos-test.o
-
+ifeq ($(VERSION).$(PATCHLEVEL), 5.10)
+obj-$(CONFIG_OPLUS_FEATURE_POWER_DIAG) += power_diag/
+endif
 ccflags-$(CONFIG_DEBUG_DRIVER) := -DDEBUG

@@ -39,7 +39,11 @@
 #include "mtk_dp_debug.h"
 #include "mtk_drm_arr.h"
 #include "mtk_drm_graphics_base.h"
-
+/*#ifdef OPLUS_BUG_STABILITY*/
+#include <mt-plat/mtk_boot_common.h>
+#include <soc/oplus/system/oplus_project.h>
+#include "../../oplus/oplus_display_mtk_debug.h"
+/*#endif*/
 #define DISP_REG_CONFIG_MMSYS_CG_SET(idx) (0x104 + 0x10 * (idx))
 #define DISP_REG_CONFIG_MMSYS_CG_CLR(idx) (0x108 + 0x10 * (idx))
 #define DISP_REG_CONFIG_DISP_FAKE_ENG_EN(idx) (0x200 + 0x20 * (idx))
@@ -74,8 +78,12 @@ bool g_msync_debug;
 bool g_profile_log;
 
 EXPORT_SYMBOL(g_mobile_log);
+//#ifdef OPLUS_BUG_STABILITY
+#define PANEL_SERIAL_NUM_REG 0xA1
+#define PANEL_REG_READ_LEN   10
+//#endif /*OPLUS_BUG_STABILITY*/
 EXPORT_SYMBOL(g_msync_debug);
-EXPORT_SYMBOL(g_detail_log);
+
 bool g_irq_log;
 bool g_trace_log;
 bool g_mml_debug;
@@ -88,6 +96,21 @@ unsigned int disp_spr_bypass;
 unsigned int disp_cm_bypass;
 static unsigned int m_old_pq_persist_property[32];
 unsigned int m_new_pq_persist_property[32];
+
+/*#ifdef OPLUS_ADFR*/
+bool g_adfr_log = 0;
+int dsi_cmd_log_enable = 0;
+/*#endif*/
+int trig_db_enable = 0;
+
+
+EXPORT_SYMBOL(g_fence_log);
+EXPORT_SYMBOL(g_detail_log);
+EXPORT_SYMBOL(g_irq_log);
+EXPORT_SYMBOL(g_trace_log);
+EXPORT_SYMBOL(dsi_cmd_log_enable);
+EXPORT_SYMBOL(trig_db_enable);
+EXPORT_SYMBOL(g_adfr_log);
 
 unsigned int g_mml_mode;
 
@@ -405,6 +428,10 @@ int mtk_dprec_logger_get_buf(enum DPREC_LOGGER_PR_TYPE type, char *stringbuf,
 }
 
 extern int mtk_drm_setbacklight(struct drm_crtc *crtc, unsigned int level);
+//#ifdef OPLUS_BUG_STABILITY
+static int readcount = 0;
+extern int panel_serial_number_read(struct drm_crtc *crtc, char cmd, int num);
+//#endif /*OPLUS_BUG_STABILITY*/
 int mtkfb_set_backlight_level(unsigned int level)
 {
 	struct drm_crtc *crtc;
@@ -422,6 +449,17 @@ int mtkfb_set_backlight_level(unsigned int level)
 		DDPPR_ERR("%s failed to find crtc\n", __func__);
 		return -EINVAL;
 	}
+
+//#ifdef OPLUS_BUG_STABILITY
+	DISP_DEBUG("panel_serial_number_read get_boot_mode=%d\n",get_boot_mode());
+	if((get_boot_mode() == NORMAL_BOOT)) {
+		if ((level > 1) && (readcount == 0)) {
+			panel_serial_number_read(crtc, PANEL_SERIAL_NUM_REG, PANEL_REG_READ_LEN);
+			DDPPR_ERR("%s :panel_serial_number_read only read in NORMAL_BOOT\n", __func__);
+			readcount = 1;
+		}
+	}
+//#endif /*OPLUS_BUG_STABILITY*/
 	ret = mtk_drm_setbacklight(crtc, level);
 
 	return ret;
@@ -833,6 +871,10 @@ int mtk_ddic_dsi_send_cmd(struct mtk_ddic_dsi_msg *cmd_msg,
 	struct mtk_ddp_comp *output_comp;
 	struct cmdq_pkt *cmdq_handle;
 	bool is_frame_mode;
+	//#ifdef OPLUS_BUG_STATABILITY
+	struct cmdq_client *gce_client;
+	bool use_lpm = false;
+	//#endif
 	struct mtk_cmdq_cb_data *cb_data;
 	int index = 0;
 	int ret = 0;
@@ -889,6 +931,10 @@ int mtk_ddic_dsi_send_cmd(struct mtk_ddic_dsi_msg *cmd_msg,
 	}
 
 	is_frame_mode = mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base);
+	//#ifdef OPLUS_BUG_STATABILITY
+	if (cmd_msg)
+		use_lpm = cmd_msg->flags & MIPI_DSI_MSG_USE_LPM;
+	//#endif
 
 	CRTC_MMP_MARK(index, ddic_send_cmd, 1, 0);
 
@@ -897,8 +943,16 @@ int mtk_ddic_dsi_send_cmd(struct mtk_ddic_dsi_msg *cmd_msg,
 
 	CRTC_MMP_MARK(index, ddic_send_cmd, 2, 0);
 
-	mtk_crtc_pkt_create(&cmdq_handle, crtc,
-			mtk_crtc->gce_obj.client[CLIENT_DSI_CFG]);
+	//#ifdef OPLUS_BUG_STATABILITY
+	/* only use CLIENT_DSI_CFG for VM CMD scenario */
+	/* use CLIENT_CFG otherwise */
+
+	gce_client = (!is_frame_mode && use_lpm) ?
+			mtk_crtc->gce_obj.client[CLIENT_DSI_CFG] :
+			mtk_crtc->gce_obj.client[CLIENT_CFG];
+
+	mtk_crtc_pkt_create(&cmdq_handle, crtc, gce_client);
+	//#endif
 
 	if (mtk_crtc_with_sub_path(crtc, mtk_crtc->ddp_mode))
 		mtk_crtc_wait_frame_done(mtk_crtc, cmdq_handle,
@@ -912,8 +966,6 @@ int mtk_ddic_dsi_send_cmd(struct mtk_ddic_dsi_msg *cmd_msg,
 			mtk_crtc->gce_obj.event[EVENT_STREAM_BLOCK]);
 		cmdq_pkt_wfe(cmdq_handle,
 			mtk_crtc->gce_obj.event[EVENT_CABC_EOF]);
-		cmdq_pkt_clear_event(cmdq_handle,
-			mtk_crtc->gce_obj.event[EVENT_STREAM_DIRTY]);
 	}
 
 	/* DSI_SEND_DDIC_CMD */
@@ -922,8 +974,8 @@ int mtk_ddic_dsi_send_cmd(struct mtk_ddic_dsi_msg *cmd_msg,
 		DSI_SEND_DDIC_CMD, cmd_msg);
 
 	if (is_frame_mode) {
-		cmdq_pkt_set_event(cmdq_handle,
-			mtk_crtc->gce_obj.event[EVENT_STREAM_DIRTY]);
+		//#ifdef OPLUS_BUG_STATABILITY
+		//#endif
 		cmdq_pkt_set_event(cmdq_handle,
 			mtk_crtc->gce_obj.event[EVENT_CABC_EOF]);
 		cmdq_pkt_set_event(cmdq_handle,
@@ -1976,6 +2028,167 @@ int mtk_drm_ioctl_pq_get_persist_property(struct drm_device *dev, void *data,
 	return ret;
 }
 
+void mtk_read_ddic_v2(u8 ddic_reg, int ret_num, char ret_val[10])
+{
+		unsigned int j = 0;
+		unsigned int ret_dlen = 0;
+		int ret;
+		struct mtk_ddic_dsi_msg *cmd_msg =
+				vmalloc(sizeof(struct mtk_ddic_dsi_msg));
+		u8 tx[10] = {0};
+		DDPMSG("%s read val %d\n", __func__, ret_num);
+
+		if (!cmd_msg) {
+			DDPPR_ERR("cmd msg is NULL\n");
+			return;
+		}
+		memset(cmd_msg, 0, sizeof(struct mtk_ddic_dsi_msg));
+
+		cmd_msg->channel = 0;
+		cmd_msg->tx_cmd_num = 1;
+		cmd_msg->type[0] = 0x06;
+		tx[0] = ddic_reg;
+		cmd_msg->tx_buf[0] = tx;
+		cmd_msg->tx_len[0] = 1;
+
+		cmd_msg->rx_cmd_num = 1;
+		cmd_msg->rx_buf[0] = vmalloc(20 * sizeof(unsigned char));
+		memset(cmd_msg->rx_buf[0], 0, 20);
+		cmd_msg->rx_len[0] = 20;
+
+		ret = mtk_ddic_dsi_read_cmd(cmd_msg);
+
+		if (ret != 0) {
+			DDPPR_ERR("%s error\n", __func__);
+			goto  done;
+		}
+
+		ret_dlen = cmd_msg->rx_len[0];
+		DDPMSG("read lcm addr:0x%x--dlen:%d\n",
+			*(char *)(cmd_msg->tx_buf[0]), ret_dlen);
+
+		for (j = 0; j < ret_dlen; j++)
+			ret_val[j] = *(char *)(cmd_msg->rx_buf[0] + j);
+
+done:
+		vfree(cmd_msg->rx_buf[0]);
+		vfree(cmd_msg);
+
+		DDPMSG("%s end -\n", __func__);
+}
+
+EXPORT_SYMBOL(mtk_read_ddic_v2);
+/*#ifdef OPLUS_BUG_STABILITY*/
+void ddic_dsi_send_cmd(unsigned int cmd_num,
+	char val[20])
+{
+	unsigned int i = 0, j = 0;
+	int ret;
+	struct mtk_ddic_dsi_msg *cmd_msg =
+		vmalloc(sizeof(struct mtk_ddic_dsi_msg));
+	u8 tx[10] = {0};
+
+	DDPMSG("%s cmd_num:%d\n", __func__, cmd_num);
+
+	if (!cmd_num || cmd_num > 10)
+		return;
+	memset(cmd_msg, 0, sizeof(struct mtk_ddic_dsi_msg));
+
+	switch (cmd_num) {
+	case 1:
+		cmd_msg->type[0] = 0x05;
+		break;
+	case 2:
+		cmd_msg->type[0] = 0x15;
+		break;
+	default:
+		cmd_msg->type[0] = 0x39;
+		break;
+	}
+
+	cmd_msg->channel = 0;
+	cmd_msg->flags |= MIPI_DSI_MSG_USE_LPM;
+	cmd_msg->tx_cmd_num = 1;
+	for (i = 0; i < cmd_num; i++) {
+		tx[i] = val[i];
+		DDPMSG("val[%d]:%d\n", i, val[i]);
+	}
+	cmd_msg->tx_buf[0] = tx;
+	cmd_msg->tx_len[0] = cmd_num;
+
+	DDPMSG("send lcm tx_cmd_num:%d\n", (int)cmd_msg->tx_cmd_num);
+	for (i = 0; i < (int)cmd_msg->tx_cmd_num; i++) {
+		DDPMSG("send lcm tx_len[%d]=%d\n",
+			i, (int)cmd_msg->tx_len[i]);
+		for (j = 0; j < (int)cmd_msg->tx_len[i]; j++) {
+			DDPMSG(
+				"send lcm type[%d]=0x%x, tx_buf[%d]--byte:%d,val:0x%x\n",
+				i, cmd_msg->type[i], i, j,
+				*(char *)(cmd_msg->tx_buf[i] + j));
+		}
+	}
+
+	ret = mtk_ddic_dsi_send_cmd(cmd_msg, true);
+	if (ret != 0) {
+		DDPPR_ERR("mtk_ddic_dsi_send_cmd error\n");
+		goto  done;
+	}
+done:
+	vfree(cmd_msg);
+
+	DDPMSG("%s end -\n", __func__);
+}
+
+void mtk_read_ddic_v3(u8 ddic_reg, int ret_num, char ret_val[20])
+{
+                unsigned int j = 0;
+                unsigned int ret_dlen = 0;
+                int ret;
+                struct mtk_ddic_dsi_msg *cmd_msg =
+                                vmalloc(sizeof(struct mtk_ddic_dsi_msg));
+                u8 tx[20] = {0};
+                DDPMSG("%s read val %d\n", __func__, ret_num);
+
+                if (!cmd_msg) {
+                        DDPPR_ERR("cmd msg is NULL\n");
+                        return;
+                }
+                memset(cmd_msg, 0, sizeof(struct mtk_ddic_dsi_msg));
+
+                cmd_msg->channel = 0;
+                cmd_msg->tx_cmd_num = 1;
+                cmd_msg->type[0] = 0x06;
+                tx[0] = ddic_reg;
+                cmd_msg->tx_buf[0] = tx;
+                cmd_msg->tx_len[0] = 1;
+
+                cmd_msg->rx_cmd_num = 1;
+                cmd_msg->rx_buf[0] = vmalloc(20 * sizeof(unsigned char));
+                memset(cmd_msg->rx_buf[0], 0, 20);
+                cmd_msg->rx_len[0] = 20;
+
+                ret = mtk_ddic_dsi_read_cmd(cmd_msg);
+
+                if (ret != 0) {
+                        DDPPR_ERR("%s error\n", __func__);
+                        goto  done;
+                }
+
+                ret_dlen = cmd_msg->rx_len[0];
+                DDPMSG("read lcm addr:0x%x--dlen:%d\n",
+                        *(char *)(cmd_msg->tx_buf[0]), ret_dlen);
+
+                for (j = 0; j < ret_dlen; j++)
+                        ret_val[j] = *(char *)(cmd_msg->rx_buf[0] + j);
+
+done:
+                vfree(cmd_msg->rx_buf[0]);
+                vfree(cmd_msg);
+
+                DDPMSG("%s end -\n", __func__);
+}
+
+        EXPORT_SYMBOL(mtk_read_ddic_v3);
 static void process_dbg_opt(const char *opt)
 {
 	DDPINFO("display_debug cmd %s\n", opt);
@@ -2373,6 +2586,20 @@ static void process_dbg_opt(const char *opt)
 
 		DDPINFO("mipi_ccci:%d\n", en);
 		mtk_disp_mipi_ccci_callback(en, 0);
+/*#ifdef OPLUS_BUG_STABILITY*/
+	} else if (!strncmp(opt, "osc_ccci:", 9)) {
+		unsigned int en, ret;
+
+		ret = sscanf(opt, "osc_ccci:%d\n", &en);
+                if (ret != 1) {
+                        DDPPR_ERR("%d error to parse cmd %s\n",
+                                __LINE__, opt);
+                        return;
+                }
+
+                DDPINFO("osc_ccci:%d\n", en);
+                mtk_disp_osc_ccci_callback(en, 0);
+/*#endif*/
 	} else if (strncmp(opt, "aal:", 4) == 0) {
 		disp_aal_debug(opt + 4);
 	} else if (strncmp(opt, "c3d:", 4) == 0) {
@@ -2819,6 +3046,8 @@ static void process_dbg_opt(const char *opt)
 		else if (strncmp(opt + 10, "0", 1) == 0)
 			g_mml_debug = false;
 
+		DDPMSG("g_mml_debug:%d", g_mml_debug);
+
 		/* this debug cmd only for crtc0 */
 		crtc = list_first_entry(&(drm_dev)->mode_config.crtc_list,
 					typeof(*crtc), head);
@@ -2835,6 +3064,11 @@ static void process_dbg_opt(const char *opt)
 
 		DDPMSG("g_mml_debug:%d, mtk_crtc->is_mml_debug:%d",
 			g_mml_debug, mtk_crtc->is_mml_debug);
+	} else if (strncmp(opt, "adfr:", 5) == 0) {
+		if (strncmp(opt + 5, "on", 2) == 0)
+			g_adfr_log = 1;
+		else if (strncmp(opt + 5, "off", 3) == 0)
+			g_adfr_log = 0;
 	} else if (strncmp(opt, "dual_te:", 8) == 0) {
 		struct drm_crtc *crtc;
 
@@ -2868,6 +3102,26 @@ static void process_dbg_opt(const char *opt)
 		else if (strncmp(opt + 16, "-1", 2) == 0)
 			g_mml_mode = MML_MODE_NOT_SUPPORT;
 		DDPMSG("mml_mode:%d", g_mml_mode);
+
+	}else if (strncmp(opt, "read_ddic:", 10) == 0) {
+		int ret_num, ret;
+		char ret_val[10];
+		u8 ddic_reg;
+
+		ret = sscanf(opt, "read_ddic:%x, %d", &ddic_reg, &ret_num);
+		if (ret < 0) {
+			DDPPR_ERR("%d error to set disp_cm_set %s\n", __LINE__, opt);
+
+			return;
+		}
+
+		DDPMSG("read_ddic:%d,%d\n", ddic_reg, ret_num);
+		mtk_read_ddic_v2(ddic_reg, ret_num, ret_val);
+
+		for (ret = 0; ret < 10; ret++)
+			DDPMSG("read lcm addr:0x%x--byte:%d,val:0x%x\n",
+				ddic_reg, ret, ret_val[ret]);
+
 	} else if (strncmp(opt, "force_mml:", 10) == 0) {
 		struct drm_crtc *crtc;
 		struct mtk_drm_crtc *mtk_crtc;
@@ -2917,6 +3171,7 @@ static void process_dbg_opt(const char *opt)
 		if (mtk_crtc)
 			mtk_crtc->mml_cmd_ir = mml_cmd_ir;
 	}
+
 }
 
 static void process_dbg_cmd(char *cmd)
@@ -3059,6 +3314,7 @@ static ssize_t idletime_proc_set(struct file *file, const char __user *ubuf,
 	struct drm_crtc *crtc;
 	int ret;
 	unsigned long long val;
+	return count;
 
 	ret = kstrtoull_from_user(ubuf, count, 0, &val);
 	if (ret)
@@ -3094,6 +3350,7 @@ static ssize_t idletime_proc_get(struct file *file, char __user *ubuf,
 	unsigned long long val;
 	int n = 0;
 	char buffer[512];
+	return 0;
 
 	if (*ppos != 0)
 		goto out;
@@ -3520,6 +3777,11 @@ void disp_dbg_probe(void)
 	mtkfb_dbgfs = debugfs_create_file("mtkfb", S_IFREG | 0440, NULL,
 					  NULL, &debug_fops);
 
+	/*#ifdef OPLUS_BUG_STABILITY*/
+	if ((get_eng_version() == AGING) || (get_eng_version() == PREVERSION) || (get_eng_version() == HIGH_TEMP_AGING) 
+		|| (get_eng_version() == HIGH_TEMP_AGING) || (get_eng_version() == FACTORY))
+		logger_enable = 1;
+	/*#endif*/
 	d_folder = debugfs_create_dir("displowpower", NULL);
 	if (d_folder) {
 		d_file = debugfs_create_file("idletime", S_IFREG | 0644,
@@ -3662,3 +3924,22 @@ void get_disp_dbg_buffer(unsigned long *addr, unsigned long *size,
 		*start = 0;
 	}
 }
+
+//#ifdef OPLUS_BUG_STABILITY
+struct drm_device *get_drm_device(void){
+		return drm_dev;
+}
+EXPORT_SYMBOL(get_drm_device);
+
+void set_logger_enable(int enable)
+{
+	if (enable == 1) {
+		init_log_buffer();
+		logger_enable = 1;
+	} else if (enable == 0) {
+		logger_enable = 0;
+	}
+}
+EXPORT_SYMBOL(set_logger_enable);
+//#endif
+

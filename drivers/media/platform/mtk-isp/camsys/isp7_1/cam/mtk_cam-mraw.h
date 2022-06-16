@@ -17,6 +17,8 @@
 #define MAX_MRAW_VIDEO_DEV_NUM 2
 #define USING_MRAW_SCQ 1
 
+#define MRAW_CHECK_TS 0
+
 #define MRAW_WRITE_BITS(RegAddr, RegName, FieldName, FieldValue) do {\
 	union RegName reg;\
 	\
@@ -272,7 +274,11 @@ int mtk_cam_mraw_pipeline_config(struct mtk_cam_ctx *ctx, unsigned int idx);
 struct device *mtk_cam_find_mraw_dev(
 	struct mtk_cam_device *cam, unsigned int mraw_mask);
 int mtk_cam_mraw_update_all_buffer_ts(struct mtk_cam_ctx *ctx, u64 ts_ns);
-int mtk_cam_mraw_apply_all_buffers(struct mtk_cam_ctx *ctx);
+//#ifndef OPLUS_FEATURE_CAMERA_COMMON
+//int mtk_cam_mraw_apply_all_buffers(struct mtk_cam_ctx *ctx);
+//#else
+int mtk_cam_mraw_apply_all_buffers(struct mtk_cam_ctx *ctx, bool is_check_ts);
+//#endif
 int mtk_cam_mraw_apply_next_buffer(struct mtk_cam_ctx *ctx, unsigned int pipe_id, u64 ts_ns);
 int mtk_cam_mraw_dev_config(
 	struct mtk_cam_ctx *ctx, unsigned int idx);

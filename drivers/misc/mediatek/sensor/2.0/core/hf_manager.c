@@ -22,7 +22,6 @@
 
 #include "hf_manager.h"
 
-
 static int major;
 static struct class *hf_manager_class;
 static struct task_struct *task;
@@ -289,14 +288,16 @@ int hf_manager_create(struct hf_device *device)
 	uint32_t gain = 0;
 	struct hf_manager *manager = NULL;
 
+	pr_err("mtkdebug:2 %s\n",__func__);
 	if (!device || !device->dev_name ||
 			!device->support_list || !device->support_size)
 		return -EINVAL;
 
+	pr_err("mtkdebug:3 %s\n",__func__);
 	manager = kzalloc(sizeof(*manager), GFP_KERNEL);
 	if (!manager)
 		return -ENOMEM;
-
+	pr_err("mtkdebug:4 %s\n",__func__);
 	manager->hf_dev = device;
 	manager->core = &hfcore;
 	device->manager = manager;
@@ -340,7 +341,7 @@ int hf_manager_create(struct hf_device *device)
 			goto out_err;
 		}
 	}
-
+	pr_err("mtkdebug:5 %s\n",__func__);
 	INIT_LIST_HEAD(&manager->list);
 	mutex_lock(&manager->core->manager_lock);
 	list_add(&manager->list, &manager->core->manager_list);
@@ -1252,7 +1253,7 @@ int hf_client_poll_sensor_timeout(struct hf_client *client,
 
 	/* ret must be long to fill timeout(MAX_SCHEDULE_TIMEOUT) */
 	ret = wait_event_interruptible_timeout(hf_fifo->wait,
-		READ_ONCE(hf_fifo->head) != READ_ONCE(hf_fifo->tail), timeout);
+		hf_fifo->head != hf_fifo->tail, timeout);
 
 	if (!ret)
 		return -ETIMEDOUT;
@@ -1260,7 +1261,7 @@ int hf_client_poll_sensor_timeout(struct hf_client *client,
 		return ret;
 
 	for (;;) {
-		if (READ_ONCE(hf_fifo->head) == READ_ONCE(hf_fifo->tail))
+		if (hf_fifo->head == hf_fifo->tail)
 			return 0;
 		if (count == 0)
 			break;
@@ -1319,7 +1320,7 @@ static ssize_t hf_manager_read(struct file *filp,
 		return -EINVAL;
 
 	for (;;) {
-		if (READ_ONCE(hf_fifo->head) == READ_ONCE(hf_fifo->tail))
+		if (hf_fifo->head == hf_fifo->tail)
 			return 0;
 		if (count == 0)
 			break;
@@ -1363,7 +1364,7 @@ static unsigned int hf_manager_poll(struct file *filp,
 
 	poll_wait(filp, &hf_fifo->wait, wait);
 
-	if (READ_ONCE(hf_fifo->head) != READ_ONCE(hf_fifo->tail))
+	if (hf_fifo->head != hf_fifo->tail)
 		mask |= POLLIN | POLLRDNORM;
 
 	return mask;
@@ -1580,7 +1581,39 @@ static const struct proc_ops hf_manager_proc_fops = {
 	.proc_read           = seq_read,
 	.proc_lseek         = seq_lseek,
 };
+#define REMOVE_SENSOR_TEST
+#ifdef REMOVE_SENSOR_TEST
+extern void register_notify_handler(int (*remove_notify_handler) (void));
+static int sensor_remove_notify_handler (void)
+{
+    int i = 0;
+    struct hf_core *core = (struct hf_core *)&hfcore;
+    struct hf_manager *manager = NULL;
+    struct hf_device *device = NULL;
+    int sensor_type = SENSOR_TYPE_INVALID;
+    int ret = 0;
+    pr_info("sensor_remove_notify_handler begin.\n");
 
+    mutex_lock(&core->manager_lock);
+    list_for_each_entry(manager, &core->manager_list, list) {
+        device = READ_ONCE(manager->hf_dev);
+        if (!device || !device->support_list || !device->enable)
+            continue;
+
+        for (i = 0; i < device->support_size; ++i) {
+            sensor_type = device->support_list[i].sensor_type;
+            pr_info("sensor_remove_notify_handler disable sensor %d.\n", sensor_type);
+            ret = device->enable(device, sensor_type, false);
+            if(ret < 0) {
+                pr_info("sensor_remove_notify_handler disable sensor type %d fail.\n", sensor_type);
+            }
+        }
+    }
+    mutex_unlock(&core->manager_lock);
+    pr_info("sensor_remove_notify_handler end.\n");
+    return NOTIFY_DONE;
+}
+#endif
 static int __init hf_manager_init(void)
 {
 	int ret;
@@ -1623,6 +1656,9 @@ static int __init hf_manager_init(void)
 		goto err_device;
 	}
 	sched_setscheduler(task, SCHED_FIFO, &param);
+#ifdef REMOVE_SENSOR_TEST
+    register_notify_handler(sensor_remove_notify_handler);
+#endif
 	return 0;
 
 err_device:

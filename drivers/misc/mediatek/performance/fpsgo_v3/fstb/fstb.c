@@ -50,6 +50,7 @@ EXPORT_SYMBOL(fpsgo2msync_hint_frameinfo_fp);
 	} while (0)
 
 static struct kobject *fstb_kobj;
+static int fstb_frame_info_cnt = 0;
 static int max_fps_limit = DEFAULT_DFPS;
 static int dfps_ceiling = DEFAULT_DFPS;
 static int min_fps_limit = CFG_MIN_FPS_LIMIT;
@@ -247,6 +248,11 @@ int fpsgo_ctrl2fstb_switch_fstb(int enable)
 				&fstb_frame_infos, hlist) {
 			hlist_del(&iter->hlist);
 			vfree(iter);
+			fstb_frame_info_cnt =
+				fstb_frame_info_cnt - 1 < 0 ?
+				0 : fstb_frame_info_cnt - 1;
+			mtk_fstb_dprintk_always("%s %d\n",
+					__func__, fstb_frame_info_cnt);
 		}
 	} else {
 
@@ -418,11 +424,18 @@ static struct FSTB_FRAME_INFO *add_new_frame_info(int pid, unsigned long long bu
 	int hwui_flag)
 {
 	struct task_struct *tsk = NULL, *gtsk = NULL;
-		struct FSTB_FRAME_INFO *new_frame_info;
+		struct FSTB_FRAME_INFO *new_frame_info = NULL;
+
+	if (fstb_frame_info_cnt > FSTB_FRAME_INFO_MAX_CNT)
+		goto out;
 
 	new_frame_info = vmalloc(sizeof(*new_frame_info));
 	if (new_frame_info == NULL)
 		goto out;
+
+	fstb_frame_info_cnt++;
+	mtk_fstb_dprintk_always("%s %d\n",
+		__func__, fstb_frame_info_cnt);
 
 	new_frame_info->pid = pid;
 	new_frame_info->target_fps = max_fps_limit;
@@ -1127,6 +1140,9 @@ out:
 	}
 	switch (iter->sbe_state) {
 	case -1:
+		eara_fps = -1;
+		tolerence_fps = 0;
+		break;
 	case 0:
 		break;
 	case 1:
@@ -1999,7 +2015,7 @@ void fpsgo_fbt2fstb_query_fps(int pid, unsigned long long bufID,
 
 		v_c_time = total_time;
 
-		if (!adopt_low_fps && iter->queue_fps == -1)
+		if (!adopt_low_fps && (iter->queue_fps == -1 || iter->queue_fps == 0))
 			*target_fps = -1;
 	}
 
@@ -2159,6 +2175,11 @@ static void fstb_fps_stats(struct work_struct *work)
 
 
 			vfree(iter);
+			fstb_frame_info_cnt =
+				fstb_frame_info_cnt - 1 < 0 ?
+				0 : fstb_frame_info_cnt - 1;
+			mtk_fstb_dprintk_always("%s %d\n",
+					__func__, fstb_frame_info_cnt);
 		}
 	}
 
@@ -3162,6 +3183,10 @@ int mtk_fstb_init(void)
 		fpsgo_sysfs_create_file(fstb_kobj,
 				&kobj_attr_set_cam_active);
 		fpsgo_sysfs_create_file(fstb_kobj,
+				&kobj_attr_fstb_fps_bypass_max);
+		fpsgo_sysfs_create_file(fstb_kobj,
+				&kobj_attr_fstb_fps_bypass_min);
+		fpsgo_sysfs_create_file(fstb_kobj,
 				&kobj_attr_tfps_to_powerhal_enable);
 	}
 
@@ -3238,6 +3263,10 @@ int __exit mtk_fstb_exit(void)
 			&kobj_attr_fstb_fps_bypass_min);
 	fpsgo_sysfs_remove_file(fstb_kobj,
 			&kobj_attr_set_cam_active);
+	fpsgo_sysfs_remove_file(fstb_kobj,
+			&kobj_attr_fstb_fps_bypass_max);
+	fpsgo_sysfs_remove_file(fstb_kobj,
+			&kobj_attr_fstb_fps_bypass_min);
 	fpsgo_sysfs_remove_file(fstb_kobj,
 			&kobj_attr_tfps_to_powerhal_enable);
 

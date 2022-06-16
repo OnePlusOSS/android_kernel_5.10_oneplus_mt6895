@@ -519,11 +519,13 @@ static void kwdt_process_kick(int local_bit, int cpu,
 			iowrite32(WDT_RST_RELOAD, toprgu_base + WDT_RST);
 		}
 #endif
+		/* abort suspend when wdt kick */
 		if (dump_timeout == 2)
-			kwdt_dump_func();
+			pm_system_wakeup();
 		else {
 			spin_lock(&lock);
 			if (g_hang_detected && !aee_dump_timer_t) {
+				pm_system_wakeup();
 				aee_dump_timer_t = sched_clock();
 				g_change_tmo = 1;
 				spin_unlock(&lock);
@@ -722,6 +724,9 @@ static int wdt_pm_notify(struct notifier_block *notify_block,
 		lastresume_syst = cnt;
 		break;
 	}
+
+	if (toprgu_base)
+		iowrite32(WDT_RST_RELOAD, toprgu_base + WDT_RST);
 
 	return 0;
 }

@@ -50,6 +50,7 @@ static void scp_sensor_ready_notify_handler(struct sensor_comm_notify *n,
 	unsigned long flags = 0;
 
 	spin_lock_irqsave(&sensor_ready_lock, flags);
+
 	scp_sensor_ready = true;
 	if (scp_platform_ready && scp_sensor_ready) {
 		sensor_ready = true;
@@ -112,6 +113,7 @@ static void sensor_ready_work_fn(struct work_struct *work)
 	 */
 	spin_lock_irqsave(&sensor_ready_lock, flags);
 	status = sensor_ready;
+
 	spin_unlock_irqrestore(&sensor_ready_lock, flags);
 	blocking_notifier_call_chain(&sensor_ready_notifier_head,
 		status, NULL);

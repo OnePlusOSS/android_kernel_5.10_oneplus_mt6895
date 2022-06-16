@@ -15,6 +15,9 @@
 #include "ccci_common_config.h"
 #include "ccci_fsm_internal.h"
 #include "md_sys1_platform.h"
+#include "criticallog_class.h"
+#include "ccci_hif_ccif.h"
+
 
 #ifdef FEATURE_SCP_CCCI_SUPPORT
 #include "scp_ipi.h"
@@ -116,6 +119,9 @@ static int scp_set_clk_cg(unsigned int on)
 {
 	int idx, ret;
 
+	struct md_ccif_ctrl *md_ctrl =
+		(struct md_ccif_ctrl *)ccci_hif_get_by_id(CCIF_HIF_ID);
+
 	if (!(on == 0 || on == 1)) {
 		CCCI_ERROR_LOG(MD_SYS1, FSM,
 			"%s:on=%u is invalid\n", __func__, on);
@@ -126,6 +132,19 @@ static int scp_set_clk_cg(unsigned int on)
 		CCCI_NORMAL_LOG(MD_SYS1, FSM, "%s:on=%u skip set scp clk!\n",
 			__func__, on);
 		return 0;
+	}
+
+	if (on == 0) {
+		if (!md_ctrl || !md_ctrl->ccif2_ap_base ||
+		    !md_ctrl->ccif2_md_base) {
+			CCCI_ERROR_LOG(MD_SYS1, FSM,"%s can't ack ccif2\n",
+				       __func__);
+		} else {
+			ccci_write32(md_ctrl->ccif2_ap_base, APCCIF_ACK, 0xFFFF);
+			ccci_write32(md_ctrl->ccif2_md_base, APCCIF_ACK, 0xFFFF);
+			CCCI_NORMAL_LOG(MD_SYS1, FSM, "%s, ack ccif2 reg done!\n",
+					__func__);
+		}
 	}
 
 	for (idx = 0; idx < ARRAY_SIZE(scp_clk_table); idx++) {
@@ -504,6 +523,12 @@ static int __init ccci_scp_init(void)
 		return ret;
 	}
 	CCCI_NORMAL_LOG(-1, FSM, "ccci scp driver init end\n");
+
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	criticallog_class_init();
+	oplus_criticallog_init();
+	//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
 	return 0;
 }
 

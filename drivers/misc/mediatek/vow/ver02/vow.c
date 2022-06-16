@@ -175,7 +175,7 @@ struct vow_dump_info_t {
 	uint32_t      size;               // size of reserved buffer (bytes)
 	uint32_t      scp_dump_offset[VOW_MAX_CH_NUM]; // return data offset from scp
 	uint32_t      scp_dump_size[VOW_MAX_CH_NUM];   // return data size from scp
-	short         *kernel_dump_addr;  // kernel internal buffer address
+	char         *kernel_dump_addr;  // kernel internal buffer address
 	unsigned int  kernel_dump_idx;    // current index of kernel_dump_addr
 	unsigned int  kernel_dump_size;   // size of kernel_dump_ptr buffer (bytes)
 	unsigned long user_dump_addr;     // addr of user dump buffer
@@ -610,7 +610,11 @@ static int vow_service_GetParameter(unsigned long arg)
 		VOWDRV_DEBUG("vow get parameter fail\n");
 		return -EFAULT;
 	}
-	if (vow_info_ap[3] > VOW_MODEL_SIZE ||
+	if(VENDOR_ID_SPEECH == vow_info_ap[5]) {
+		//ignore aispeech model size
+		VOWDRV_DEBUG("ignore vow Modle size check in case of aispeech %d\n", vow_info_ap[3]);
+	}
+	else if (vow_info_ap[3] > VOW_MODEL_SIZE ||
 	    vow_info_ap[3] < VOW_MODEL_SIZE_THRES) {
 		VOWDRV_DEBUG("vow Modle Size is incorrect %d\n",
 			     vow_info_ap[3]);
@@ -1050,7 +1054,7 @@ static bool vow_service_SetApDumpAddr(unsigned long arg)
 	}
 
 	/* add return condition */
-	if ((vow_info[2] == 0) || (vow_info[3] != kReadVowDumpSize) ||
+	if ((vow_info[2] == 0) || ((vow_info[3] != kReadVowDumpSize) && (vow_info[3] != 4 * kReadVowDumpSize)) ||
 	    (vow_info[4] == 0) || (vow_info[0] >= NUM_DUMP_DATA)) {
 		VOWDRV_DEBUG("%s(): error id %d, addr_%x, size_%x, addr_%x\n",
 		 __func__,
@@ -1402,7 +1406,7 @@ static void vow_service_GetVowDumpData(void)
 					size = temp_dump_info.scp_dump_size[0] * 2;
 				}
 				vow_interleaving(
-					&temp_dump_info.kernel_dump_addr[idx],
+					(short *)&temp_dump_info.kernel_dump_addr[idx],
 					(short *)(temp_dump_info.vir_addr +
 						temp_dump_info.scp_dump_offset[0]),
 					(short *)(temp_dump_info.vir_addr +

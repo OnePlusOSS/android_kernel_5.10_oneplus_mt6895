@@ -48,6 +48,15 @@ inline unsigned int log2_enc(__u32 value)
 	return x;
 }
 
+void mtk_venc_do_gettimeofday(struct timespec64 *tv)
+{
+	struct timespec64 now;
+
+	ktime_get_real_ts64(&now);
+	tv->tv_sec = now.tv_sec;
+	tv->tv_nsec = now.tv_nsec; // micro sec = ((long)(now.tv_nsec)/1000);
+}
+
 static void set_venc_vcp_data(struct mtk_vcodec_ctx *ctx, enum vcp_reserve_mem_id_t id)
 {
 	struct venc_enc_param enc_prm;
@@ -198,7 +207,6 @@ void mtk_enc_put_buf(struct mtk_vcodec_ctx *ctx)
 			dst_vb2_v4l2->vb2_buf.timestamp =
 				src_vb2_v4l2->vb2_buf.timestamp;
 			dst_vb2_v4l2->timecode = src_vb2_v4l2->timecode;
-			dst_vb2_v4l2->flags |= src_vb2_v4l2->flags;
 			dst_vb2_v4l2->sequence = src_vb2_v4l2->sequence;
 			dst_buf = &dst_vb2_v4l2->vb2_buf;
 			dst_buf->planes[0].bytesused = rResult.bs_size;
@@ -1172,8 +1180,10 @@ void mtk_venc_queue_error_event(struct mtk_vcodec_ctx *ctx)
 	static const struct v4l2_event ev_error = {
 		.type = V4L2_EVENT_MTK_VENC_ERROR,
 	};
+	if  (ctx->err_msg)
+		memcpy((void *)ev_error.u.data, &ctx->err_msg, sizeof(ctx->err_msg));
 
-	mtk_v4l2_debug(0, "[%d]", ctx->id);
+	mtk_v4l2_debug(0, "[%d] msg %x", ctx->id, ctx->err_msg);
 	v4l2_event_queue_fh(&ctx->fh, &ev_error);
 }
 

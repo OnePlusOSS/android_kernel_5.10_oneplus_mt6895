@@ -304,6 +304,7 @@ static int mt6375_add_irq_chip(struct mt6375_data *ddata)
 	ddata->irq_chip.irq_bus_sync_unlock = mt6375_irq_sync_unlock;
 	ddata->irq_chip.irq_disable = mt6375_irq_disable;
 	ddata->irq_chip.irq_enable = mt6375_irq_enable;
+	ddata->irq_chip.flags = IRQCHIP_SKIP_SET_WAKE;
 
 	ddata->domain = irq_domain_add_linear(ddata->dev->of_node,
 					      MT6375_IRQ_REGS * 8,
@@ -430,6 +431,9 @@ static int __maybe_unused mt6375_suspend(struct device *dev)
 
 	if (device_may_wakeup(dev))
 		enable_irq_wake(i2c->irq);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	disable_irq(i2c->irq);
+#endif
 	return 0;
 }
 
@@ -437,6 +441,9 @@ static int __maybe_unused mt6375_resume(struct device *dev)
 {
 	struct i2c_client *i2c = to_i2c_client(dev);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	enable_irq(i2c->irq);
+#endif
 	if (device_may_wakeup(dev))
 		disable_irq_wake(i2c->irq);
 	return 0;

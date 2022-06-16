@@ -28,6 +28,16 @@
 #include "adsp_excep.h"
 #include "adsp_logger.h"
 
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define OPLUS_AUDIO_EVENTID_ADSP_RECOVERY_FAIL   (10045)
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
+
 #define ADSP_MISC_BUF_SIZE      0x10000 //64KB
 #define ADSP_TEST_EE_PATTERN    "Assert-Test"
 
@@ -112,8 +122,13 @@ static int dump_buffer(struct adsp_exception_control *ctrl, int coredump_id)
 	pdata = (struct adsp_priv *)ctrl->priv_data;
 
 	if (ctrl->buf_backup) {
+#ifdef  OPLUS_ARCH_EXTENDS
+//Kunhao.Yan@AudioDriver, remove for adsp dump time out waiting
+		ret = 0;
+#else
 		/* wait last dump done, and release buf_backup */
 		ret = wait_for_completion_timeout(&ctrl->done, 10 * HZ);
+#endif
 
 		/* if not release buf, return EBUSY */
 		if (ctrl->buf_backup)
@@ -213,6 +228,11 @@ static void adsp_exception_dump(struct adsp_exception_control *ctrl)
 			      coredump->assert_log);
 	}
 	pr_info("%s", detail);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", coredump->assert_log);
+#endif //CONFIG_OPLUS_FEATURE_MM_FEEDBACK
 
 	/* adsp aed api, only detail information available*/
 	aed_common_exception_api("adsp", (const int *)coredump, coredump_size,
@@ -334,6 +354,10 @@ void adsp_aed_worker(struct work_struct *ws)
 			aee_kernel_exception_api(__FILE__, __LINE__, DB_OPT_DEFAULT,
 						 "[ADSP]",
 						 "ASSERT: ADSP DEAD! Recovery Fail");
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_RECOVERY_FAIL, \
+				MM_FB_KEY_RATELIMIT_5MIN, "payload@@ADSP DEAD! Recovery Fail,ret=%d", ret);
+#endif //CONFIG_OPLUS_FEATURE_MM_FEEDBACK
 	}
 #endif
 	adsp_disable_clock();

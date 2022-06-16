@@ -1,0 +1,12 @@
+config MTK_PLATFORM
+       default n
+       tristate "devinfo mtk platfrom"
+
+config OPLUS_FEATURE_OPROJECT
+       default n
+       tristate "devinfo config feature oproject"
+
+config OPLUS_DEVICE_IFNO
+       default n
+       tristate "devinfo info feature oproject"
+

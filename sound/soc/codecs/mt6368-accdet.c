@@ -29,6 +29,8 @@
 #include <linux/mfd/mt6397/core.h>
 #include "mt6368-accdet.h"
 #include "mt6368.h"
+//support mic and ground switch to fix headset detect bug
+#include "audio/fsa44xx/fsa4480-i2c.h"
 /* grobal variable definitions */
 #define REGISTER_VAL(x)	(x - 1)
 #define HAS_CAP(_c, _x)	(((_c) & (_x)) == (_x))
@@ -61,6 +63,10 @@
 #define EINT_PLUG_OUT			(0)
 #define EINT_PLUG_IN			(1)
 #define EINT_MOISTURE_DETECTED	(2)
+
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
 
 struct mt63xx_accdet_data {
 	struct snd_soc_jack jack;
@@ -187,6 +193,11 @@ static void recover_eint_digital_setting(void);
 static void recover_eint_setting(u32 eintsts);
 static void recover_moisture_setting(u32 moistureID);
 static void send_status_event(u32 cable_type, u32 status);
+
+#ifdef OPLUS_ARCH_EXTENDS
+static bool b_mic_ground_switch = false;
+extern int fsa4480_switch_event(struct device_node *node, enum fsa_function event);
+#endif /* OPLUS_ARCH_EXTENDS */
 
 /* global function declaration */
 inline u32 accdet_read(u32 addr)
@@ -897,6 +908,14 @@ static void send_status_event(u32 cable_type, u32 status)
 			report = SND_JACK_HEADPHONE;
 		else
 			report = 0;
+#ifdef OPLUS_ARCH_EXTENDS
+//support mic and ground switch to fix headset detect bug
+		if (status) {
+			fsa4480_switch_event(NULL, 0);
+			b_mic_ground_switch = true;
+			pr_info("fsa4480_switch_event  mic and ground switch\n");
+		}
+#endif
 		snd_soc_jack_report(&accdet->jack, report,
 				SND_JACK_HEADPHONE);
 		/* when plug 4-pole out, if both AB=3 AB=0 happen,3-pole plug
@@ -1655,6 +1674,14 @@ static void dis_micbias_work_callback(struct work_struct *work)
 		accdet_clear_bit(ACCDET_SW_EN_ADDR,
 			ACCDET_SW_EN_SFT);
 		disable_accdet();
+#ifdef OPLUS_ARCH_EXTENDS
+//support mic and ground switch to fix headset detect bug
+		if (b_mic_ground_switch) {
+			fsa4480_switch_event(NULL, 0);
+			b_mic_ground_switch = false;
+			pr_info("fsa4480_switch_event  mic and ground switch back\n");
+		}
+#endif /* OPLUS_ARCH_EXTENDS */
 	}
 }
 
@@ -2811,8 +2838,14 @@ static void accdet_init_once(void)
 		accdet_write(RG_AUDACCDETMICBIAS0PULLLOW_ADDR,
 			reg | RG_ACCDET_MODE_ANA11_MODE2);
 		/* enable analog fast discharge */
+//#ifdef OPLUS_ARCH_EXTENDS
+//disable fast discharge
 		accdet_update_bits(RG_ANALOGFDEN_ADDR,
-			RG_ANALOGFDEN_SFT, 0x3, 0x3);
+			RG_ANALOGFDEN_SFT, 0x3, 0x2);
+//#else
+//		accdet_update_bits(RG_ANALOGFDEN_ADDR,
+//			RG_ANALOGFDEN_SFT, 0x3, 0x3);
+//#endif
 	} else if (accdet_dts.mic_mode == HEADSET_MODE_6) {
 		/* DCC mode Low cost mode with internal bias,
 		 * bit8 = 1 to use internal bias

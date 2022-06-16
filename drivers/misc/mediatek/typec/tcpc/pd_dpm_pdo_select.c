@@ -17,6 +17,12 @@ static inline void dpm_extract_apdo_info(
 		uint32_t pdo, struct dpm_pdo_info_t *info)
 {
 #if CONFIG_USB_PD_REV30_PPS_SINK
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct tcpc_device *tcpc = tcpc_dev_get_by_name("type_c_port0");
+
+	if (!tcpc)
+		return;
+#endif
 	switch (APDO_TYPE(pdo)) {
 	case APDO_TYPE_PPS:
 		info->apdo_type = DPM_APDO_TYPE_PPS;
@@ -25,9 +31,21 @@ static inline void dpm_extract_apdo_info(
 			info->apdo_type |= DPM_APDO_TYPE_PPS_CF;
 
 		info->pwr_limit = APDO_PPS_EXTRACT_PWR_LIMIT(pdo);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (tcpm_inquire_extra_pps_curr(tcpc)) {
+			info->ma = APDO_PPS_EXTEND_EXTRACT_CURR(pdo);
+			info->vmin = APDO_PPS_EXTEND_EXTRACT_MIN_VOLT(pdo);
+			info->vmax = APDO_PPS_EXTEND_EXTRACT_MAX_VOLT(pdo);
+		} else {
+			info->ma = APDO_PPS_EXTRACT_CURR(pdo);
+			info->vmin = APDO_PPS_EXTRACT_MIN_VOLT(pdo);
+			info->vmax = APDO_PPS_EXTRACT_MAX_VOLT(pdo);
+		}
+#else
 		info->ma = APDO_PPS_EXTRACT_CURR(pdo);
 		info->vmin = APDO_PPS_EXTRACT_MIN_VOLT(pdo);
 		info->vmax = APDO_PPS_EXTRACT_MAX_VOLT(pdo);
+#endif
 		info->uw = info->ma * info->vmax;
 		return;
 	}

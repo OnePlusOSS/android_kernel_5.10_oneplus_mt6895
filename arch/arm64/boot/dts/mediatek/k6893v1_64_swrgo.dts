@@ -243,8 +243,7 @@
 		<226 0 0 0 1 0 0>,
 		<227 0 0 0 1 0 0>;
 };
-
-#include "mediatek/cust_mt6893_touch_1080x2300.dtsi"
+/*#include "mediatek/cust_mt6893_touch_1080x2300.dtsi"*/
 
 &chosen {
 	bootargs_ext = "androidboot.hardware=mt6893";
@@ -361,13 +360,17 @@
 	status = "okay";
 	#address-cells = <1>;
 	#size-cells = <0>;
-	panel_dconfig = <0>;
-	panel@0 {
-		compatible = "mediatek,mtk-drm-panel-drv-dsi";
+	panel1@0 {
+		compatible = "oplus20171_boe_nt37701_1080p_dsi_cmd";
 		reg = <0>;
-		panel_resource = <&ft8756_fhdp_dphy_vdo_truly>;
+		pm-enable-gpios = <&pio 41 0>;
+		reset-gpios = <&pio 42 0>;
+		bias-gpios = <&pio 29 0>;
+		ldo3-supply = <&mt_pmic_vmc_ldo_reg>;
+		/*pm8008ldo1-supply = <&L1P>;*/
+		pinctrl-names = "default";
 		port {
-			panel_in: endpoint {
+			panel_in1: endpoint {
 				remote-endpoint = <&dsi_out>;
 			};
 		};
@@ -375,7 +378,7 @@
 	ports {
 		port {
 			dsi_out: endpoint {
-				remote-endpoint = <&panel_in>;
+				remote-endpoint = <&panel_in1>;
 			};
 		};
 	};
@@ -395,6 +398,27 @@
 		status = "okay";
 	};
 };
+
+/*#ifdef VENDOE_EDIT*/
+&i2c8 {
+        fan53870@35 {
+                compatible = "fan53870";
+                reg = <0x35>;
+                ldo1_min_vol = <800000>;  /*uV*/
+                ldo1_max_vol = <1504000>;
+                ldo1_step_vol = <8000>;
+        };
+        wl2868c@2f {
+                compatible = "wl2868c-i2c";
+                reg = <0x2f>;
+                id_reg = <0x00>;
+                id_val = <0x82>;
+                vin1_vol = <800000>;
+                vin2_vol = <1504000>;
+                en-gpios = <&pio 29 1>;
+        };
+};
+/*#endif*/
 
 &sound {
 	mediatek,speaker-codec {
@@ -574,6 +598,129 @@
 	flavor_bin = "d";
 };
 /* CONSYS end */
+
+&spi4 {
+	status = "disabled";
+};
+
+&i2c0 {
+	status = "okay";
+	synaptics20171@4B {
+        status = "okay";
+		compatible = "synaptics-s3908";
+		reg = <0x4B>;
+		chip-name = "S3908";
+
+		/* Interrupt && Irq-gpio */
+		interrupt-parent = <&pio>;
+		interrupts = <21 0x2008>;
+
+		/* Power Config */
+		vdd_2v8-supply  = <&mt_pmic_vtp_ldo_reg>;
+		vdd_2v8_volt = <3000000>;
+		vcc_1v8-supply  = <&mt_pmic_vfp_ldo_reg>;
+		/* Other HW Resource */
+
+		irq-gpio = <&pio 21 0x2008>;
+		reset-gpio = <&pio 20 0x1>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ctp_ts_i2c_mode &ts_int_active &ts_reset_active>;
+
+		touchpanel,max-num-support = <10>;
+		touchpanel,tx-rx-num = <16 36>;
+		touchpanel,panel-coords = <5400 12000>;
+		touchpanel,display-coords = <1080 2400>;
+		touchpanel,touchmajor-limit = <32 54>;
+		touchpanel,elimination-range = <20 200 200>;
+		touchpanel,int-mode = <1>; /*0: interrupt and disable, 1:interrupt and not disable*/
+		touchpanel,smooth-level = <0 1 2 3 8 10>;
+		touchpanel,sensitive-level = <0 88 70 64 45 10>;
+
+		vid_len = <2>;
+		panel_type = <3>; /*type:8 BOE*/
+		platform_support_project = <20171 20172 20353>;
+		platform_support_project_dir = <20171 20171 20171>;
+		platform_support_project_commandline = "default_commandline","default_commandline","default_commandline";
+
+		prevention,dead_area_width = <0 0>;
+		prevention,makeup_cnt_weight = <4 1 2 2 1>;
+		prevention,large_judge_para = <30 8 8>;
+		prevention,large_corner_judge_para = <30 5 5 80 80 0>;
+
+		prevention,curved_large_area_width = <500 500 400 3 3>;
+		prevention,large_curved_long_judge_para = <7 300 30 15 15 7 4 7 5 3 3>;
+		prevention,large_curved_short_judge_para = <6 300 30 0 15 7 4 7 5 2 3>;
+		prevention,grip_large_detect_time = <150>;
+		prevention,grip_down_delta_time = <150>;
+		prevention,curved_screen;
+
+		prevention,condition_judge_para = <40 30>;
+		prevention,condition_area_width = <0 0 80 80>;
+		prevention,large_area_width = <0 0>;
+		prevention,large_corner_width = <0 0 0>;
+		prevention,eli_area_width = <0 0 0 0 0 0>;
+		prevention,grip_disable_level = <6>;
+
+		/* SW Support Feature Control */
+		health_monitor_v2_support;
+		black_gesture_support;
+		charger_pump_support;
+		lcd_tp_refresh_support;
+		//fw_update_app_support;
+		smart_gesture_support;
+		game_switch_support;
+		report_flow_unlock_support;
+		kernel_grip_support;
+		fingerprint_underscreen_support;
+		pressure_report_support;
+		touchpanel,single-optimized-time = <8>;
+		report_rate_white_list_support;
+		/*
+		 *Virtual Key Config:
+		 *1:touchpanel,button-type: <virtualkey_type  supportted_button-map>
+		 *virtualkey_type:
+		 *Type 1: using board_properties
+		 *Type 2: using same IC (button zone&& touch zone are seprate)
+		 *Type 3: using diffrent IC (button zone&& touch zone are seprate)
+		 *Type 4: No need of virtual key process
+		 *supportted_button-map:select|menu|home|back
+		 *
+		 *2:touchpanel,button-map
+		 *type (X1,Y1)(X2,Y2)(X3,Y3)(Width_X,Hight_Y)--Only when button-type is 0
+		 */
+		touchpanel,button-type = <4>;
+		touchpanel.button-TRx = <0 0>;
+
+		S3908 {
+			report_rate_default = <90>;
+			report_rate_game_value = <2>;
+		};
+	};
+};
+
+&pio {
+	ts_int_active: ts_int_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO21__FUNC_GPIO21>;
+			slew-rate = <0>;
+			bias-pull-up;
+		};
+	};
+	ts_reset_active: ts_reset_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO20__FUNC_GPIO20>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+    ctp_ts_i2c_mode: ctp_ts_i2c_mode {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO204__FUNC_SCL0>,
+				<PINMUX_GPIO205__FUNC_SDA0>;
+			bias-pull-up;
+		};
+	};
+};
 
 &scp {
 		secure_dump = "disable";	/* secure dump via ATF */

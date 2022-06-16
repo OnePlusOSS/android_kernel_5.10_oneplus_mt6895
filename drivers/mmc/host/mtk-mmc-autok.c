@@ -3380,7 +3380,7 @@ int execute_online_tuning(struct msdc_host *host, u8 *res)
 				if ((ret & (E_RES_CMD_TMO
 						    | E_RES_RSP_CRC)) != 0) {
 					AUTOK_RAWPRINT
-					    ("[AUTOK]Err CMD Fail@RD\r\n");
+					    ("[AUTOK]Err CMD Fail@RD, ret = 0x%08x\r\n", ret);
 					host->autok_error = -1;
 					goto fail;
 				} else if ((ret & (E_RES_DAT_CRC

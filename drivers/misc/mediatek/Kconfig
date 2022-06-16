@@ -145,6 +145,9 @@ source "drivers/misc/mediatek/irtx/Kconfig"
 source "drivers/misc/mediatek/pwm/Kconfig"
 source "drivers/misc/mediatek/sensor/Kconfig"
 source "drivers/misc/mediatek/gate_ic/Kconfig"
+#ifdef OPLUS_BUG_STABILITY
+source "drivers/misc/mediatek/boot_common/Kconfig"
+#endif
 endmenu # Other Peripheral
 
 menu "Performance"

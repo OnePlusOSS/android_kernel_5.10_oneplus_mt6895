@@ -11,6 +11,7 @@
 
 #define MAX_EEPROM_SIZE_32K 0x8000
 #define MAX_EEPROM_SIZE_16K 0x4000
+#define MAX_EEPROM_SIZE_8K  0x2000
 
 struct stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	/*Below is commom sensor */
@@ -35,6 +36,16 @@ struct stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	{IMX350_SENSOR_ID, 0xA0, Common_read_region},
 	{IMX386_MONO_SENSOR_ID, 0xA0, Common_read_region},
 	{IMX499_SENSOR_ID, 0xA0, Common_read_region},
+	{IMX709_SENSOR_ID, 0xA8, Common_read_region},
+	{IMX766_SENSOR_ID_21641, 0xA0, Common_read_region, MAX_EEPROM_SIZE_32K},
+	{IMX355_SENSOR_ID_21641, 0xA2, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{S5K3P9SP_SENSOR_ID_21641, 0xA8, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{GC02M1_SENSOR_ID_21641, 0xA4, Common_read_region},
+	{OV64B_SENSOR_ID_21143, 0xA0, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{IMX355_SENSOR_ID_21143, 0xA2, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{S5K3P9SP_SENSOR_ID_21143, 0xA8, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{GC02M1_SENSOR_ID_21143, 0xA4, Common_read_region, MAX_EEPROM_SIZE_8K},
+        {OV64B_SENSOR_ID_22801, 0xA0, Common_read_region, MAX_EEPROM_SIZE_16K},
 	/*  ADD before this line */
 	{0, 0, 0}       /*end of list */
 };

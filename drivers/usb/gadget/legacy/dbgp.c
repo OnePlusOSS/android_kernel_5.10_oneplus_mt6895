@@ -357,7 +357,6 @@ static int dbgp_setup(struct usb_gadget *gadget,
 		}
 	}
 
-
 	if (request == USB_REQ_GET_DESCRIPTOR) {
 		switch (value>>8) {
 		case USB_DT_DEVICE:

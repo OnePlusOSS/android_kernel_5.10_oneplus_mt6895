@@ -15,6 +15,9 @@
 #else
 #include "mtk-cmdq-ext.h"
 #endif
+/*#ifdef OPLUS_BUG_STABILITY*/
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+/*#endif*/
 
 #include "mtk_drm_drv.h"
 #include "mtk_drm_crtc.h"
@@ -39,6 +42,10 @@
 #include "slbc_ops.h"
 #include "../mml/mtk-mml.h"
 #include <soc/mediatek/smi.h>
+
+#if defined(CONFIG_PXLW_IRIS)
+#include "iris_api.h"
+#endif
 
 int mtk_dprec_mmp_dump_ovl_layer(struct mtk_plane_state *plane_state);
 
@@ -303,6 +310,8 @@ int mtk_dprec_mmp_dump_ovl_layer(struct mtk_plane_state *plane_state);
 #define FLD_FBDC_FILTER_EN			REG_FLD_MSB_LSB(28, 28)
 #define FBDC_8XE_MODE BIT(24)
 #define FBDC_FILTER_EN BIT(28)
+#define DISP_REG_OVL_SMI_2ND_CFG (0x8F0UL)
+
 
 #define EXT_SECURE_OFFSET 4
 
@@ -402,6 +411,17 @@ static u32 sRGB_to_DCI_P3[CSC_COEF_NUM] = {215603, 46541, 0,     8702,  253442,
 
 static u32 DCI_P3_to_sRGB[CSC_COEF_NUM] = {
 	321111, -58967, 0, -11025, 273169, 0, -5148, -20614, 287906};
+
+#if defined(CONFIG_PXLW_IRIS)
+static u32 hdrYUV[CSC_COEF_NUM] = {
+			0x00010000, 0x00000000, 0x00000000,
+			0x00000000, 0x00010000, 0x00000000,
+			0x00000000, 0x00000000, 0x00010000,};
+static u32 hdrRGB10[CSC_COEF_NUM] =  {
+			0x00012A15, 0x00000000, 0x0001ADBE,
+			0x00012A15, 0xFFFFD00B, 0xFFFF597E,
+			0x00012A15, 0x0002244B, 0x00000000,};
+#endif
 
 #define DECLARE_MTK_OVL_COLORSPACE(EXPR)                                       \
 	EXPR(OVL_SRGB)                                                         \
@@ -966,6 +986,13 @@ static void mtk_ovl_config(struct mtk_ddp_comp *comp,
 		       comp->regs_pa + DISP_REG_OVL_ROI_BGCLR, OVL_ROI_BGCLR,
 		       ~0);
 
+
+	if (mtk_ovl_layer_num(comp) == 4)
+		cmdq_pkt_write(handle, comp->cmdq_base,
+				   comp->regs_pa + DISP_REG_OVL_SMI_2ND_CFG, 0x7F,
+				   ~0);
+
+
 	mtk_ovl_golden_setting(comp, cfg, handle);
 }
 
@@ -1041,9 +1068,10 @@ static void mtk_ovl_layer_off(struct mtk_ddp_comp *comp, unsigned int idx,
 		cmdq_pkt_write(handle, comp->cmdq_base,
 			       comp->regs_pa + DISP_REG_OVL_SRC_CON, 0,
 			       BIT(idx));
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DISP_REG_OVL_RDMA_CTRL(idx), 0,
-			       ~0);
+		/* TODO: only disable RDMA with valid lye_blob information */
+		//cmdq_pkt_write(handle, comp->cmdq_base,
+		//	       comp->regs_pa + DISP_REG_OVL_RDMA_CTRL(idx), 0,
+		//	       ~0);
 	}
 }
 
@@ -1225,6 +1253,14 @@ static u32 *mtk_get_ovl_csc(enum mtk_ovl_colorspace in,
 	ovl_csc[OVL_SRGB][OVL_P3] = sRGB_to_DCI_P3;
 	ovl_csc[OVL_P3][OVL_SRGB] = DCI_P3_to_sRGB;
 
+#if defined(CONFIG_PXLW_IRIS)
+	if (iris_is_chip_supported()) {
+		if (iris_get_hdr_enable() == 1)
+			ovl_csc[in][out] = hdrYUV;
+		else if (iris_get_hdr_enable() == 2)
+			ovl_csc[in][out] = hdrRGB10;
+	}
+#endif
 	inited = true;
 
 done:
@@ -1300,7 +1336,7 @@ static int mtk_ovl_color_manage(struct mtk_ddp_comp *comp, unsigned int idx,
 	u32 wcg_mask = 0, wcg_value = 0, sel_mask = 0, sel_value = 0, reg = 0;
 	enum mtk_drm_color_mode lcm_cm;
 	enum mtk_drm_dataspace lcm_ds, plane_ds;
-	struct mtk_panel_params *params;
+	struct mtk_panel_params *params = NULL;
 	int i;
 
 	if (state->comp_state.comp_id) {
@@ -1317,8 +1353,8 @@ static int mtk_ovl_color_manage(struct mtk_ddp_comp *comp, unsigned int idx,
 	    !pending->enable)
 		goto done;
 
-	params = mtk_drm_get_lcm_ext_params(crtc);
-	if (params)
+	//params = mtk_drm_get_lcm_ext_params(crtc);
+	if (params != NULL)
 		lcm_cm = params->lcm_color_mode;
 	else
 		lcm_cm = MTK_DRM_COLOR_MODE_NATIVE;
@@ -1326,6 +1362,10 @@ static int mtk_ovl_color_manage(struct mtk_ddp_comp *comp, unsigned int idx,
 	lcm_ds = mtk_ovl_map_lcm_color_mode(lcm_cm);
 	plane_ds =
 		(enum mtk_drm_dataspace)pending->prop_val[PLANE_PROP_DATASPACE];
+
+    if (plane_ds == MTK_DRM_DATASPACE_DISPLAY_P3) {
+        lcm_ds = MTK_DRM_DATASPACE_DISPLAY_P3;
+    }
 
 	DDPDBG("%s+ idx:%d ds:0x%08x->0x%08x\n", __func__, idx, plane_ds,
 	       lcm_ds);
@@ -3556,6 +3596,8 @@ int mtk_ovl_dump(struct mtk_ddp_comp *comp)
 	/* For debug MPU violation issue */
 	mtk_cust_dump_reg(baddr, 0xFC0, 0xFC4, 0xFC8, -1);
 
+	mtk_cust_dump_reg(baddr, 0x8F0, -1, -1, -1);
+
 	mtk_ovl_dump_golden_setting(comp);
 
 	return 0;
@@ -4058,6 +4100,9 @@ static int mtk_disp_ovl_probe(struct platform_device *pdev)
 		DDPAEE("%s:%d, failed to request irq:%d ret:%d comp_id:%d\n",
 				__func__, __LINE__,
 				irq, ret, comp_id);
+		/*#ifdef OPLUS_BUG_STABILITY*/
+		mm_fb_display_kevent("DisplayDriverID@@501$$", MM_FB_KEY_RATELIMIT_1H, "ovl_probe error irq:%d ret:%d comp_id:%d", irq, ret, comp_id);
+		/*#endif*/
 		return ret;
 	}
 

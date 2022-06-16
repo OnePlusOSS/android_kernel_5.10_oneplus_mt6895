@@ -750,6 +750,10 @@ static void fbt_set_cap_margin_locked(int set)
 		set_capacity_margin(def_capacity_margin);
 #endif
 
+#if defined(CONFIG_SCHEDUTIL_USE_TL)
+	set_capacity_margin_dvfs_changed(!!set);
+#endif /* CONFIG_SCHEDUTIL_USE_TL */
+
 	set_cap_margin = set;
 }
 
@@ -761,7 +765,11 @@ static void fbt_set_idleprefer_locked(int enable)
 	if (set_idleprefer == enable)
 		return;
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	xgf_trace("fpsgo %s idelprefer", enable?"enable":"disbale");
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	fpsgo_main_trace("fpsgo %s idelprefer", enable?"enable":"disable");
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	fpsgo_sentcmd(FPSGO_SET_IDLE_PREFER, enable, -1);
 	set_idleprefer = enable;
 }
@@ -2020,9 +2028,6 @@ static void fbt_do_sjerk(struct work_struct *work)
 
 	mutex_lock(&fbt_mlock);
 
-	if (thr->boost_info.sbe_rescue != 0)
-		goto EXIT;
-
 	if (thr->pid != max_blc_pid || thr->buffer_id != max_blc_buffer_id)
 		goto EXIT;
 
@@ -2094,9 +2099,6 @@ static void fbt_do_jerk_locked(struct render_info *thr, struct fbt_jerk *jerk, i
 	int do_jerk;
 
 	if (!thr)
-		return;
-
-	if (thr->boost_info.sbe_rescue != 0)
 		return;
 
 	blc_wt  = thr->boost_info.last_blc;
@@ -3317,19 +3319,29 @@ static int fbt_boost_policy(
 
 	}
 
-	if (boost_info->sbe_rescue == 0) {
-		fbt_set_limit(blc_wt, pid, buffer_id,
-			thread_info->dep_valid_size, thread_info->dep_arr, thread_info, t_cpu_cur);
+	boost_info->last_normal_blc = blc_wt;
 
-		if (!boost_ta)
-			fbt_set_min_cap_locked(thread_info, blc_wt, FPSGO_JERK_INACTIVE);
+	if (thread_info->boost_info.sbe_rescue && thread_info->boost_info.keep_enhance) {
+		fpsgo_systrace_c_fbt(pid, buffer_id, blc_wt, "last_normal_blc");
+		blc_wt += thread_info->boost_info.keep_enhance;
+		blc_wt = clamp(blc_wt, 1U, 100U);
+	} else if (thread_info->boost_info.keep_enhance) {
+		thread_info->boost_info.keep_enhance = 0;
+		fpsgo_systrace_c_fbt(pid, buffer_id, 0, "keep_enhance");
 	}
+
+	fbt_set_limit(blc_wt, pid, buffer_id,
+		thread_info->dep_valid_size, thread_info->dep_arr, thread_info, t_cpu_cur);
+
+	if (!boost_ta)
+		fbt_set_min_cap_locked(thread_info, blc_wt, FPSGO_JERK_INACTIVE);
 
 	boost_info->target_fps = target_fps;
 	boost_info->target_time = target_time;
 	boost_info->last_blc = blc_wt;
-	boost_info->last_normal_blc = blc_wt;
 	boost_info->cur_stage = FPSGO_JERK_INACTIVE;
+	boost_info->uboost_rescue = 0;
+	fpsgo_systrace_c_fbt(pid, buffer_id, 0, "uboost_rescue");
 	mutex_unlock(&fbt_mlock);
 
 	mutex_lock(&blc_mlock);
@@ -3892,6 +3904,13 @@ static void fbt_reset_boost(struct render_info *thr)
 	boost->floor = 0;
 	boost->reset_floor_bound = 0;
 
+	boost->uboost_rescue = 0;
+	boost->sbe_rescue = 0;
+	boost->keep_enhance = 0;
+	fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "uboost_rescue");
+	fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "sbe rescue");
+	fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "keep_enhance");
+
 	mutex_lock(&fbt_mlock);
 	if (!boost_ta)
 		fbt_set_min_cap_locked(thr, 0, FPSGO_JERK_INACTIVE);
@@ -4434,6 +4453,9 @@ void fpsgo_uboost2fbt_uboost(struct render_info *thr)
 	if (!thr)
 		return;
 
+	if (thr->boost_info.sbe_rescue != 0)
+		return;
+
 	pld = kcalloc(cluster_num, sizeof(struct cpu_ctrl_data), GFP_KERNEL);
 	if (!pld)
 		return;
@@ -4457,6 +4479,10 @@ void fpsgo_uboost2fbt_uboost(struct render_info *thr)
 		fbt_set_hard_limit_locked(FPSGO_HARD_CEILING, pld);
 
 		thr->boost_info.cur_stage = FPSGO_JERK_UBOOST;
+		thr->boost_info.uboost_rescue = 1;
+		thr->boost_info.keep_enhance = uboost_enhance_f;
+		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 1, "uboost_rescue");
+		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, uboost_enhance_f, "keep_enhance");
 
 		if (thr->pid == max_blc_pid && thr->buffer_id == max_blc_buffer_id) {
 			max_blc_stage = FPSGO_JERK_UBOOST;
@@ -4493,7 +4519,7 @@ void fpsgo_sbe2fbt_rescue(struct render_info *thr, int start, int enhance)
 	int temp_blc_dep_num = 0;
 	struct fpsgo_loading temp_blc_dep[MAX_DEP_NUM];
 
-	if (!thr || !sbe_rescue_enable)
+	if (!thr)
 		return;
 
 	pld = kcalloc(cluster_num, sizeof(struct cpu_ctrl_data), GFP_KERNEL);
@@ -4505,6 +4531,13 @@ void fpsgo_sbe2fbt_rescue(struct render_info *thr, int start, int enhance)
 	if (start) {
 		if (thr->boost_info.sbe_rescue != 0)
 			goto leave;
+
+		if (thr->boost_info.uboost_rescue != 0) {
+			thr->boost_info.sbe_rescue = 1;
+			fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 1, "sbe rescue");
+			goto leave;
+		}
+
 		floor = thr->boost_info.last_blc;
 		if (!floor)
 			goto leave;
@@ -4519,7 +4552,11 @@ void fpsgo_sbe2fbt_rescue(struct render_info *thr, int start, int enhance)
 
 		if (!blc_wt)
 			goto leave;
+
 		thr->boost_info.sbe_rescue = 1;
+		thr->boost_info.keep_enhance = new_enhance;
+		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 1, "sbe rescue");
+		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, new_enhance, "keep_enhance");
 
 		if (thr->boost_info.cur_stage != FPSGO_JERK_SECOND) {
 			blc_wt = fbt_limit_capacity(blc_wt, 1);
@@ -4541,18 +4578,15 @@ void fpsgo_sbe2fbt_rescue(struct render_info *thr, int start, int enhance)
 			fbt_set_min_cap_locked(thr, blc_wt, 1);
 
 		thr->boost_info.last_blc = blc_wt;
-		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 1, "sbe rescue");
-
-		/* support mode: sbe rescue until queue end */
-		if (start == SBE_RESCUE_MODE_UNTIL_QUEUE_END) {
-			thr->boost_info.sbe_rescue = 0;
-			fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "sbe rescue");
-		}
-
 	} else {
 		if (thr->boost_info.sbe_rescue == 0)
 			goto leave;
+
 		thr->boost_info.sbe_rescue = 0;
+		thr->boost_info.keep_enhance = 0;
+		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "sbe rescue");
+		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "keep_enhance");
+
 		blc_wt = thr->boost_info.last_normal_blc;
 		if (!blc_wt)
 			goto leave;
@@ -4566,8 +4600,7 @@ void fpsgo_sbe2fbt_rescue(struct render_info *thr, int start, int enhance)
 			fbt_set_boost_value(blc_wt);
 			max_blc_cur = blc_wt;
 		} else
-			fbt_set_min_cap_locked(thr, blc_wt, 1);
-		fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, 0, "sbe rescue");
+			fbt_set_min_cap_locked(thr, blc_wt, FPSGO_JERK_INACTIVE);
 	}
 	fpsgo_systrace_c_fbt(thr->pid, thr->buffer_id, blc_wt, "perf idx");
 
@@ -4826,7 +4859,11 @@ int fpsgo_ctrl2fbt_switch_fbt(int enable)
 	}
 
 	fbt_enable = enable;
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	xgf_trace("fbt_enable %d", fbt_enable);
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	fpsgo_main_trace("fbt_enable %d", fbt_enable);
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	if (!enable)
 		fbt_setting_exit();
@@ -4836,6 +4873,11 @@ int fpsgo_ctrl2fbt_switch_fbt(int enable)
 	if (!enable && !boost_ta)
 		fpsgo_clear_uclamp_boost();
 
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (enable)
+		fbt_set_idleprefer_locked(fbt_idleprefer_enable);
+
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	return 0;
 }
 
@@ -4851,17 +4893,28 @@ int fbt_switch_idleprefer(int enable)
 
 	mutex_lock(&fbt_mlock);
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (!fbt_enable) {
 		mutex_unlock(&fbt_mlock);
 		return 0;
 	}
 
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	last_enable = fbt_idleprefer_enable;
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (last_enable && !enable)
 		fbt_set_idleprefer_locked(0);
 	else if (!last_enable && enable)
 		fbt_set_idleprefer_locked(1);
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	if (fbt_enable) {
+		if (last_enable && !enable)
+			fbt_set_idleprefer_locked(0);
+		else if (!last_enable && enable)
+			fbt_set_idleprefer_locked(1);
+	}
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	fbt_idleprefer_enable = enable;
 

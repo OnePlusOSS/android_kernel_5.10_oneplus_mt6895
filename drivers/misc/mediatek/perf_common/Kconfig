@@ -15,3 +15,9 @@ config MTK_PERF_TRACKER
 	  be built-in or not. It supports system related performance index
 	  via trace. If you are not sure about whether to enable it or not,
 	  please set n.
+
+config OPLUS_FEATURE_FREQ_LIMIT_DEBUG
+	bool "debug who limit the frequency very serious"
+	help
+	  collect the frequency-limited thread information and dump it
+	  when capturing traces.

@@ -567,6 +567,8 @@ static void mtk_gamma_set(struct mtk_ddp_comp *comp,
 	}
 }
 
+#if 0
+
 static void calculateGammaLut(struct DISP_GAMMA_LUT_T *data)
 {
 	int i;
@@ -643,7 +645,7 @@ void mtk_trans_gain_to_gamma(struct drm_crtc *crtc,
 		}
 	}
 }
-
+#endif
 static int mtk_gamma_user_cmd(struct mtk_ddp_comp *comp,
 	struct cmdq_pkt *handle, unsigned int cmd, void *data)
 {

@@ -101,4 +101,7 @@ obj-$(CONFIG_MTK_CPUQOS_V3) += cache-auditor/
 obj-$(CONFIG_MTK_GATE_IC) += gate_ic/
 obj-$(CONFIG_MTK_WIDEVINE_DRM) += widevine_drm/
 obj-$(CONFIG_INTERCONNECT_MTK_MMQOS_COMMON) += mmqos/
+#ifdef OPLUS_BUG_STABILITY
+obj-$(CONFIG_MTK_BOOT_COMMON) += boot_common/
+#endif
 obj-$(CONFIG_MTK_TIMER_ACCURACY_TEST) += timer/

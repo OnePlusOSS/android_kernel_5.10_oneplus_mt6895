@@ -99,6 +99,8 @@ struct fbt_boost_info {
 	unsigned int last_blc;
 	unsigned int last_normal_blc;
 	unsigned int sbe_rescue;
+	int uboost_rescue;
+	int keep_enhance;
 
 	/* adjust loading */
 	int loading_weight;

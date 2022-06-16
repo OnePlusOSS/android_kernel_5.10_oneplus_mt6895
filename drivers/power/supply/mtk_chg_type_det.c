@@ -18,6 +18,10 @@
 
 #define MTK_CTD_DRV_VERSION	"1.0.0_MTK"
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+extern bool oplus_chg_wake_update_work(void);
+#endif
+
 struct mtk_ctd_info {
 	struct device *dev;
 	/* device tree */
@@ -36,6 +40,8 @@ struct mtk_ctd_info {
 	/* suspend notify */
 	struct notifier_block pm_nb;
 	bool is_suspend;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	bool ignore_usb;
 };
 
 enum {
@@ -68,7 +74,8 @@ static int typec_attach_thread(void *data)
 {
 	struct mtk_ctd_info *mci = data;
 	int ret = 0;
-	bool attach;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	bool attach, ignore_usb;
 	union power_supply_propval val;
 
 	pr_info("%s: ++\n", __func__);
@@ -84,28 +91,67 @@ static int typec_attach_thread(void *data)
 			break;
 		mutex_lock(&mci->attach_lock);
 		attach = mci->typec_attach;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		ignore_usb = mci->ignore_usb;
 		atomic_set(&mci->chrdet_start, 0);
 		mutex_unlock(&mci->attach_lock);
 		val.intval = attach;
 		pr_notice("%s bc12_sel:%d, attach:%d\n",
 			  __func__, mci->bc12_sel, attach);
 		if (mci->bc12_sel == MTK_CTD_BY_SUBPMIC) {
-			ret = power_supply_set_property(mci->bc12_psy,
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+			if (ignore_usb) {
+				ret = power_supply_set_property(mci->bc12_psy,
+						POWER_SUPPLY_PROP_POWER_NOW, &val);
+				if (ret < 0)
+					dev_info(mci->dev, "%s: set power_now fail(%d)\n",
+						 __func__, ret);
+
+				if (tcpm_inquire_typec_attach_state(mci->tcpc_dev) ==
+							   TYPEC_ATTACHED_AUDIO)
+					val.intval = attach ?
+						     POWER_SUPPLY_USB_TYPE_DCP:
+						     POWER_SUPPLY_USB_TYPE_UNKNOWN;
+				else /* Source to Sink */
+					val.intval = attach ?
+						     POWER_SUPPLY_USB_TYPE_SDP:
+						     POWER_SUPPLY_USB_TYPE_UNKNOWN;
+				ret = power_supply_set_property(mci->bc12_psy,
+						POWER_SUPPLY_PROP_USB_TYPE, &val);
+				if (ret < 0)
+					dev_info(mci->dev, "%s: set charge type fail(%d)\n",
+						 __func__, ret);
+				val.intval = POWER_SUPPLY_TYPE_USB;
+				ret = power_supply_set_property(mci->bc12_psy,
+						POWER_SUPPLY_PROP_TYPE, &val);
+				if (ret < 0)
+					dev_info(mci->dev, "%s: set psy type fail(%d)\n",
+						 __func__, ret);
+				power_supply_changed(mci->bc12_psy);
+			} else {
+				ret = power_supply_set_property(mci->bc12_psy,
 						POWER_SUPPLY_PROP_ONLINE, &val);
-			if (ret < 0)
-				dev_info(mci->dev, "%s: set online fail(%d)\n",
-					__func__, ret);
+				if (ret < 0)
+					dev_info(mci->dev, "%s: set online fail(%d)\n",
+						__func__, ret);
+			}
 		} else
 			mtk_ext_get_charger_type(mci, attach);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		oplus_chg_wake_update_work();
+#endif
+
 	}
 	return ret;
 }
 
 static void handle_typec_attach(struct mtk_ctd_info *mci,
-				bool en)
+				bool en, bool ignore_usb)
 {
 	mutex_lock(&mci->attach_lock);
 	mci->typec_attach = en;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	mci->ignore_usb = ignore_usb;
 	atomic_inc(&mci->chrdet_start);
 	wake_up_interruptible(&mci->attach_wq);
 	mutex_unlock(&mci->attach_lock);
@@ -119,6 +165,13 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 						    struct mtk_ctd_info, pd_nb);
 
 	switch (event) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	case TCP_NOTIFY_SINK_VBUS:
+		if (tcpm_inquire_typec_attach_state(mci->tcpc_dev) == TYPEC_ATTACHED_AUDIO) {
+			pr_info("%s: TCP sink_vbus\n", __func__);
+			handle_typec_attach(mci, !!noti->vbus_state.mv, true);
+		}
+	break;
 	case TCP_NOTIFY_TYPEC_STATE:
 		if (noti->typec_state.old_state == TYPEC_UNATTACHED &&
 		    (noti->typec_state.new_state == TYPEC_ATTACHED_SNK ||
@@ -126,10 +179,11 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 		    noti->typec_state.new_state == TYPEC_ATTACHED_NORP_SRC)) {
 			pr_info("%s USB Plug in, pol = %d\n", __func__,
 					noti->typec_state.polarity);
-			handle_typec_attach(mci, true);
+			handle_typec_attach(mci, true, false);
 		} else if ((noti->typec_state.old_state == TYPEC_ATTACHED_SNK ||
 		    noti->typec_state.old_state == TYPEC_ATTACHED_CUSTOM_SRC ||
-			noti->typec_state.old_state == TYPEC_ATTACHED_NORP_SRC)
+			noti->typec_state.old_state == TYPEC_ATTACHED_NORP_SRC ||
+			noti->typec_state.old_state == TYPEC_ATTACHED_AUDIO)
 			&& noti->typec_state.new_state == TYPEC_UNATTACHED) {
 			pr_info("%s USB Plug out\n", __func__);
 			if (mci->tcpc_kpoc) {
@@ -145,15 +199,18 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 					}
 				}
 			}
-			handle_typec_attach(mci, false);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+			handle_typec_attach(mci, false, false);
 		} else if (noti->typec_state.old_state == TYPEC_ATTACHED_SRC &&
 			noti->typec_state.new_state == TYPEC_ATTACHED_SNK) {
 			pr_info("%s Source_to_Sink\n", __func__);
-			handle_typec_attach(mci, true);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+			handle_typec_attach(mci, true, true);
 		}  else if (noti->typec_state.old_state == TYPEC_ATTACHED_SNK &&
 			noti->typec_state.new_state == TYPEC_ATTACHED_SRC) {
 			pr_info("%s Sink_to_Source\n", __func__);
-			handle_typec_attach(mci, false);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+			handle_typec_attach(mci, false, true);
 		}
 		break;
 	default:

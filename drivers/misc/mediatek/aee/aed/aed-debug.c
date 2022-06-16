@@ -216,8 +216,12 @@ static ssize_t proc_generate_wdt_read(struct file *file,
 	char buffer[BUFSIZE];
 	int len = snprintf(buffer, BUFSIZE,
 			   "WDT test - Usage: [test case number:test cpu]\n");
-	if (len < 0)
-		pr_notice("%s: snprintf failed\n", __func__);
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK */
 	if (*ppos)
 		return 0;
 	if (copy_to_user(buf, buffer, len)) {
@@ -351,6 +355,12 @@ static ssize_t proc_generate_oops_read(struct file *file,
 	char buffer[BUFSIZE];
 
 	len = snprintf(buffer, BUFSIZE, "Oops Generated!\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len))
 		pr_notice("%s fail to output info.\n", __func__);
 
@@ -499,6 +509,12 @@ static ssize_t proc_generate_ee_read(struct file *file, char __user *buf,
 	kfree(log);
 
 	len = snprintf(buffer, BUFSIZE, "Modem EE Generated\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -533,6 +549,12 @@ static ssize_t proc_generate_combo_read(struct file *file, char __user *buf,
 	vfree(ptr);
 
 	len = snprintf(buffer, BUFSIZE, "Combo EE Generated\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -570,10 +592,12 @@ static ssize_t proc_generate_md32_read(struct file *file, char __user *buf,
 	vfree(ptr);
 
 	len = snprintf(buffer, BUFSIZE, "MD32 EE Generated\n");
-	if (len < 0) {
-		pr_info("%s: snprintf failed\n", __func__);
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
 		return -EFAULT;
 	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -613,10 +637,12 @@ static ssize_t proc_generate_scp_read(struct file *file,
 	vfree(ptr);
 
 	len = snprintf(buffer, BUFSIZE, "SCP EE Generated\n");
-	if (len < 0) {
-		pr_info("%s: snprintf failed\n", __func__);
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
 		return -EFAULT;
 	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -640,6 +666,12 @@ static ssize_t proc_generate_kernel_notify_read(struct file *file,
 	char buffer[BUFSIZE];
 	int len = snprintf(buffer, BUFSIZE,
 			   "Usage: write message with format \"R|W|E:Tag:You Message\" into this file to generate kernel warning\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (*ppos)
 		return 0;
 	if (copy_to_user(buf, buffer, len)) {

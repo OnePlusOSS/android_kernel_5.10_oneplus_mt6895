@@ -31,6 +31,20 @@
 #define MTK_FILL_MIPI_IMPEDANCE
 #endif
 
+
+//#ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT
+/*
+* add for fingerprint notify frigger
+*/
+#define MTK_ONSCREENFINGERPRINT_EVENT 20
+//#endif
+
+#if defined(CONFIG_PXLW_IRIS)
+/* #define MTK_DRM_LOCKTIME_CHECK */
+#else
+#define MTK_DRM_LOCKTIME_CHECK
+#endif
+
 struct device;
 struct device_node;
 struct drm_crtc;
@@ -99,6 +113,7 @@ struct mtk_drm_private {
 	enum MTK_DRM_SESSION_MODE session_mode;
 	atomic_t crtc_present[MAX_CRTC];
 	atomic_t crtc_sf_present[MAX_CRTC];
+	atomic_t crtc_rel_present[MAX_CRTC];
 
 	struct device_node *mutex_node;
 	struct device *mutex_dev;
@@ -175,11 +190,22 @@ struct mtk_drm_private {
 	bool dma_parms_allocated;
 
 	bool already_first_config;
+//#ifdef OPLUS_ADFR
+	struct workqueue_struct *fakeframe_wq;
+	struct hrtimer fakeframe_timer;
+	struct work_struct fakeframe_work;
+	/* add for mux switch control */
+	struct completion switch_te_gate;
+	bool vsync_switch_pending;
+	bool need_vsync_switch;
+	struct workqueue_struct *vsync_switch_wq;
+	struct work_struct vsync_switch_work;
+//endif
 
 	struct mml_drm_ctx *mml_ctx;
 	atomic_t mml_job_done;
 	wait_queue_head_t signal_mml_job_done_wq;
-
+	unsigned int *dummy_table_backup;
 	unsigned int seg_id;
 };
 

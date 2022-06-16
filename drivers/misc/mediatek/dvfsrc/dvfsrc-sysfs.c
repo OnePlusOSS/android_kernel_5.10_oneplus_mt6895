@@ -111,6 +111,7 @@ static ssize_t dvfsrc_force_vcore_dvfs_opp_store(struct device *dev,
 	if (kstrtou32(buf, 10, &val))
 		return -EINVAL;
 
+	pr_info("[dvfsrc] force opp = %d, pid: %d, comm: %s\n", val, current->pid, current->comm);
 	if (dvfsrc->force_opp)
 		dvfsrc->force_opp(dvfsrc, val);
 

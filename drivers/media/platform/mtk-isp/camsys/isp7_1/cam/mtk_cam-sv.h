@@ -27,6 +27,8 @@
 #define CAMSV_EXP_ORDER_SHIFT 20
 #define CAMSV_GROUP_AMOUNT 4
 
+#define CAMSV_CHECK_TS 0
+
 enum mtkcam_sv_hw_path_control {
 	MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW = MTKCAM_IPI_HW_PATH_OFFLINE_M2M + 2,
 	MTKCAM_SV_SPECIAL_SCENARIO_EXT_ISP = MTKCAM_IPI_HW_PATH_OFFLINE_M2M + 3,
@@ -247,7 +249,6 @@ struct mtk_camsv_frame_params {
 	u64 sensor_img_tstamp[2];
 	u64 sensor_meta_tstamp[3];
 };
-
 static inline bool mtk_camsv_is_yuv_format(unsigned int fmt)
 {
 	bool ret = false;
@@ -297,9 +298,11 @@ unsigned int mtk_cam_sv_xsize_cal(
 int mtk_cam_sv_tg_config(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_top_config(
-	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
+	struct mtk_camsv_device *dev,
+	struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_dmao_config(struct mtk_camsv_device *dev,
-	struct mtkcam_ipi_input_param *cfg_in_param, int hw_scen, int raw_imgo_stride);
+	struct mtkcam_ipi_input_param *cfg_in_param, int hw_scen,
+	int raw_imgo_stride);
 int mtk_cam_sv_fbc_config(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 
@@ -324,7 +327,11 @@ int mtk_cam_sv_enquehwbuf(struct mtk_camsv_device *dev,
 bool mtk_cam_sv_finish_buf(struct mtk_cam_request_stream_data *s_data);
 int mtk_cam_find_sv_dev_index(struct mtk_cam_ctx *ctx, unsigned int idx);
 int mtk_cam_sv_update_all_buffer_ts(struct mtk_cam_ctx *ctx, u64 ts_ns);
-int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx);
+//#ifndef OPLUS_FEATURE_CAMERA_COMMON
+//int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx);
+//#else
+int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx, bool is_check_ts);
+//#endif
 int mtk_cam_sv_apply_next_buffer(struct mtk_cam_ctx *ctx, unsigned int pipe_id, u64 ts_ns);
 int mtk_cam_sv_rgbw_apply_next_buffer(
 	struct mtk_cam_request_stream_data *s_data);

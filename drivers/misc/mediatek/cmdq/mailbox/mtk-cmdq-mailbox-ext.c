@@ -243,15 +243,28 @@ static struct cmdq *g_cmdq[2];
 
 void cmdq_dump_usage(void)
 {
-	s32 i;
+	s32 i, j, usage[CMDQ_THR_MAX_COUNT];
 
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < 2; i++) {
 		cmdq_msg(
-			"%s: hwid:%d suspend:%d usage:%d mbox_usage:%d wake_lock:%d",
+			"%s: hwid:%hu suspend:%d usage:%d mbox_usage:%d wake_lock:%d",
 			__func__, g_cmdq[i]->hwid, g_cmdq[i]->suspended,
 			atomic_read(&g_cmdq[i]->usage),
 			atomic_read(&g_cmdq[i]->mbox_usage),
 			g_cmdq[i]->wake_locked);
+
+		for (j = 0; j < ARRAY_SIZE(g_cmdq[i]->thread); j++)
+			usage[j] = atomic_read(&g_cmdq[i]->thread[j].usage);
+
+		cmdq_msg(
+			"%s: thread usage:%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+			__func__,
+			usage[0], usage[1], usage[2], usage[3], usage[4],
+			usage[5], usage[6], usage[7], usage[8], usage[9],
+			usage[10], usage[11], usage[12], usage[13], usage[14],
+			usage[15], usage[16], usage[17], usage[18], usage[19],
+			usage[20], usage[21], usage[22], usage[23]);
+	}
 }
 EXPORT_SYMBOL(cmdq_dump_usage);
 
@@ -419,7 +432,7 @@ static void cmdq_clk_disable(struct cmdq *cmdq)
 		cmdq_err("ref count error after dec:%d suspend:%s",
 			usage, cmdq->suspended ? "true" : "false");
 	} else if (usage == 0) {
-		cmdq_log("cmdq shutdown mbox");
+		cmdq_msg("cmdq shutdown mbox");//gaoxiaolei modify 
 		/* clear tpr mask */
 		writel(0, cmdq->base + CMDQ_TPR_MASK);
 		if (cmdq->sw_ddr_en)
@@ -2186,6 +2199,7 @@ static int cmdq_probe(struct platform_device *pdev)
 	int err, i;
 	struct gce_plat *plat_data;
 	static u8 hwid;
+	char buf[NAME_MAX];
 
 	cmdq = devm_kzalloc(dev, sizeof(*cmdq), GFP_KERNEL);
 	if (!cmdq)
@@ -2336,7 +2350,8 @@ static int cmdq_probe(struct platform_device *pdev)
 		WARN_ON(clk_prepare(cmdq->clock_timer) < 0);
 	}
 
-	cmdq->wake_lock = wakeup_source_register(dev, "cmdq_pm_lock");
+	snprintf(buf, NAME_MAX, "cmdq_%d_pm_lock", cmdq->hwid);
+	cmdq->wake_lock = wakeup_source_register(dev, buf);
 
 	spin_lock_init(&cmdq->lock);
 
@@ -2416,18 +2431,23 @@ static __init int cmdq_drv_init(void)
 	return 0;
 }
 
-void cmdq_mbox_enable(void *chan)
+s32 cmdq_mbox_enable(void *chan)
 {
 	struct cmdq *cmdq = container_of(((struct mbox_chan *)chan)->mbox,
 		typeof(*cmdq), mbox);
 	s32 mbox_usage;
+	s32 i;
 
 	WARN_ON(cmdq->suspended);
+	//gaoxiaolei modify
+	if (mtk_cmdq_msg == 1)
+		cmdq_msg("%s cmdq:%pa id:%u usage:%d", __func__, &cmdq->base_pa, cmdq->hwid
+			,atomic_read(&cmdq->usage));
 	if (cmdq->suspended) {
 		cmdq_err("cmdq:%pa id:%u suspend:%d cannot enable usage:%d",
 			&cmdq->base_pa, cmdq->hwid, cmdq->suspended,
 			atomic_read(&cmdq->usage));
-		return;
+		return -EFAULT;
 	}
 	pm_runtime_get_sync(cmdq->mbox.dev);
 	mutex_lock(&cmdq->mbox_mutex);
@@ -2441,22 +2461,45 @@ void cmdq_mbox_enable(void *chan)
 	mutex_unlock(&cmdq->mbox_mutex);
 
 	cmdq_clk_enable(cmdq);
+
+	for (i = 0; i < ARRAY_SIZE(cmdq->thread); i++)
+		if (cmdq->thread[i].chan == chan)
+			break;
+
+	atomic_inc(&cmdq->thread[i].usage);
+	return atomic_read(&cmdq->thread[i].usage);
 }
 EXPORT_SYMBOL(cmdq_mbox_enable);
 
-void cmdq_mbox_disable(void *chan)
+s32 cmdq_mbox_disable(void *chan)
 {
 	struct cmdq *cmdq = container_of(((struct mbox_chan *)chan)->mbox,
 		typeof(*cmdq), mbox);
 	s32 mbox_usage;
+	s32 i;
 
 	WARN_ON(cmdq->suspended);
+	//gaoxiaolei modify
+	if (mtk_cmdq_msg == 1)
+		cmdq_msg("%s cmdq:%pa id:%u usage:%d", __func__, &cmdq->base_pa, cmdq->hwid
+			,atomic_read(&cmdq->usage));
 	if (cmdq->suspended) {
 		cmdq_err("cmdq:%pa id:%u suspend:%d cannot disable usage:%d",
 			&cmdq->base_pa, cmdq->hwid, cmdq->suspended,
 			atomic_read(&cmdq->usage));
-		return;
+		return -EFAULT;
 	}
+
+	for (i = 0; i < ARRAY_SIZE(cmdq->thread); i++)
+		if (cmdq->thread[i].chan == chan)
+			break;
+
+	mbox_usage = atomic_dec_return(&cmdq->thread[i].usage);
+	if (mbox_usage < 0)
+		// cmdq_util_thread_module_dispatch(cmdq->base_pa, i)
+		cmdq_util_aee("CMDQ", "hwid:%hu idx:%d usage:d",
+			cmdq->hwid, i, mbox_usage);
+
 	cmdq_clk_disable(cmdq);
 
 	mutex_lock(&cmdq->mbox_mutex);
@@ -2480,6 +2523,7 @@ void cmdq_mbox_disable(void *chan)
 		dump_stack();
 	}
 	pm_runtime_put_sync(cmdq->mbox.dev);
+	return atomic_read(&cmdq->thread[i].usage);
 }
 EXPORT_SYMBOL(cmdq_mbox_disable);
 

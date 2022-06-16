@@ -2964,7 +2964,7 @@ static int mtk_raw_available_resource(struct mtk_raw *raw)
 				res_status |= 1 << j;
 		}
 	}
-	dev_dbg(raw->cam_dev, "%s raw_status:0x%x Available Engine:A/B/C:%d/%d/%d\n",
+	dev_info(raw->cam_dev, "%s raw_status:0x%x Available Engine:A/B/C:%d/%d/%d\n",
 		 __func__, res_status,
 			!(res_status & (1 << MTKCAM_SUBDEV_RAW_0)),
 			!(res_status & (1 << MTKCAM_SUBDEV_RAW_1)),
@@ -5881,7 +5881,7 @@ static int mtk_raw_pipeline_register(unsigned int id, struct device *dev,
 	int ret;
 
 	pipe->id = id;
-	pipe->dynamic_exposure_num_max = 3;
+	pipe->dynamic_exposure_num_max = 1;
 
 	/* Initialize subdev */
 	v4l2_subdev_init(sd, &mtk_raw_subdev_ops);

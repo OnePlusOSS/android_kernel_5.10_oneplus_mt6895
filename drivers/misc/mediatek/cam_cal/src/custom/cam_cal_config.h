@@ -14,6 +14,7 @@
 /*****************************************************************************
  * Structures
  *****************************************************************************/
+static unsigned int dump_enable;
 
 struct STRUCT_CALIBRATION_ITEM_STRUCT {
 	unsigned short Include; //calibration layout include this item?

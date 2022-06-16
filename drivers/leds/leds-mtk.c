@@ -204,7 +204,7 @@ static int mtk_set_hw_brightness(struct mt_led_data *led_dat,
 	if (brightness == led_dat->hw_brightness)
 		return 0;
 
-	if (led_dat->mtk_hw_brightness_set(led_dat, brightness) >= 0) {
+	if (led_dat->mtk_hw_brightness_set(led_dat, brightness) >= 0 || brightness == 0) {
 		led_dat->hw_brightness = brightness;
 #ifdef CONFIG_LEDS_MT_BRIGHTNESS_HW_CHANGED
 		mt_leds_notify_brightness_hw_changed(&led_dat->conf, brightness);
@@ -418,10 +418,10 @@ int mt_leds_classdev_register(struct device *parent,
 		pr_info("print log init error!");
 
 	led_dat->last_brightness = led_dat->conf.cdev.brightness;
-
-	mtk_set_hw_brightness(led_dat,
-		brightness_maptolevel(&led_dat->conf, led_dat->last_brightness));
-
+//#ifndef OPLUS_BUG_STABILITY
+	//mtk_set_hw_brightness(led_dat,
+		//brightness_maptolevel(&led_dat->conf, led_dat->last_brightness));
+//#endif
 	pr_info("%s devm_led_classdev_register end! ", led_dat->conf.cdev.name);
 
 	return ret;

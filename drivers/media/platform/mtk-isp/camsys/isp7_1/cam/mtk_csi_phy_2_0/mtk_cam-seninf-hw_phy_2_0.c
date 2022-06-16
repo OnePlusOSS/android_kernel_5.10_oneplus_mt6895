@@ -686,6 +686,8 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		return 0;
 	}
 
+	dev_info(ctx->dev, "cam_mux %d src %d\n", target, src);
+
 #if	DEBUG_CAM_MUX_SWITCH
 	dev_info(ctx->dev, "%s cam_mux %d src %d exp_hsize %d, exp_hsize %d\n",
 		__func__, target, src, exp_hsize, exp_vsize);
