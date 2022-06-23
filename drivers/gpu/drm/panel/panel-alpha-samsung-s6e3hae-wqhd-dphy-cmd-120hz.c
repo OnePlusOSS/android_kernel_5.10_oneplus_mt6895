@@ -91,7 +91,6 @@ static struct i2c_driver _lcm_i2c_driver = {
  * Function
  *****************************************************************************/
 
-extern void lcd_queue_load_tp_fw(void);
 
 static int _lcm_i2c_probe(struct i2c_client *client,
 			  const struct i2c_device_id *id)
