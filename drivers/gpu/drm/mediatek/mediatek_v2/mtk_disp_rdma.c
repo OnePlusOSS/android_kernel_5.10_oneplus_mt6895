@@ -17,6 +17,9 @@
 #else
 #include "mtk-cmdq-ext.h"
 #endif
+/*#ifdef OPLUS_BUG_STABILITY*/
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+/*#endif*/
 
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_ddp_comp.h"
@@ -29,6 +32,13 @@
 #include "mtk_layering_rule.h"
 #include "mtk_drm_trace.h"
 //#include "swpm_me.h"
+//#ifdef OPLUS_ADFR
+#include "oplus_adfr.h"
+//#endif
+/* #ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT */
+/* add for ui ready */
+#include "oplus_display_onscreenfingerprint.h"
+/* #endif */ /* OPLUS_FEATURE_ONSCREENFINGERPRINT */
 
 int disp_met_set(void *data, u64 val);
 
@@ -271,6 +281,18 @@ static inline struct mtk_disp_rdma *comp_to_rdma(struct mtk_ddp_comp *comp)
 }
 
 int disp_met_set(void *data, u64 val);
+
+//#ifdef OPLUS_ADFR
+unsigned long long last_rdma_start_time = 0;
+extern int g_commit_pid;
+extern int oplus_adfr_cancel_fakeframe(void);
+//#endif
+
+// #ifdef OPLUS_BUG_STABILITY
+#define CCORR_REG(idx) (idx * 4 + 0x80)
+#define COMP_CCORR1 (((struct mtk_drm_private *)priv->drm_dev->dev_private)->ddp_comp[DDP_COMPONENT_CCORR1])
+// #endif OPLUS_BUG_STABILITY
+
 static irqreturn_t mtk_disp_rdma_irq_handler(int irq, void *dev_id)
 {
 	struct mtk_disp_rdma *priv = dev_id;
@@ -350,6 +372,14 @@ static irqreturn_t mtk_disp_rdma_irq_handler(int irq, void *dev_id)
 		IF_DEBUG_IRQ_TS(find_work,
 			priv->ddp_comp.ts_works[work_id].irq_time, i)
 		DDPIRQ("[IRQ] %s: frame done!\n", mtk_dump_comp_str(rdma));
+		// #ifdef OPLUS_BUG_STABILITY
+		if (priv->drm_dev && priv->drm_dev->dev_private) {
+			DDPINFO("%s:frame done! rdma id:%d \n", __func__, COMP_CCORR1->id);
+			DDPINFO("%s:r0:  ccorr:%d 0 0\n", __func__, readl(COMP_CCORR1->regs + CCORR_REG(0)) >> 16);
+			DDPINFO("%s:r2:  ccorr:0 %d 0\n", __func__, readl(COMP_CCORR1->regs + CCORR_REG(2)) >> 16);
+			DDPINFO("%s:r4:  ccorr: 0 0 %d\n", __func__, readl(COMP_CCORR1->regs + CCORR_REG(4)) >> 16);
+		}
+		// #endif OPLUS_BUG_STABILITY
 		if (mtk_crtc) {
 			if (mtk_crtc->esd_ctx)
 				atomic_set(&mtk_crtc->esd_ctx->target_time, 0);
@@ -369,9 +399,23 @@ static irqreturn_t mtk_disp_rdma_irq_handler(int irq, void *dev_id)
 				mtk_crtc->pf_time = ktime_get();
 				atomic_set(&mtk_crtc->signal_irq_for_pre_fence, 1);
 				wake_up_interruptible(&(mtk_crtc->signal_irq_for_pre_fence_wq));
+
+                        }
+
+			//#ifdef OPLUS_ADFR
+			/* add for mux switch control */
+			if (oplus_adfr_is_support() && (oplus_adfr_get_vsync_mode() == OPLUS_EXTERNAL_TE_TP_VSYNC)) {
+				oplus_adfr_frame_done_vsync_switch(mtk_crtc);
 				IF_DEBUG_IRQ_TS(find_work,
 					priv->ddp_comp.ts_works[work_id].irq_time, i)
 			}
+			//#endif
+
+/* #ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT */
+			if (oplus_ofp_is_support()) {
+				oplus_ofp_pressed_icon_status_update(OPLUS_OFP_FRAME_DONE);
+			}
+/* #endif */ /* OPLUS_FEATURE_ONSCREENFINGERPRINT */
 		}
 		IF_DEBUG_IRQ_TS(find_work,
 			priv->ddp_comp.ts_works[work_id].irq_time, i)
@@ -381,19 +425,57 @@ static irqreturn_t mtk_disp_rdma_irq_handler(int irq, void *dev_id)
 	}
 
 	if (val & (1 << 1)) {
+		struct drm_crtc *crtc;
+		struct mtk_drm_private *drm_priv = NULL;
 		if (rdma->id == DDP_COMPONENT_RDMA0)
 			DRM_MMP_EVENT_START(rdma0, val, 0);
 		DDPIRQ("[IRQ] %s: frame start!\n", mtk_dump_comp_str(rdma));
+		// #ifdef OPLUS_BUG_STABILITY
+		if (priv->drm_dev && priv->drm_dev->dev_private) {
+			DDPINFO("%s:frame start! rdma id:%d \n", __func__, COMP_CCORR1->id);
+			DDPINFO("%s:r0:  ccorr:%d 0 0\n", __func__, readl(COMP_CCORR1->regs + CCORR_REG(0)) >> 16);
+			DDPINFO("%s:r2:  ccorr:0 %d 0\n", __func__, readl(COMP_CCORR1->regs + CCORR_REG(2)) >> 16);
+			DDPINFO("%s:r4:  ccorr: 0 0 %d\n", __func__, readl(COMP_CCORR1->regs + CCORR_REG(4)) >> 16);
+		}
+		// #endif OPLUS_BUG_STABILITY
 		mtk_drm_refresh_tag_start(&priv->ddp_comp);
 		IF_DEBUG_IRQ_TS(find_work, priv->ddp_comp.ts_works[work_id].irq_time, i)
 		MMPathTraceDRM(rdma);
+		//#endif
 		IF_DEBUG_IRQ_TS(find_work, priv->ddp_comp.ts_works[work_id].irq_time, i)
 
 		if (mtk_crtc &&
 			mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base)) {
 			if (rdma->id == DDP_COMPONENT_RDMA0) {
-				atomic_set(&mtk_crtc->pf_event, 1);
-				wake_up_interruptible(&mtk_crtc->present_fence_wq);
+				if (mtk_crtc->base.dev)
+					drm_priv = mtk_crtc->base.dev->dev_private;
+				if (drm_priv && !mtk_drm_helper_get_opt(
+						drm_priv->helper_opt,
+						MTK_DRM_OPT_PRE_TE)) {
+					unsigned int pf_idx;
+					unsigned int crtc_idx;
+
+					crtc = &mtk_crtc->base;
+					crtc_idx = drm_crtc_index(crtc);
+					drm_priv = mtk_crtc->base.dev->dev_private;
+					pf_idx = readl(mtk_get_gce_backup_slot_va(mtk_crtc,
+						DISP_SLOT_PRESENT_FENCE(crtc_idx)));
+					atomic_set(&drm_priv->crtc_rel_present[crtc_idx], pf_idx);
+					DDPFENCE("leji1: RDMA fence:%d\n", pf_idx);
+		
+					atomic_set(&mtk_crtc->pf_event, 1);
+					wake_up_interruptible(&mtk_crtc->present_fence_wq);
+				}
+				//#ifdef OPLUS_ADFR
+				last_rdma_start_time = sched_clock();
+				mtk_drm_trace_c("%d|rdmastart|%d", g_commit_pid, 1);
+				mtk_drm_trace_c("%d|rdmastart|%d", g_commit_pid, 0);
+				if (oplus_adfr_is_support()) {
+					oplus_adfr_cancel_fakeframe();
+				}
+				//#endif
+				//atomic_set(&mtk_crtc->pf_event, 1);
+				//wake_up_interruptible(&mtk_crtc->present_fence_wq);
 				IF_DEBUG_IRQ_TS(find_work,
 					priv->ddp_comp.ts_works[work_id].irq_time, i)
 			}
@@ -434,21 +516,51 @@ static irqreturn_t mtk_disp_rdma_irq_handler(int irq, void *dev_id)
 				DDPAEE("%s: underflow! cnt=%d\n",
 				       mtk_dump_comp_str(rdma),
 				       priv->underflow_cnt);
+				/*#ifdef OPLUS_BUG_STABILITY*/
+				if ((priv->underflow_cnt) < 5) {
+					mm_fb_display_kevent("DisplayDriverID@@502$$", MM_FB_KEY_RATELIMIT_1H, "underflow cnt=%d", priv->underflow_cnt);
+				}
+				/*#endif*/
+
 			}
 		}
 
 		priv->underflow_cnt++;
 	}
 	if (val & (1 << 5)) {
+		struct mtk_drm_private *drm_priv = NULL;
+		struct drm_crtc *crtc;
+
 		DDPIRQ("[IRQ] %s: target line!\n", mtk_dump_comp_str(rdma));
 		if (mtk_crtc) {
+			if (rdma->id == DDP_COMPONENT_RDMA0) {
+				if (mtk_crtc->base.dev) {
+					unsigned int pf_idx;
+					unsigned int crtc_idx;
+
+					crtc = &mtk_crtc->base;
+					crtc_idx = drm_crtc_index(crtc);
+					drm_priv = mtk_crtc->base.dev->dev_private;
+					pf_idx = readl(mtk_get_gce_backup_slot_va(mtk_crtc,
+						DISP_SLOT_PRESENT_FENCE(crtc_idx)));
+					atomic_set(&drm_priv->crtc_rel_present[crtc_idx], pf_idx);
+					DDPFENCE("leji2: RDMA fence:%d\n", pf_idx);
+
+					if (drm_priv && mtk_drm_helper_get_opt(drm_priv->helper_opt,
+							MTK_DRM_OPT_PRE_TE)) {
+						atomic_set(&mtk_crtc->pf_event, 1);
+						wake_up_interruptible(&mtk_crtc->present_fence_wq);
+					}
+				}
+			}
 			if (mtk_crtc->esd_ctx &&
 				(!(val & (1 << 2)))) {
 				atomic_set(&mtk_crtc->esd_ctx->target_time, 1);
 				wake_up_interruptible(
 					&mtk_crtc->esd_ctx->check_task_wq);
 			}
-			atomic_set(&mtk_crtc->signal_irq_for_pre_fence, 0);
+			if (!mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base))
+				atomic_set(&mtk_crtc->signal_irq_for_pre_fence, 0);
 		}
 		IF_DEBUG_IRQ_TS(find_work,
 			priv->ddp_comp.ts_works[work_id].irq_time, i)
@@ -781,6 +893,9 @@ static void mtk_rdma_set_ultra_l(struct mtk_ddp_comp *comp,
 	unsigned int gs[GS_RDMA_FLD_NUM] = {0};
 	unsigned int val = 0;
 	struct mtk_disp_rdma *rdma = comp_to_rdma(comp);
+	struct golden_setting_context *gsc = cfg->p_golden_setting_context;
+	struct mtk_drm_private *priv =
+		comp->mtk_crtc->base.dev->dev_private;
 
 	if ((comp->id != DDP_COMPONENT_RDMA0)
 		&& (comp->id != DDP_COMPONENT_RDMA1)
@@ -877,8 +992,13 @@ static void mtk_rdma_set_ultra_l(struct mtk_ddp_comp *comp,
 	}
 
 	/*esd will wait this target line irq*/
-	mtk_ddp_write(comp, (cfg->h * 9) / 10,
-		DISP_REG_RDMA_TARGET_LINE, handle);
+	if (gsc->is_vdo_mode || !mtk_drm_helper_get_opt(priv->helper_opt,
+				MTK_DRM_OPT_PRE_TE))
+		mtk_ddp_write(comp, (cfg->h * 9) / 10,
+			DISP_REG_RDMA_TARGET_LINE, handle);
+	else
+		mtk_ddp_write(comp, (cfg->h * 5) / 100,
+			DISP_REG_RDMA_TARGET_LINE, handle);
 #ifdef IF_ZERO
 	val = gs[GS_RDMA_SELF_FIFO_SIZE] + (gs[GS_RDMA_RSZ_FIFO_SIZE] << 16);
 	cmdq_pkt_write(handle, comp->cmdq_base,

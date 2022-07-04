@@ -433,6 +433,9 @@ struct mtk_cam_ctx {
 	struct mtk_cam_working_buf_list processing_img_buffer_list;
 
 	atomic_t enqueued_frame_seq_no;
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	atomic_t composed_delay_seq_no;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	unsigned int composed_frame_seq_no;
 	unsigned int dequeued_frame_seq_no;
 	unsigned int component_dequeued_frame_seq_no;
@@ -451,6 +454,7 @@ struct mtk_cam_ctx {
 
 	spinlock_t streaming_lock;
 	spinlock_t first_cq_lock;
+	struct mutex cleanup_lock;
 
 	struct mtk_cam_hsf_ctrl *hsf;
 	atomic_t watchdog_timeout_cnt;
@@ -462,7 +466,9 @@ struct mtk_cam_ctx {
 
 	/* To support debug dump */
 	struct mtkcam_ipi_config_param config_params;
-
+	bool ext_isp_meta_off;
+	bool ext_isp_pureraw_off;
+	bool ext_isp_procraw_off;
 };
 
 struct mtk_cam_device {
@@ -477,6 +483,11 @@ struct mtk_cam_device {
 	//struct platform_device *scp_pdev; /* only for scp case? */
 	phandle rproc_phandle;
 	struct rproc *rproc_handle;
+
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	phandle rproc_ccu_phandle;
+	struct rproc *rproc_ccu_handle;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	struct workqueue_struct *link_change_wq;
 	unsigned int composer_cnt;
@@ -886,6 +897,7 @@ mtk_cam_get_req_s_data(struct mtk_cam_ctx *ctx,
 		       unsigned int pipe_id, unsigned int frame_seq_no);
 struct mtk_raw_pipeline *mtk_cam_dev_get_raw_pipeline(struct mtk_cam_device *cam,
 						      unsigned int id);
+bool finish_img_buf(struct mtk_cam_request_stream_data *req_stream_data);
 
 int get_main_sv_pipe_id(struct mtk_cam_device *cam, int used_dev_mask);
 int get_sub_sv_pipe_id(struct mtk_cam_device *cam, int used_dev_mask);

@@ -1395,7 +1395,7 @@ static int mt6983_apu_top_pb(struct platform_device *pdev)
 #endif
 	int ret = 0;
 
-	pr_info("%s paul dbg fpga_type : %d\n", __func__, fpga_type);
+	printk("%s apu local build version : 20211124_a\n", __func__);
 
 	init_reg_base(pdev);
 

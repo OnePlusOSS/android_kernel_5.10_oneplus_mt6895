@@ -611,6 +611,18 @@
 		};
 	};
 
+	disp_leds: disp_leds {
+		compatible = "mediatek,disp-leds";
+
+		backlight {
+			label = "lcd-backlight";
+			max-brightness = <4095>;
+			led-bits = <12>;
+			trans-bits = <12>;
+			default-state = "on";
+		};
+	};
+
 	gic: interrupt-controller {
 		compatible = "arm,gic-v3";
 		#interrupt-cells = <4>;
@@ -802,6 +814,11 @@
 			     <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH 0>,
 			     <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH 0>,
 			     <GIC_SPI 8 IRQ_TYPE_LEVEL_HIGH 0>;
+	};
+
+	odm: odm {
+		compatible = "simple-bus";
+		/* reserved for overlay by odm */
 	};
 
 	memory_ssmr_features: memory-ssmr-features {

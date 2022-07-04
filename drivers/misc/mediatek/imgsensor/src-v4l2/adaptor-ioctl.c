@@ -1337,7 +1337,109 @@ static int s_tg(struct adaptor_ctx *ctx, void *arg)
 
 	return 0;
 }
+//Renjianlin add for camerasn
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static int g_get_camerasn(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_get_camera_sn *temp = arg;
+	subdrv_call(ctx, feature_control,
+	SENSOR_FEATURE_GET_EEPROM_COMDATA,
+	temp->data,&(temp->len));
+	return 0;
+}
 
+
+
+
+
+static int g_get_stereo_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_calc_eeprom_info *info = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, info->p_buf, info->size, F_ZERO | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_EEPROM_STEREODATA,
+		workbuf.kbuf, &(info->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_get_otp_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_calc_eeprom_info *info = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, info->p_buf, info->size, F_ZERO | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_SENSOR_OTP_ALL,
+		workbuf.kbuf, &(info->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_get_distortionparams_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_distortion_data *data = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, data->p_buf, data->size,  F_ZERO | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_DISTORTIONPARAMS,
+		workbuf.kbuf, &(data->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int s_calibration_eeprom(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_calc_eeprom_info *info = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, info->p_buf, info->size, F_READ);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_SET_SENSOR_OTP,
+		workbuf.kbuf, &info->size);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+#endif
 struct ioctl_entry {
 	unsigned int cmd;
 	int (*func)(struct adaptor_ctx *ctx, void *arg);
@@ -1380,6 +1482,13 @@ static const struct ioctl_entry ioctl_list[] = {
 	{VIDIOC_MTK_G_CUSTOM_READOUT_BY_SCENARIO, g_custom_readout},
 	{VIDIOC_MTK_G_STAGGER_SCENARIO, g_stagger_scenario_ioctl},
 	{VIDIOC_MTK_G_MAX_EXPOSURE, g_max_exposure_ioctl},
+	//Renjianlin add for camerasn
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	{VIDIOC_MTK_G_CAMERA_SN,g_get_camerasn},
+	{VIDIOC_MTK_G_STEREO_DATA, g_get_stereo_data},
+	{VIDIOC_MTK_G_OTP_DATA, g_get_otp_data},
+	{VIDIOC_MTK_G_DISTORTIONPARAMS_DATA, g_get_distortionparams_data},
+	#endif
 	{VIDIOC_MTK_G_OUTPUT_FORMAT_BY_SCENARIO, g_output_format_by_scenario},
 	{VIDIOC_MTK_G_FINE_INTEG_LINE_BY_SCENARIO, g_fine_integ_line_by_scenario},
 	{VIDIOC_MTK_G_MAX_EXPOSURE_LINE, g_max_exposure_line_ioctl},
@@ -1394,13 +1503,15 @@ static const struct ioctl_entry ioctl_list[] = {
 	{VIDIOC_MTK_S_LSC_TBL, s_lsc_tbl},
 	{VIDIOC_MTK_S_CONTROL, s_control},
 	{VIDIOC_MTK_S_TG, s_tg},
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	{VIDIOC_MTK_S_CALIBRATION_EEPROM, s_calibration_eeprom},
+	#endif
 };
 
 long adaptor_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
 	int i, ret = -ENOIOCTLCMD;
 	struct adaptor_ctx *ctx = sd_to_ctx(sd);
-
 	/* dispatch ioctl request */
 	for (i = 0; i < ARRAY_SIZE(ioctl_list); i++) {
 		if (ioctl_list[i].cmd == cmd) {

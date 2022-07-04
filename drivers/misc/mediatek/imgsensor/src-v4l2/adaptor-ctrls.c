@@ -632,7 +632,7 @@ static int ext_ctrl(struct adaptor_ctx *ctx, struct v4l2_ctrl *ctrl, struct sens
 
 			ctrl->val = tmp / 1000;
 		}
-		dev_info(ctx->dev, "[%s] sof timeout value in us %d|%llu|%d|%d\n",
+		dev_info(ctx->dev, "[%s] sof timeout value %d|%llu|%d|%d\n",
 			__func__,
 			ctx->shutter_for_timeout,
 			mode->linetime_in_ns,
@@ -1170,7 +1170,6 @@ static int imgsensor_set_ctrl(struct v4l2_ctrl *ctrl)
 			notify_fsync_mgr_n_1_en(ctx, info->n, info->en);
 		}
 		break;
-
 	case V4L2_CID_MTK_SENSOR_TEST_PATTERN_DATA:
 		//struct mtk_test_pattern_data *info = ctrl->p_new.p;
 
@@ -1372,7 +1371,7 @@ static const struct v4l2_ctrl_config cfg_shutter_gain_sync = {
 	.name = "shutter_gain_sync",
 	.type = V4L2_CTRL_TYPE_U32,
 	.flags = V4L2_CTRL_FLAG_EXECUTE_ON_WRITE,
-	.max = 0xffff,
+	.max = 0xffffffff,
 	.step = 1,
 	.dims = {sizeof_u32(struct mtk_shutter_gain_sync)},
 };

@@ -13,3 +13,4 @@ void mtk_ccci_spd_qos_set_task(
 	unsigned int irq_id);
 
 int mtk_ccci_get_tx_done_aff(int txq);
+

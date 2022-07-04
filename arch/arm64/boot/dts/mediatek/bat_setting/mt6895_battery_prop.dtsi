@@ -13,7 +13,7 @@
 	KEEP_100_PERCENT = <(1)>;
 	CURR_MEASURE_20A = <(1)>;
 	UNIT_MULTIPLE = <(2)>;
-	R_FG_VALUE = <(1)>;
+	R_FG_VALUE = <(2)>;
 	/* R_sense resistance */
 	EMBEDDED_SEL = <(0)>;
 	/* Configures whether using embedded battery or not */
@@ -70,6 +70,6 @@
 	MULTI_TEMP_GAUGE0 = <(1)>;
 	/* Multi gauge0 enable */
 	RBAT_PULL_UP_VOLT = <(1840)>;
-#include "mt6895_battery_table.dtsi"
-#include "mt6895_battery_prop_dim2_ext.dtsi"
+//#include "mt6895_battery_table.dtsi"
+//#include "mt6895_battery_prop_dim2_ext.dtsi"
 };

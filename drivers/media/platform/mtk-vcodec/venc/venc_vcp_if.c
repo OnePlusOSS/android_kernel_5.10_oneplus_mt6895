@@ -123,7 +123,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 		mdelay(1);
 		timeout++;
 		if (timeout > VCP_SYNC_TIMEOUT_MS) {
-			mtk_vcodec_err(inst, "VCP_A_ID not ready");
+			mtk_v4l2_err("VCP_A_ID not ready");
 			mtk_smi_dbg_hang_detect("VENC VCP");
 			inst->vcu_inst.abort = 1;
 			return -EIO;
@@ -145,6 +145,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 	obj.len = len;
 	ipi_size = ((sizeof(u32) * 2) + len + 3) /4;
 	inst->vcu_inst.failure = 0;
+	inst->ctx->err_msg = *(__u32 *)msg;
 
 	mtk_v4l2_debug(2, "id %d len %d msg 0x%x is_ack %d %d", obj.id, obj.len, *(u32 *)msg,
 		is_ack, inst->vcu_inst.signaled);
@@ -160,6 +161,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 		inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
 		inst->vcu_inst.abort = 1;
 		trigger_vcp_halt(VCP_A_ID);
+		inst->ctx->err_msg = *(__u32 *)msg;
 		return -EIO;
 	}
 	if (!is_ack) {
@@ -175,6 +177,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 			inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
 			inst->vcu_inst.abort = 1;
 			trigger_vcp_halt(VCP_A_ID);
+			inst->ctx->err_msg = *(__u32 *)msg;
 			return -EIO;
 		}
 	}
@@ -598,6 +601,7 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 	struct mtk_vcodec_ctx *ctx;
 	int timeout = 0;
 	bool backup = false;
+	struct venc_inst *inst = NULL;
 
 	if (!(mtk_vcodec_vcp & (1 << MTK_INST_ENCODER)))
 		return 0;
@@ -621,6 +625,11 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 			ctx = list_entry(p, struct mtk_vcodec_ctx, list);
 			if (ctx != NULL && ctx->state != MTK_STATE_ABORT) {
 				ctx->state = MTK_STATE_ABORT;
+				inst = (struct venc_inst *)(ctx->drv_handle);
+				if (inst != NULL) {
+					inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
+					inst->vcu_inst.abort = 1;
+				}
 				venc_check_release_lock(ctx);
 				mtk_venc_queue_error_event(ctx);
 			}

@@ -1763,10 +1763,17 @@ static int mt_mic_bias_0_event(struct snd_soc_dapm_widget *w,
 			break;
 		}
 
-		/* MISBIAS0 = 1P9V */
+//#ifdef OPLUS_ARCH_EXTENDS
+/*change micbias0 to 2P6V */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON31,
 				   RG_AUDMICBIAS0VREF_MASK_SFT,
-				   MIC_BIAS_1P9 << RG_AUDMICBIAS0VREF_SFT);
+				    MIC_BIAS_2P6 << RG_AUDMICBIAS0VREF_SFT);
+//#else
+		/* MISBIAS0 = 1P9V */
+//		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON31,
+//				   RG_AUDMICBIAS0VREF_MASK_SFT,
+//				   MIC_BIAS_1P9 << RG_AUDMICBIAS0VREF_SFT);
+//#endif
 		/* vow low power select */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON31,
 				   RG_AUDMICBIAS0LOWPEN_MASK_SFT,
@@ -1805,8 +1812,14 @@ static int mt_mic_bias_1_event(struct snd_soc_dapm_widget *w,
 			regmap_write(priv->regmap,
 				     MT6368_AUDENC_ANA_CON34, 0x1);
 		} else {
+//#ifdef OPLUS_BUG_COMPATIBILITY
+			/*add for setting micbias 2.7V after recording */
 			regmap_write(priv->regmap,
-				     MT6368_AUDENC_ANA_CON33, 0x60);
+				     MT6368_AUDENC_ANA_CON33, 0x70);
+//#else /* CONFIG_SND_SOC_CODEC_MICBIAS_2P7V */
+//			regmap_write(priv->regmap,
+//				     MT6368_AUDENC_ANA_CON33, 0x60);
+//#endif
 			regmap_write(priv->regmap,
 				     MT6368_AUDENC_ANA_CON34, 0x0);
 		}
@@ -1854,10 +1867,18 @@ static int mt_mic_bias_2_event(struct snd_soc_dapm_widget *w,
 			break;
 		}
 
-		/* MISBIAS2 = 1P9V */
+//#ifdef OPLUS_ARCH_EXTENDS
+/*change micbias0 to 2P6V */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON35,
 				   RG_AUDMICBIAS2VREF_MASK_SFT,
-				   MIC_BIAS_1P9 << RG_AUDMICBIAS2VREF_SFT);
+				   MIC_BIAS_2P6 << RG_AUDMICBIAS2VREF_SFT);
+
+//#else
+		/* MISBIAS2 = 1P9V */
+//		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON35,
+//				   RG_AUDMICBIAS2VREF_MASK_SFT,
+//				   MIC_BIAS_1P9 << RG_AUDMICBIAS2VREF_SFT);
+//#endif
 		/* vow low power select */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON35,
 				   RG_AUDMICBIAS2LOWPEN_MASK_SFT,

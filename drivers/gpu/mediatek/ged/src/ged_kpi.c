@@ -1956,7 +1956,6 @@ void ged_dfrc_fps_limit_cb(unsigned int target_fps)
 	GED_LOGI("[GED_KPI] dfrc_fps:%d, dfrc_time %u\n",
 		g_target_fps_default, g_target_time_default);
 #endif /* GED_KPI_DEBUG */
-
 	idle_fw_set_flag = g_idle_set_prepare;
 
 }

@@ -173,7 +173,62 @@
 
 #define MTK_DDP_COMP_USER "DISP"
 
+#if defined(CONFIG_PXLW_IRIS)
+int mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
+		   unsigned int offset, void *handle)
+{
+	int ret = 0;
+#ifndef DRM_CMDQ_DISABLE
+	ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		       comp->regs_pa + offset, value, ~0);
+	if (ret < 0)
+		DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+				__func__, __LINE__, ret);
+#else
+	writel(value, comp->regs + offset);
+#endif
+	return ret;
+}
 
+int mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
+			   unsigned int offset, void *handle)
+{
+	int ret = 0;
+#ifndef DRM_CMDQ_DISABLE
+	if (handle) {
+		ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		       comp->regs_pa + offset, value, ~0);
+		if (ret < 0)
+			DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+					__func__, __LINE__, ret);
+		return ret;
+	}
+#endif
+	writel_relaxed(value, comp->regs + offset);
+	return ret;
+}
+
+int mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
+			unsigned int offset, unsigned int mask, void *handle)
+{
+	int ret = 0;
+	unsigned int tmp;
+#ifndef DRM_CMDQ_DISABLE
+	if(handle) {
+		ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		    comp->regs_pa + offset, value, mask);
+		if (ret < 0)
+		DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+				__func__, __LINE__, ret);
+		return ret;
+	}
+#endif
+	tmp = readl(comp->regs + offset);
+	tmp = (tmp & ~mask) | (value & mask);
+	writel(tmp, comp->regs + offset);
+	return ret;
+}
+#else
 void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 		   unsigned int offset, void *handle)
 {
@@ -185,6 +240,7 @@ void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 #endif
 }
 
+//#ifdef OPLUS_ADFR
 void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 			   unsigned int offset, void *handle)
 {
@@ -198,6 +254,7 @@ void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 	writel_relaxed(value, comp->regs + offset);
 
 }
+//#endif
 
 void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 			unsigned int offset, unsigned int mask, void *handle)
@@ -215,6 +272,7 @@ void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 	tmp = (tmp & ~mask) | (value & mask);
 	writel(tmp, comp->regs + offset);
 }
+#endif /* CONFIG_PXLW_IRIS */
 
 void mtk_ddp_write_mask_cpu(struct mtk_ddp_comp *comp,
 	unsigned int value, unsigned int offset, unsigned int mask)

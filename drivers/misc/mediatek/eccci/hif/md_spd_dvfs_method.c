@@ -443,7 +443,7 @@ int mtk_ccci_get_tx_done_aff(int txq)
 void mtk_ccci_spd_qos_set_task(
 	struct task_struct *rx_push_task,
 	struct task_struct *alloc_bat_task,
-	unsigned int irq_id)
+    unsigned int irq_id)
 {
 	s_rx_push_task = rx_push_task;
 	s_alloc_bat_task = alloc_bat_task;

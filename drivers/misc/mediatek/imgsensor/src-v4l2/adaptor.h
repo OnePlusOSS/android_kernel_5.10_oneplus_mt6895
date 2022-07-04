@@ -136,6 +136,10 @@ struct adaptor_ctx {
 
 	unsigned int *sensor_debug_flag;
 	u32 shutter_for_timeout;
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	unsigned int support_explorer_aon_fl;//1:use explorer AON driver
+	#endif
 	struct wakeup_source *sensor_ws;
 };
 

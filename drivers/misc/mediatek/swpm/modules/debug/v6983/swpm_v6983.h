@@ -441,6 +441,10 @@ struct swpm_rec_data {
 //extern int ca_force_stop_set_in_kernel(int val);
 #endif
 
+#if IS_ENABLED(CONFIG_MEDIATEK_CPUFREQ_DEBUG_LITE)
+extern int get_devinfo(int i);
+#endif
+
 extern struct power_rail_data swpm_power_rail[NR_POWER_RAIL];
 extern spinlock_t swpm_snap_spinlock;
 extern struct mem_swpm_index mem_idx_snap;
@@ -453,6 +457,9 @@ extern struct share_wrap *wrap_d;
 extern char *swpm_power_rail_to_string(enum power_rail p);
 extern void swpm_set_update_cnt(unsigned int type, unsigned int cnt);
 extern void swpm_set_enable(unsigned int type, unsigned int enable);
+extern unsigned int swpm_core_static_data_get(void);
+extern void swpm_core_static_replaced_data_set(unsigned int data);
+extern void swpm_core_static_data_init(void);
 extern int swpm_v6983_init(void);
 extern void swpm_v6983_exit(void);
 

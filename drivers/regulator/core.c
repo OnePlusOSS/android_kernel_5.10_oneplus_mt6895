@@ -5869,6 +5869,16 @@ static int regulator_late_cleanup(struct device *dev, void *data)
 	if (c && c->always_on)
 		return 0;
 
+	if(strcmp(rdev->desc->name,"LDO3") == 0){
+		/* ldo1 is enable in lk, kernel enable this ldo1 to protect from unbalanced enable/disable */
+		struct regulator *ldo3;//VCI 3.0V
+		ldo3 = regulator_get(dev, "VMC");
+		if(!IS_ERR(ldo3))
+			regulator_enable(ldo3);
+		rdev_info(rdev,"LDO3 is used for LCM ,can't clean up.\n");
+		return 0;
+	}
+
 	if (!regulator_ops_is_valid(rdev, REGULATOR_CHANGE_STATUS))
 		return 0;
 

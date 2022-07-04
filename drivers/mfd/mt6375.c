@@ -430,6 +430,9 @@ static int __maybe_unused mt6375_suspend(struct device *dev)
 
 	if (device_may_wakeup(dev))
 		enable_irq_wake(i2c->irq);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	disable_irq(i2c->irq);
+#endif
 	return 0;
 }
 
@@ -437,6 +440,9 @@ static int __maybe_unused mt6375_resume(struct device *dev)
 {
 	struct i2c_client *i2c = to_i2c_client(dev);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	enable_irq(i2c->irq);
+#endif
 	if (device_may_wakeup(dev))
 		disable_irq_wake(i2c->irq);
 	return 0;

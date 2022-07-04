@@ -551,7 +551,6 @@ static s32 rdma_tile_prepare(struct mml_comp *comp, struct mml_task *task,
 			func->full_size_x_out = in_crop_w;
 			func->full_size_y_out = in_crop_h;
 		}
-
 		rdma_frm->crop_off_l = data->rdma.crop.left;
 		rdma_frm->crop_off_t = data->rdma.crop.top;
 	} else {

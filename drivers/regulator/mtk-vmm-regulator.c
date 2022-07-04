@@ -107,11 +107,13 @@ static int fix_force_step(const char *val, const struct kernel_param *kp)
 	}
 
 	drv_data = dbg_data->drv_data;
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (!atomic_read(&drv_data->ccu_power_on)) {
 		ISP_LOGE("CCU is not power on before set voltage\n");
 		ret = -EINVAL;
 		goto out;
 	}
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	opp_table = &drv_data->opp_table;
 	if (new_force_step >= opp_table->opp_num) {
@@ -196,6 +198,7 @@ static int show_setting(char *buf, const struct kernel_param *kp)
 	written += snprintf(buf + written, MAX_BUFFER_SIZE - written,
 			"Current voltage:%d\n", current_info->voltage_target);
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (atomic_read(&drv_data->ccu_power_on)) {
 		ccu_handle = &(drv_data->ccu_handle);
 		vb_info.efuseValue = 0;
@@ -235,6 +238,45 @@ static int show_setting(char *buf, const struct kernel_param *kp)
 			}
 		}
 	}
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	ccu_handle = &(drv_data->ccu_handle);
+	vb_info.efuseValue = 0;
+	ret = mtk_ccu_rproc_ipc_send(
+		ccu_handle->ccu_pdev,
+		MTK_CCU_FEATURE_ISPDVFS,
+		DVFS_CCU_QUERY_VB,
+		(void *)&vb_info, sizeof(struct dvfs_ipc_vb));
+	if (ret) {
+		ISP_LOGE("mtk_ccu_rproc_ipc_send(DVFS_CCU_QUERY_VB) fail(%lu)\n",
+				arch_timer_read_counter());
+	} else {
+		if (drv_data->en_vb)
+			written += snprintf(buf + written,
+					MAX_BUFFER_SIZE - written,
+					"Load supports VB\n");
+		else
+			written += snprintf(buf + written,
+					MAX_BUFFER_SIZE - written,
+					"Load does not support VB\n");
+		written += snprintf(buf + written,
+					MAX_BUFFER_SIZE - written,
+					"Efuse reg:(0x%x)\n",
+					vb_info.efuseValue);
+	}
+
+	if (table->opp_num <= MAX_OPP_STEP) {
+		written += snprintf(buf + written, MAX_BUFFER_SIZE - written,
+				"Final (After vb) voltage & improve:\n");
+		for (i = 0; i < table->opp_num; i++) {
+			improve = table->voltage[i] - vb_info.voltage[i];
+			improve = (improve * 100)/table->voltage[i];
+			written += snprintf(buf + written,
+					MAX_BUFFER_SIZE - written,
+					"volt(%d), improve(%d %%)\n",
+					vb_info.voltage[i], improve);
+		}
+	}
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	return written;
 }
@@ -330,10 +372,12 @@ static int force_opp_level(void *data, u64 val)
 	return 0;
 }
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 static inline struct device *to_vmm_dev(struct regulator_dev *rdev)
 {
 	return rdev_get_dev(rdev)->parent;
 }
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 static void set_all_muxes(struct dvfs_driver_data *drv_data, u32 opp_level)
 {
@@ -417,11 +461,17 @@ static void ccu_ipc_update_dvfs(uint32_t data, uint32_t len, void *priv)
 	trace_vmm__update_voltage(data);
 }
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 static int power_on_ccu(struct ccu_handle_info *ccu_handle)
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+static int vmm_init_dvfs(struct ccu_handle_info *ccu_handle)
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 {
 	phandle handle;
 	struct device_node *node = NULL, *rproc_np = NULL;
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	struct rproc *ccu_rproc = NULL;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	int ret = 0;
 
 	node = of_find_compatible_node(NULL, NULL, "mediatek,ispdvfs");
@@ -445,7 +495,7 @@ static int power_on_ccu(struct ccu_handle_info *ccu_handle)
 			ret = PTR_ERR(ccu_handle->ccu_pdev);
 			goto error_handle;
 		}
-
+		#ifndef OPLUS_FEATURE_CAMERA_COMMON
 		ccu_rproc = rproc_get_by_phandle(handle);
 		if (ccu_rproc == NULL) {
 			ISP_LOGF("rproc_get_by_phandle fail\n");
@@ -459,7 +509,7 @@ static int power_on_ccu(struct ccu_handle_info *ccu_handle)
 			goto error_handle;
 		}
 		ccu_handle->proc = ccu_rproc;
-
+		#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 		// Register callback
 		mtk_ccu_ipc_register(ccu_handle->ccu_pdev,
 				MTK_CCU_MSG_TO_APMCU_DVFS_STATUS,
@@ -473,7 +523,9 @@ static int power_on_ccu(struct ccu_handle_info *ccu_handle)
 	return ret;
 
 error_handle:
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	ccu_handle->proc = NULL;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	ccu_handle->ccu_pdev = NULL;
 	WARN_ON(ret);
 	return ret;
@@ -545,10 +597,12 @@ static int ccu_set_voltage(struct regulator_dev *rdev,
 	/* record vmm & related consumer traces */
 	regulator_trace_consumers(rdev);
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (!atomic_read(&drv_data->ccu_power_on)) {
 		ISP_LOGE("CCU is not power on before set voltage\n");
 		return -EINVAL;
 	}
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	current_info = &(drv_data->current_dvfs);
 	mutex_lock(&current_info->voltage_mutex);
@@ -711,6 +765,7 @@ static void vmm_init_opp_table(struct dvfs_driver_data *data)
 	}
 }
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 static void power_control_handler(struct work_struct *work)
 {
 	struct dvfs_driver_data *drv_data
@@ -772,11 +827,16 @@ error_handle:
 	WARN_ON(1);
 	return;
 }
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 static int vmm_enable_regulator(struct regulator_dev *rdev)
 {
 	struct vmm_regulator *regulator;
 	struct dvfs_driver_data *drv_data;
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct ccu_handle_info *ccu_handle;
+	struct dvfs_ipc_init dvfs_ipi_init;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	int ret;
 
 	ISP_LOGI("Enable vmm regulator");
@@ -805,6 +865,7 @@ static int vmm_enable_regulator(struct regulator_dev *rdev)
 		drv_data->mux_is_enable = true;
 	}
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (!atomic_read(&drv_data->request_power_on)) {
 		atomic_set(&drv_data->request_power_on, true);
 		schedule_work(&drv_data->work_structure);
@@ -820,6 +881,28 @@ static int vmm_enable_regulator(struct regulator_dev *rdev)
 			goto error_handle;
 		}
 	}
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	ccu_handle = &(drv_data->ccu_handle);
+	ret = vmm_init_dvfs(ccu_handle);
+	if (ret) {
+		ISP_LOGE("boot ccu rproc fail\n");
+		goto error_handle;
+	}
+
+	dvfs_ipi_init.needVoltageBin = drv_data->en_vb;
+	dvfs_ipi_init.needSimAging = drv_data->simulate_aging;
+	dvfs_ipi_init.needCbFromMicroP
+			= mtk_ispdvfs_dbg_level & DVFS_DEBUG_MICROP;
+	ret = mtk_ccu_rproc_ipc_send(
+		ccu_handle->ccu_pdev,
+		MTK_CCU_FEATURE_ISPDVFS,
+		DVFS_CCU_INIT,
+		(void *)&dvfs_ipi_init, sizeof(struct dvfs_ipc_init));
+	if (ret) {
+		ISP_LOGE("mtk_ccu_rproc_ipc_send(DVFS_CCU_INIT) fail\n");
+		goto error_handle;
+	}
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	regulator->is_enable = 1;
 
@@ -834,7 +917,13 @@ static int vmm_disable_regulator(struct regulator_dev *rdev)
 {
 	struct vmm_regulator *regulator;
 	struct dvfs_driver_data *dvfs_data;
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	struct dvfs_info *current_info;
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	struct ccu_handle_info *ccu_handle;
+	struct dvfs_info *current_info;
+	int exit = 1;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	int ret = 0;
 
 	ISP_LOGI("Disable vmm regulator");
@@ -858,6 +947,7 @@ static int vmm_disable_regulator(struct regulator_dev *rdev)
 		dvfs_data->mux_is_enable = false;
 	}
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (atomic_read(&dvfs_data->request_power_on)) {
 		/* Wait previous power up ccu done */
 		ret = wait_event_timeout(vmm_wait_queue,
@@ -884,6 +974,20 @@ static int vmm_disable_regulator(struct regulator_dev *rdev)
 			}
 		}
 	}
+	#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	ccu_handle = &(dvfs_data->ccu_handle);
+	ret = mtk_ccu_rproc_ipc_send(
+		ccu_handle->ccu_pdev,
+		MTK_CCU_FEATURE_ISPDVFS,
+		DVFS_CCU_DVFS_RESET,
+		(void *)&exit, sizeof(exit));
+	if (ret) {
+		ISP_LOGE("ccu ipc fail(DVFS_CCU_DVFS_RESET) fail");
+		goto error_handle;
+	}
+
+	memset(ccu_handle, 0, sizeof(*ccu_handle));
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	current_info = &(dvfs_data->current_dvfs);
 	current_info->voltage_target = DEFAULT_VOLTAGE;
@@ -1004,10 +1108,12 @@ static int vmm_regulator_probe(struct platform_device *pdev)
 	dvfs_data->num_muxes = num_mux;
 	dvfs_data->mux_is_enable = false;
 
+	#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	/* CCU power on status */
 	atomic_set(&dvfs_data->request_power_on, false);
 	atomic_set(&dvfs_data->ccu_power_on, false);
 	INIT_WORK(&dvfs_data->work_structure, power_control_handler);
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	/* Real regualtor instance which controls vmm directly */
 	vmm_reg = devm_regulator_get(dev, "buck-vmm");

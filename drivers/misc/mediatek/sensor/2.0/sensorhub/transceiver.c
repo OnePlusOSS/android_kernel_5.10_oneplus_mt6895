@@ -149,7 +149,12 @@ static bool transceiver_wakeup_check(uint8_t action, uint8_t sensor_type)
 			sensor_type == SENSOR_TYPE_MOTION_DETECT ||
 			sensor_type == SENSOR_TYPE_IN_POCKET ||
 			sensor_type == SENSOR_TYPE_ANSWER_CALL ||
-			sensor_type == SENSOR_TYPE_FLAT))
+			sensor_type == SENSOR_TYPE_FLAT ||
+//#ifdef OPLUS_SENSOR_FEATURE add for oplus virtual sensor
+                        sensor_type == SENSOR_TYPE_LUX_AOD ||
+                        sensor_type == SENSOR_TYPE_PICKUP_DETECT ||
+                        sensor_type == SENSOR_TYPE_FP_DISPLAY))
+//#endif
 		return true;
 
 	return false;
@@ -296,6 +301,7 @@ static int transceiver_translate(struct transceiver_device *dev,
 		case SENSOR_TYPE_ACCELEROMETER:
 		case SENSOR_TYPE_MAGNETIC_FIELD:
 		case SENSOR_TYPE_GYROSCOPE:
+		case SENSOR_TYPE_PROXIMITY:
 			dst->word[0] = src->value[0];
 			dst->word[1] = src->value[1];
 			dst->word[2] = src->value[2];
@@ -332,7 +338,6 @@ static int transceiver_translate(struct transceiver_device *dev,
 			break;
 		case SENSOR_TYPE_LIGHT:
 		case SENSOR_TYPE_PRESSURE:
-		case SENSOR_TYPE_PROXIMITY:
 		case SENSOR_TYPE_STEP_COUNTER:
 			dst->word[0] = src->value[0];
 			break;
@@ -540,21 +545,22 @@ static int transceiver_enable(struct hf_device *hf_dev,
 	state = &dev->state[sensor_type];
 	mutex_lock(&dev->enable_lock);
 	if (en) {
-		scp_register_sensor(SENS_FEATURE_ID, sensor_type);
+		//fix kernel panic for feature id not match sensor id, add later
+		//scp_register_sensor(SENS_FEATURE_ID, sensor_type);
 		ret = transceiver_comm_with(sensor_type,
 			SENS_COMM_CTRL_ENABLE_CMD,
 			&state->batch, sizeof(state->batch));
 		if (ret >= 0)
 			state->enable = true;
-		else
-			scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
+		//else
+		//	scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
 	} else {
 		ret = transceiver_comm_with(sensor_type,
 			SENS_COMM_CTRL_DISABLE_CMD, NULL, 0);
 		state->batch.delay = S64_MAX;
 		state->batch.latency = S64_MAX;
 		state->enable = false;
-		scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
+		//scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
 	}
 	mutex_unlock(&dev->enable_lock);
 	return ret;

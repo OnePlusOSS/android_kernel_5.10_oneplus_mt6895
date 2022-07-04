@@ -131,31 +131,35 @@ static int bu64253gwz_init(struct bu64253gwz_device *bu64253gwz)
 
 	client->addr = BU64253GWZ_I2C_SLAVE_ADDR >> 1;
 
-	LOG_INF("Enable ISRC\n");
-	puSendCmd[0] = (char)(0xC2);
-	puSendCmd[1] = (char)(0x00);
-	ret = i2c_master_send(client, puSendCmd, 2);
-	if (ret < 0) {
-		LOG_INF("I2C write failed!!\n");
-		return -1;
-	}
+		LOG_INF("Enable ISRC\n");
+		puSendCmd[0] = (char)(0xC2);
+		puSendCmd[1] = (char)(0x00);
+		ret = i2c_master_send(client, puSendCmd, 2);
 
-	puSendCmd[0] = (char)(0xC8);
-	puSendCmd[1] = (char)(0x01);
-	ret = i2c_master_send(client, puSendCmd, 2);
-	if (ret < 0) {
-		LOG_INF("I2C write failed!!\n");
-		return -1;
-	}
+		if (ret < 0) {
+			LOG_INF("I2C write failed!!\n");
+			return -1;
+		}
 
-	puSendCmd[0] = (char)(0xD0);
-	puSendCmd[1] = (char)(0x42);
-	ret = i2c_master_send(client, puSendCmd, 2);
-	if (ret < 0) {
-		LOG_INF("I2C write failed!!\n");
-		return -1;
-	}
+		puSendCmd[0] = (char)(0xC8);
+		puSendCmd[1] = (char)(0x01);
+		ret = i2c_master_send(client, puSendCmd, 2);
 
+		if (ret < 0) {
+			LOG_INF("I2C write failed!!\n");
+			return -1;
+		}
+
+		puSendCmd[0] = (char)(0xD0);
+		puSendCmd[1] = (char)(0x42);
+		ret = i2c_master_send(client, puSendCmd, 2);
+
+		if (ret < 0) {
+			LOG_INF("I2C write failed!!\n");
+			return -1;
+		}
+
+	
 	LOG_INF("-\n");
 
 	return 0;
@@ -429,6 +433,6 @@ static struct i2c_driver bu64253gwz_i2c_driver = {
 
 module_i2c_driver(bu64253gwz_i2c_driver);
 
-MODULE_AUTHOR("Po-Hao Huang <Po-Hao.Huang@mediatek.com>");
-MODULE_DESCRIPTION("AK7377A VCM driver");
+MODULE_AUTHOR("XXX");
+MODULE_DESCRIPTION("BU64253GWZ VCM driver");
 MODULE_LICENSE("GPL v2");

@@ -27,6 +27,14 @@
  */
 #define EXT_SPK_AMP_W_NAME "Ext_Speaker_Amp"
 
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+
+#ifdef OPLUS_ARCH_EXTENDS
+extern void extend_codec_i2s_be_dailinks(struct snd_soc_dai_link *dailink, size_t size);
+extern bool extend_codec_i2s_compare(struct snd_soc_dai_link *dailink, int dailink_num);
+#endif
 static const char *const mt6983_spk_type_str[] = {MTK_SPK_NOT_SMARTPA_STR,
 						  MTK_SPK_RICHTEK_RT5509_STR,
 						  MTK_SPK_MEDIATEK_MT6660_STR,
@@ -114,6 +122,17 @@ static const struct snd_soc_dapm_route mt6983_mt6338_routes[] = {
 	{EXT_SPK_AMP_W_NAME, NULL, "Headphone R Ext Spk Amp"},
 };
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#define HAL_FEEDBACK_MAX_BYTES         (256)
+extern int hal_feedback_config_get(struct snd_kcontrol *kcontrol,
+			unsigned int __user *bytes,
+			unsigned int size);
+extern int hal_feedback_config_set(struct snd_kcontrol *kcontrol,
+			const unsigned int __user *bytes,
+			unsigned int size);
+#endif  /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
+
 static const struct snd_kcontrol_new mt6983_mt6338_controls[] = {
 	SOC_DAPM_PIN_SWITCH(EXT_SPK_AMP_W_NAME),
 	SOC_ENUM_EXT("MTK_SPK_TYPE_GET", mt6983_spk_type_enum[0],
@@ -122,6 +141,10 @@ static const struct snd_kcontrol_new mt6983_mt6338_controls[] = {
 		     mt6983_spk_i2s_out_type_get, NULL),
 	SOC_ENUM_EXT("MTK_SPK_I2S_IN_TYPE_GET", mt6983_spk_type_enum[1],
 		     mt6983_spk_i2s_in_type_get, NULL),
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	SND_SOC_BYTES_TLV("HAL FEEDBACK", HAL_FEEDBACK_MAX_BYTES,
+		     hal_feedback_config_get, hal_feedback_config_set),
+#endif //CONFIG_OPLUS_FEATURE_MM_FEEDBACK
 };
 
 /*
@@ -1492,7 +1515,7 @@ static int mt6983_mt6338_dev_probe(struct platform_device *pdev)
 	for_each_card_prelinks(card, i, dai_link) {
 		if (!dai_link->platforms->name)
 			dai_link->platforms->of_node = platform_node;
-
+#ifndef OPLUS_ARCH_EXTENDS
 		if (!strcmp(dai_link->name, "Speaker Codec")) {
 			ret = snd_soc_of_get_dai_link_codecs(
 						&pdev->dev, spk_node, dai_link);
@@ -1510,8 +1533,11 @@ static int mt6983_mt6338_dev_probe(struct platform_device *pdev)
 				return -EINVAL;
 			}
 		}
+#endif
 	}
-
+#ifdef OPLUS_ARCH_EXTENDS
+	extend_codec_i2s_be_dailinks(mt6983_mt6338_dai_links, ARRAY_SIZE(mt6983_mt6338_dai_links));
+#endif
 	card->dev = &pdev->dev;
 
 	ret = devm_snd_soc_register_card(&pdev->dev, card);

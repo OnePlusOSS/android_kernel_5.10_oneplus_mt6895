@@ -1177,6 +1177,10 @@ static int imgsensor_probe(struct i2c_client *client)
 	struct device_node *endpoint;
 	struct adaptor_ctx *ctx;
 	int ret;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+    const char* of_support_explorer_aon = NULL;
+#endif
 
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
@@ -1189,6 +1193,16 @@ static int imgsensor_probe(struct i2c_client *client)
 	ctx->i2c_client = client;
 	ctx->dev = dev;
 	ctx->sensor_debug_flag = &sensor_debug;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	ret = of_property_read_string(ctx->dev->of_node, "support_explorer_aon", &of_support_explorer_aon); 
+	if ( !ret && strcmp(of_support_explorer_aon, "true") == 0) {
+		ctx->support_explorer_aon_fl = 1;
+	} else {
+	ctx->support_explorer_aon_fl = 0;
+	}
+dev_dbg(ctx->dev, "%s support_explorer_aon_fl:%d\n", __func__, ctx->support_explorer_aon_fl);
+#endif
 
 	endpoint = of_graph_get_next_endpoint(dev->of_node, NULL);
 	if (!endpoint) {
@@ -1205,7 +1219,6 @@ static int imgsensor_probe(struct i2c_client *client)
 		dev_err(dev, "parsing endpoint node failed\n");
 		return ret;
 	}
-
 	ret = adaptor_hw_init(ctx);
 	if (ret) {
 		dev_err(dev, "failed to init hw handles\n");
@@ -1342,7 +1355,10 @@ static const struct i2c_device_id imgsensor_id[] = {
 MODULE_DEVICE_TABLE(i2c, imgsensor_id);
 
 static const struct of_device_id imgsensor_of_match[] = {
-	{.compatible = "mediatek,imgsensor"},
+	{.compatible = "mediatek,imgsensor0"},
+	{.compatible = "mediatek,imgsensor1"},
+	{.compatible = "mediatek,imgsensor2"},
+	{.compatible = "mediatek,imgsensor3"},
 	{}
 };
 MODULE_DEVICE_TABLE(of, imgsensor_of_match);

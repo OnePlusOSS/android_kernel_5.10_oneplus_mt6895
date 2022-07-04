@@ -99,6 +99,35 @@ static int fl_set_level(struct flashlight_dev *fdev, int level)
 	return 0;
 }
 
+static int select_lednum(struct flashlight_dev *fdev, int lednum)
+{
+	struct flashlight_dev_arg fl_dev_arg;
+	if (!fdev || !fdev->ops) {
+		pr_info("Failed with no flashlight ops\n");
+		return -EINVAL;
+	}
+
+	if (fdev->sw_disable_status == FLASHLIGHT_SW_DISABLE_ON) {
+		pr_info("Sw disable on\n");
+		return 0;
+	}
+
+	fl_dev_arg.channel = fdev->dev_id.channel;
+	fl_dev_arg.arg = lednum;
+
+	if (fdev->ops->flashlight_ioctl(OPLUS_FLASH_IOC_SELECT_LED_NUM,
+				(unsigned long)&fl_dev_arg)) {
+		pr_info("Failed to select led nums \n");
+		return -EFAULT;
+	}
+
+	fdev->enable = 1;
+
+	return 0;
+
+}
+
+
 static int fl_enable(struct flashlight_dev *fdev, int enable)
 {
 	struct flashlight_dev_arg fl_dev_arg;
@@ -814,6 +843,14 @@ static long _flashlight_ioctl(
 				type, ct, part, fl_arg.arg);
 		mutex_lock(&fl_mutex);
 		ret = fl_enable(fdev, fl_arg.arg);
+		mutex_unlock(&fl_mutex);
+		break;
+
+	case OPLUS_FLASH_IOC_SELECT_LED_NUM:
+		pr_info("OPLUS_FLASH_IOC_SELECT_LED_NUM(%d,%d,%d): %d\n",
+				type, ct, part, fl_arg.arg);
+		mutex_lock(&fl_mutex);
+		ret = select_lednum(fdev, fl_arg.arg);
 		mutex_unlock(&fl_mutex);
 		break;
 

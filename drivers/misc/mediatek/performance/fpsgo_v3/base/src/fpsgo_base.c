@@ -599,16 +599,22 @@ struct hwui_info *fpsgo_search_and_add_hwui_info(int pid, int force)
 			p = &(*p)->rb_left;
 		else if (pid > tmp->pid)
 			p = &(*p)->rb_right;
-		else
+		else {
+			fpsgo_main_trace("%s pid:%d, force:%d, found", __func__, pid, force);
 			return tmp;
+		}
 	}
 
-	if (!force)
+	if (!force) {
+		fpsgo_main_trace("%s pid:%d not found", __func__, pid);
 		return NULL;
+	}
 
 	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return NULL;
+
+	fpsgo_main_trace("%s pid:%d, force:%d add", __func__, pid, force);
 
 	tmp->pid = pid;
 

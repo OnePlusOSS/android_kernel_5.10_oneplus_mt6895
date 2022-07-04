@@ -95,6 +95,39 @@ int clk_buf_voter_ctrl_by_id(const uint8_t subsys_id, enum RC_CTRL_CMD rc_req)
 }
 EXPORT_SYMBOL(clk_buf_voter_ctrl_by_id);
 
+//#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#if defined(SRCLKEN_RC_SUPPORT)
+int clk_buf_set_voter_by_name(const char *xo_name, const char *voter)
+{
+	int id, ret = 0;
+
+	if (!clkbuf_ctl.init_done) {
+		pr_notice("clkbuf HW not init yet\n");
+		return -ENODEV;
+	}
+
+	id = clkbuf_dcxo_get_xo_id_by_name(xo_name);
+	if (id < 0) {
+		pr_notice("xo name: %s not found, err: %d\n", xo_name, id);
+		return id;
+	}
+
+	if (id == 0) {
+		pr_notice("xo %s is invalid for control!!\n", xo_name);
+		return id;
+	}
+
+	ret = clkbuf_dcxo_pmic_store("DCXO", xo_name, "EN_BB");
+
+	ret |= clkbuf_dcxo_pmic_store("XO_VOTER", xo_name, voter);
+
+	return ret;
+}
+EXPORT_SYMBOL(clk_buf_set_voter_by_name);
+#endif /* defined(SRCLKEN_RC_SUPPORT) */
+//#endif
+
+
 static bool clk_buf_get_flightmode(void)
 {
 	return clkbuf_ctl.flightmode;

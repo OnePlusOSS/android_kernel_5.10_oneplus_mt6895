@@ -2165,6 +2165,9 @@ static int ccif_hif_hw_init(struct device *dev, struct md_ccif_ctrl *md_ctrl)
 	md_ctrl->ccif_ap_base = of_iomap(node, 0);
 	md_ctrl->ccif_md_base = of_iomap(node, 1);
 
+	md_ctrl->ccif2_ap_base = of_iomap(node, 2);
+	md_ctrl->ccif2_md_base = of_iomap(node, 3);
+
 	md_ctrl->ap_ccif_irq0_id = irq_of_parse_and_map(node, 0);
 	md_ctrl->ap_ccif_irq1_id = irq_of_parse_and_map(node, 1);
 
@@ -2224,12 +2227,16 @@ static int ccif_hif_hw_init(struct device *dev, struct md_ccif_ctrl *md_ctrl)
 		CCCI_ERROR_LOG(-1, TAG,
 			"%s: get ccif-pericfg failed\n", __func__);
 
-	if (!md_ctrl->ccif_ap_base ||
-		!md_ctrl->ccif_md_base) {
+	if (!md_ctrl->ccif_ap_base || !md_ctrl->ccif_md_base) {
 		CCCI_ERROR_LOG(-1, TAG,
 			"ap_ccif_base=NULL or ccif_md_base NULL\n");
 		return -2;
 	}
+
+	if (!md_ctrl->ccif2_ap_base || !md_ctrl->ccif2_md_base)
+		CCCI_ERROR_LOG(-1, TAG,
+			"ccif2_ap_base=NULL or ccif2_md_base NULL\n");
+
 	if (md_ctrl->ap_ccif_irq0_id == 0 ||
 		md_ctrl->ap_ccif_irq1_id == 0) {
 		CCCI_ERROR_LOG(-1, TAG,

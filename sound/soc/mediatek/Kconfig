@@ -359,3 +359,13 @@ config MTK_ULTRASND_PROXIMITY
 	  emulate physical proximity sensor. Using
 	  IPI interface to communicate with SCP side and
 	  be controlled by sensor hal.
+
+#ifdef OPLUS_ARCH_EXTENDS
+config SND_SOC_FSA
+	tristate "usb type-c switch"
+	help
+	  This adds fsa driver for Mediatek boards
+	  that can be used with other platforms
+	  Select Y if you have such device.
+	  If unsure select "N".
+#endif /* OPLUS_ARCH_EXTENDS */

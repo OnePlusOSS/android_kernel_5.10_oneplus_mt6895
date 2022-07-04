@@ -716,6 +716,90 @@ static const struct mtk_cam_format_desc sv_stream_out_fmts[] = {
 			.pixelformat = V4L2_PIX_FMT_SRGGB14,
 		},
 	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SBGGR10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SBGGR12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SBGGR14,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGBRG10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGBRG12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGBRG14,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGRBG10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGRBG12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGRBG14,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SRGGB10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SRGGB12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SRGGB14,
+		},
+	},
 };
 
 #define MTK_CAMSV_TOTAL_CAPTURE_QUEUES 1
@@ -938,6 +1022,22 @@ unsigned int mtk_cam_sv_format_sel(unsigned int pixel_fmt)
 	case V4L2_PIX_FMT_SRGGB14:
 		fmt.Bits.TG1_FMT = SV_TG_FMT_RAW14;
 		break;
+	case V4L2_PIX_FMT_YUYV:
+		fmt.Bits.TG1_SW = TG_SW_YUYV;
+		fmt.Bits.TG1_FMT = SV_TG_FMT_YUV422;
+		break;
+	case V4L2_PIX_FMT_YVYU:
+		fmt.Bits.TG1_SW = TG_SW_YVYU;
+		fmt.Bits.TG1_FMT = SV_TG_FMT_YUV422;
+		break;
+	case V4L2_PIX_FMT_UYVY:
+		fmt.Bits.TG1_SW = TG_SW_UYVY;
+		fmt.Bits.TG1_FMT = SV_TG_FMT_YUV422;
+		break;
+	case V4L2_PIX_FMT_VYUY:
+		fmt.Bits.TG1_SW = TG_SW_VYUY;
+		fmt.Bits.TG1_FMT = SV_TG_FMT_YUV422;
+		break;
 	default:
 		break;
 	}
@@ -990,7 +1090,12 @@ unsigned int mtk_cam_sv_pak_sel(unsigned int pixel_fmt,
 	case V4L2_PIX_FMT_SRGGB12:
 		pak.Bits.PAK_MODE = 146;
 		break;
-
+	case V4L2_PIX_FMT_YUYV:
+	case V4L2_PIX_FMT_YVYU:
+	case V4L2_PIX_FMT_UYVY:
+	case V4L2_PIX_FMT_VYUY:
+		pak.Bits.PAK_MODE = 0;
+		break;
 	default:
 		break;
 	}
@@ -1000,7 +1105,8 @@ unsigned int mtk_cam_sv_pak_sel(unsigned int pixel_fmt,
 	return pak.Raw;
 }
 
-unsigned int mtk_cam_sv_xsize_cal(struct mtkcam_ipi_input_param *cfg_in_param)
+unsigned int mtk_cam_sv_xsize_cal(
+	struct mtkcam_ipi_input_param *cfg_in_param)
 {
 
 	unsigned int size;
@@ -1045,6 +1151,12 @@ unsigned int mtk_cam_sv_xsize_cal(struct mtkcam_ipi_input_param *cfg_in_param)
 	case V4L2_PIX_FMT_SGRBG12:
 	case V4L2_PIX_FMT_SRGGB12:
 		size = (cfg_in_param->in_crop.s.w * 16) / 8;
+		break;
+	case V4L2_PIX_FMT_YUYV:
+	case V4L2_PIX_FMT_YVYU:
+	case V4L2_PIX_FMT_UYVY:
+	case V4L2_PIX_FMT_VYUY:
+		size = cfg_in_param->in_crop.s.w;
 		break;
 	default:
 		break;
@@ -1238,14 +1350,23 @@ int mtk_cam_sv_top_config(
 	}
 
 	/* pak */
-	pak.Raw = mtk_cam_sv_pak_sel(cfg_in_param->fmt, cfg_in_param->pixel_mode);
-	CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
-		CAMSV_MODULE_EN, PAK_EN, 1);
-	CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
-		CAMSV_MODULE_EN, PAK_SEL, 0);
-	CAMSV_WRITE_BITS(dev->base + REG_CAMSV_PAK_CON,
-		CAMSV_PAK_CON, PAK_IN_BIT, 14);
-	CAMSV_WRITE_REG(dev->base + REG_CAMSV_PAK, pak.Raw);
+	if (mtk_camsv_is_yuv_format(cfg_in_param->fmt)) {
+		pak.Raw = mtk_cam_sv_pak_sel(cfg_in_param->fmt, cfg_in_param->pixel_mode);
+		CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
+			CAMSV_MODULE_EN, PAK_EN, 0);
+		CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
+			CAMSV_MODULE_EN, PAK_SEL, 1);
+		CAMSV_WRITE_REG(dev->base + REG_CAMSV_PAK, pak.Raw);
+	} else {
+		pak.Raw = mtk_cam_sv_pak_sel(cfg_in_param->fmt, cfg_in_param->pixel_mode);
+		CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
+			CAMSV_MODULE_EN, PAK_EN, 1);
+		CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
+			CAMSV_MODULE_EN, PAK_SEL, 0);
+		CAMSV_WRITE_BITS(dev->base + REG_CAMSV_PAK_CON,
+			CAMSV_PAK_CON, PAK_IN_BIT, 14);
+		CAMSV_WRITE_REG(dev->base + REG_CAMSV_PAK, pak.Raw);
+	}
 
 	/* ufe disable */
 	CAMSV_WRITE_BITS(dev->base + REG_CAMSV_MODULE_EN,
@@ -1276,7 +1397,8 @@ int mtk_cam_sv_dmao_config(
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
 		if (raw_imgo_stride > mtk_cam_sv_xsize_cal(cfg_in_param)) {
 			dev_info(dev->dev, "Special feature:0x%x, raw/sv stride = %d(THIS)/%d\n",
-				hw_scen, raw_imgo_stride, mtk_cam_sv_xsize_cal(cfg_in_param));
+				hw_scen, raw_imgo_stride,
+				mtk_cam_sv_xsize_cal(cfg_in_param));
 			CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_STRIDE,
 				raw_imgo_stride);
 		}
@@ -1537,8 +1659,19 @@ int mtk_cam_sv_enquehwbuf(
 	CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_BASE_ADDR_MSB, (ba >> 32) & 0xF);
 	reg.Bits.RCNT_INC1 = 1;
 	CAMSV_WRITE_REG(dev->base + REG_CAMSV_TOP_FBC_CNT_SET, reg.Raw);
+	dev_dbg(dev->dev, "[%s] iova:0x%x, seq:%d\n", __func__, ba, seq_no);
 
 	return ret;
+}
+
+int mtk_cam_get_sv_pixel_mode(struct mtk_cam_ctx *ctx, unsigned int idx)
+{
+	struct v4l2_format *img_fmt;
+
+	img_fmt = &ctx->sv_pipe[idx]
+		->vdev_nodes[MTK_CAMSV_MAIN_STREAM_OUT-MTK_CAMSV_SINK_NUM].active_fmt;
+
+	return (mtk_camsv_is_yuv_format(img_fmt->fmt.pix_mp.pixelformat)) ? 0 : 3;
 }
 
 int mtk_cam_sv_write_rcnt(struct mtk_cam_ctx *ctx, unsigned int pipe_id)
@@ -1667,7 +1800,11 @@ int mtk_cam_sv_update_all_buffer_ts(struct mtk_cam_ctx *ctx, u64 ts_ns)
 	return 1;
 }
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx)
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx, bool is_check_ts)
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 {
 	unsigned int seq_no;
 	dma_addr_t base_addr;
@@ -1693,9 +1830,19 @@ int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx)
 		buf_entry = list_first_entry(&ctx->sv_using_buffer_list[i].list,
 				struct mtk_camsv_working_buf_entry, list_entry);
 		if (mtk_cam_sv_is_vf_on(camsv_dev) &&
+			#ifndef OPLUS_FEATURE_CAMERA_COMMON
 			(ctx->used_raw_num != 0)) {
+			#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+			(ctx->used_raw_num != 0) && is_check_ts) {
+			#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
+			#ifndef OPLUS_FEATURE_CAMERA_COMMON
 			if (buf_entry->is_stagger == 0 ||
 				(buf_entry->is_stagger == 1 && STAGGER_CQ_LAST_SOF == 0)) {
+			#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+			if ((CAMSV_CHECK_TS == 1) && (buf_entry->is_stagger == 0 ||
+				(buf_entry->is_stagger == 1 && STAGGER_CQ_LAST_SOF == 0))) {
+			#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 				if ((buf_entry->ts_sv == 0) ||
 					((buf_entry->ts_sv < buf_entry->ts_raw) &&
 					((buf_entry->ts_raw - buf_entry->ts_sv) > 10000000))) {
@@ -1894,12 +2041,31 @@ int mtk_cam_sv_dev_config(
 	struct v4l2_format *img_fmt;
 	unsigned int i;
 	int ret, pad_idx, pixel_mode = 0;
+	int stride;
 
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
 		if (hw_scen & (1 << MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW)) {
 			img_fmt = &ctx->pipe->vdev_nodes[
 				MTK_RAW_MAIN_STREAM_SV_1_OUT - MTK_RAW_SINK_NUM].active_fmt;
 			pad_idx = PAD_SRC_RAW_W0;
+			mf = &ctx->pipe->cfg[MTK_RAW_SINK].mbus_fmt;
+		} else if (hw_scen & (1 << MTKCAM_SV_SPECIAL_SCENARIO_EXT_ISP)) {
+			img_fmt = &ctx->pipe->vdev_nodes[
+				cam->sv.pipelines[idx].raw_vdevidx - MTK_RAW_SINK_NUM].active_fmt;
+			if (cam->sv.pipelines[idx].seninf_padidx == PAD_SRC_GENERAL0) {
+				img_fmt->fmt.pix_mp.plane_fmt[0].bytesperline =
+					img_fmt->fmt.pix_mp.width;
+				img_fmt->fmt.pix_mp.pixelformat = V4L2_PIX_FMT_SBGGR8;
+			}
+			if (mtk_cam_is_ext_isp_yuv(ctx) &&
+				cam->sv.pipelines[idx].seninf_padidx == PAD_SRC_RAW_EXT0) {
+				img_fmt->fmt.pix_mp.pixelformat = V4L2_PIX_FMT_MTISP_SRGGB10;
+			}
+			dev_info(dev, "[%s:ext-isp] idx/vidx, w/h/pf:%d/%d, %d/%d/0x%x\n",
+				__func__, idx, cam->sv.pipelines[idx].raw_vdevidx,
+				img_fmt->fmt.pix_mp.width, img_fmt->fmt.pix_mp.height,
+				img_fmt->fmt.pix_mp.pixelformat);
+			pad_idx = cam->sv.pipelines[idx].seninf_padidx;
 			mf = &ctx->pipe->cfg[MTK_RAW_SINK].mbus_fmt;
 		} else {
 			img_fmt = &ctx->pipe->vdev_nodes[MTK_RAW_MAIN_STREAM_OUT - MTK_RAW_SINK_NUM]
@@ -1920,10 +2086,19 @@ int mtk_cam_sv_dev_config(
 	cfg_in_param.data_pattern = 0x0;
 	cfg_in_param.in_crop.p.x = 0;
 	cfg_in_param.in_crop.p.y = 0;
-	cfg_in_param.in_crop.s.w = img_fmt->fmt.pix_mp.width;
+	cfg_in_param.in_crop.s.w = (mtk_cam_is_ext_isp_yuv(ctx) &&
+			cam->sv.pipelines[idx].seninf_padidx == PAD_SRC_RAW_EXT0) ?
+		img_fmt->fmt.pix_mp.width * 2 :
+		img_fmt->fmt.pix_mp.width;
 	cfg_in_param.in_crop.s.h = img_fmt->fmt.pix_mp.height;
-	dev_info(dev, "sink pad code:0x%x raw's imgo stride:%d\n", mf->code,
-		img_fmt->fmt.pix_mp.plane_fmt[0].bytesperline);
+	stride = img_fmt->fmt.pix_mp.plane_fmt[0].bytesperline;
+	if (mtk_cam_is_ext_isp_yuv(ctx)) {
+		dev_info(dev, "yuv pipeline str:%d feature:%d\n",
+		stride, ctx->pipe->feature_active);
+	}
+	dev_info(dev, "sink pad code:0x%x camsv's imgo w/h/stride:%d/%d/%d feature:%d\n", mf->code,
+		cfg_in_param.in_crop.s.w, cfg_in_param.in_crop.s.h,
+		stride, ctx->pipe->feature_active);
 	cfg_in_param.raw_pixel_id = mtk_cam_get_sensor_pixel_id(mf->code);
 	cfg_in_param.subsample = 0;
 	cfg_in_param.fmt = img_fmt->fmt.pix_mp.pixelformat;
@@ -1951,6 +2126,7 @@ int mtk_cam_sv_dev_config(
 		camsv_dev->pipeline->hw_scen = hw_scen;
 		camsv_dev->pipeline->master_pipe_id = ctx->pipe->id;
 		camsv_dev->pipeline->exp_order = exp_order;
+		camsv_dev->sof_count = 0;
 	} else {
 		dev_sv = mtk_cam_find_sv_dev(cam, ctx->used_sv_dev[idx]);
 		if (dev_sv == NULL) {
@@ -1975,7 +2151,7 @@ int mtk_cam_sv_dev_config(
 	mtk_cam_sv_tg_config(camsv_dev, &cfg_in_param);
 	mtk_cam_sv_top_config(camsv_dev, &cfg_in_param);
 	mtk_cam_sv_dmao_config(camsv_dev, &cfg_in_param,
-				hw_scen, img_fmt->fmt.pix_mp.plane_fmt[0].bytesperline);
+					hw_scen, stride);
 	mtk_cam_sv_fbc_config(camsv_dev, &cfg_in_param);
 	mtk_cam_sv_tg_enable(camsv_dev, &cfg_in_param);
 	mtk_cam_sv_dmao_enable(camsv_dev, &cfg_in_param);
@@ -2408,6 +2584,16 @@ static irqreturn_t mtk_irq_camsv(int irq, void *data)
 	if (irq_status & CAMSV_INT_TG_SOF_INT_ST) {
 		irq_info.irq_type |= (1 << CAMSYS_IRQ_FRAME_START);
 		camsv_dev->sof_count++;
+		camsv_dev->sof_timestamp = ktime_get_boottime_ns();
+		if (camsv_dev->pipeline->hw_scen &
+			MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO)
+			dev_info(dev,
+		"%i status:0x%x(err:0x%x) drop:0x%x imgo_dma_err:0x%x_%x fbc:0x%x (imgo:0x%x) in/out:%d/%d tg_sen/dcif_set/tg_vf/tg_path:0x%x_%x_%x_%x\n",
+		camsv_dev->id,
+		irq_status, err_status,
+		drop_status, imgo_err_status, imgo_overr_status,
+		fbc_imgo_status, imgo_addr, dequeued_imgo_seq_no_inner,
+		dequeued_imgo_seq_no, tg_sen_mode, dcif_set, tg_vf_con, tg_path_cfg);
 	}
 
 	if (irq_info.irq_type && push_msgfifo(camsv_dev, &irq_info) == 0)
@@ -2600,7 +2786,8 @@ static int mtk_camsv_of_probe(struct platform_device *pdev,
 
 	ret = of_property_read_u32(dev->of_node, "mediatek,camsv-hwcap",
 						       &sv->hw_cap);
-	sv->hw_cap |= (1 << MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW);
+	sv->hw_cap |= (1 << MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW) |
+					(1 << MTKCAM_SV_SPECIAL_SCENARIO_EXT_ISP);
 	if (ret) {
 		dev_dbg(dev, "missing hardware capability property\n");
 		return ret;

@@ -1914,6 +1914,32 @@ static int mtk_imgsys_hw_flush_pipe_jobs(struct mtk_imgsys_pipe *pipe)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static int mtk_imgsys_power_ctrl_ccu(struct mtk_imgsys_dev *imgsys_dev, int on_off)
+{
+	int ret = 0;
+
+	if (on_off) {
+		if (imgsys_dev->rproc_ccu_handle == NULL) {
+			dev_info(imgsys_dev->dev, "CCU handle is NULL\n");
+			ret = -EINVAL;
+			goto out;
+		}
+
+		ret = rproc_boot(imgsys_dev->rproc_ccu_handle);
+		if (ret)
+			dev_info(imgsys_dev->dev, "boot ccu rproc fail\n");
+	} else {
+		if (imgsys_dev->rproc_ccu_handle)
+			rproc_shutdown(imgsys_dev->rproc_ccu_handle);
+		else
+			ret = -EINVAL;
+	}
+
+out:
+	return ret;
+}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 static void module_uninit(struct kref *kref)
 {
@@ -1933,6 +1959,10 @@ static void module_uninit(struct kref *kref)
 			"%s: [ERROR] reg is null or disabled\n", __func__);
 	else
 		regulator_disable(dvfs_info->reg);
+
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mtk_imgsys_power_ctrl_ccu(imgsys_dev, 0);
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	pr_info("%s", __func__);
 }
@@ -1973,6 +2003,9 @@ static int mtk_imgsys_hw_connect(struct mtk_imgsys_dev *imgsys_dev)
 			__func__, user_cnt);
 
 	atomic_set(&imgsys_dev->imgsys_user_cnt, 0);
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mtk_imgsys_power_ctrl_ccu(imgsys_dev, 1);
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	if (IS_ERR_OR_NULL(dvfs_info->reg))
 		dev_dbg(dvfs_info->dev,
 			"%s: [ERROR] reg is err or null\n", __func__);

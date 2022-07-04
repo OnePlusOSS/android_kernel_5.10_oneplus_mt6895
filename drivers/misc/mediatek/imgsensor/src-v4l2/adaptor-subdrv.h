@@ -162,6 +162,22 @@ struct subdrv_entry {
 	__ret; \
 })
 
+#define gc02m1_subdrv_i2c_rd_u8_u8(subctx, reg) \
+({ \
+	u8 __val = 0xff; \
+	gc02m1_adaptor_i2c_rd_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, &__val); \
+	__val; \
+})
+
+#define gc02m1_subdrv_i2c_wr_u8_u8(subctx, reg, val) \
+	gc02m1_adaptor_i2c_wr_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, val)
+
+#define gc02m1_subdrv_i2c_wr_regs_u8(subctx, list, len) \
+	gc02m1_adaptor_i2c_wr_regs_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, list, len)
+
 #define subdrv_i2c_rd_u8(subctx, reg) \
 ({ \
 	u8 __val = 0xff; \
@@ -212,5 +228,21 @@ struct subdrv_entry {
 	(_shutter) : \
 	(((_shutter) > (_fine_integ)) ? (((_shutter) - (_fine_integ)) / 1000) : 0) \
 )
+
+#define subdrv_i2c_rd_u8_u8(subctx, reg) \
+({ \
+	u8 __val = 0xff; \
+	adaptor_i2c_rd_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, &__val); \
+	__val; \
+})
+
+#define subdrv_i2c_wr_u8_u8(subctx, reg, val) \
+	adaptor_i2c_wr_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, val)
+
+#define subdrv_i2c_wr_regs_u8_u8(subctx, list, len) \
+	adaptor_i2c_wr_regs_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, list, len)
 
 #endif

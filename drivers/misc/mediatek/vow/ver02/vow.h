@@ -281,6 +281,7 @@ enum vow_model_control_t {
 enum {
 	VENDOR_ID_MTK = 77,     //'M'
 	VENDOR_ID_AMAZON = 65,  //'A'
+	VENDOR_ID_SPEECH = 83,  //'S'
 	VENDOR_ID_OTHERS = 71,
 	VENDOR_ID_NONE = 0
 };

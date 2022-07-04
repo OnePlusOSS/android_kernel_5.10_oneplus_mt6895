@@ -293,6 +293,7 @@ enum mtk_ddp_comp_id {
 struct mtk_ddp_comp;
 struct cmdq_pkt;
 enum mtk_ddp_comp_trigger_flag {
+	MTK_TRIG_FLAG_PRE_TRIGGER,
 	MTK_TRIG_FLAG_TRIGGER,
 	MTK_TRIG_FLAG_EOF,
 	MTK_TRIG_FLAG_LAYER_REC,
@@ -374,6 +375,22 @@ enum mtk_ddp_io_cmd {
 	DSI_DISABLE_VFP_EALRY_STOP,
 	/*Msync 2.0 cmd end*/
 	DUAL_TE_INIT,
+//#ifdef OPLUS_ADFR
+	PANEL_FAKE_FRAME,
+	GET_EXT_PARAMS_BY_MODE,
+	SET_AUTO_MODE,
+	SET_MINFPS,
+	/* add for mux switch control */
+	LCM_VSYNC_SWITCH,
+//#endif
+//#ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT
+	DSI_SET_DOZE,
+	DSI_READ,
+	LCM_HBM,
+	LCM_CABC,
+	LCM_SEED,
+	PANEL_SN_SET,
+//#endif
 };
 
 struct golden_setting_context {
@@ -707,12 +724,21 @@ bool mtk_dsi_is_cmd_mode(struct mtk_ddp_comp *comp);
 bool mtk_ddp_comp_is_output(struct mtk_ddp_comp *comp);
 void mtk_ddp_comp_get_name(struct mtk_ddp_comp *comp, char *buf, int buf_len);
 int mtk_ovl_layer_num(struct mtk_ddp_comp *comp);
+#if defined(CONFIG_PXLW_IRIS)
+int mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
+		   unsigned int offset, void *handle);
+int mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
+			   unsigned int offset, void *handle);
+int mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
+			unsigned int offset, unsigned int mask, void *handle);
+#else
 void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 		   unsigned int offset, void *handle);
 void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 			   unsigned int offset, void *handle);
 void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 			unsigned int offset, unsigned int mask, void *handle);
+#endif
 void mtk_ddp_write_mask_cpu(struct mtk_ddp_comp *comp,
 			unsigned int value, unsigned int offset,
 			unsigned int mask);

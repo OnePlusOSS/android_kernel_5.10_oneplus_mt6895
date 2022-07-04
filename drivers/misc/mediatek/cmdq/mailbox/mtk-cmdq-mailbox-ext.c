@@ -432,7 +432,7 @@ static void cmdq_clk_disable(struct cmdq *cmdq)
 		cmdq_err("ref count error after dec:%d suspend:%s",
 			usage, cmdq->suspended ? "true" : "false");
 	} else if (usage == 0) {
-		cmdq_log("cmdq shutdown mbox");
+		cmdq_msg("cmdq shutdown mbox");//gaoxiaolei modify 
 		/* clear tpr mask */
 		writel(0, cmdq->base + CMDQ_TPR_MASK);
 		if (cmdq->sw_ddr_en)
@@ -2446,6 +2446,10 @@ s32 cmdq_mbox_enable(void *chan)
 	s32 i;
 
 	WARN_ON(cmdq->suspended);
+	//gaoxiaolei modify
+	if (mtk_cmdq_msg == 1)
+		cmdq_msg("%s cmdq:%pa id:%u usage:%d", __func__, &cmdq->base_pa, cmdq->hwid
+			,atomic_read(&cmdq->usage));
 	if (cmdq->suspended) {
 		cmdq_err("cmdq:%pa id:%u suspend:%d cannot enable usage:%d",
 			&cmdq->base_pa, cmdq->hwid, cmdq->suspended,
@@ -2482,6 +2486,10 @@ s32 cmdq_mbox_disable(void *chan)
 	s32 i;
 
 	WARN_ON(cmdq->suspended);
+	//gaoxiaolei modify
+	if (mtk_cmdq_msg == 1)
+		cmdq_msg("%s cmdq:%pa id:%u usage:%d", __func__, &cmdq->base_pa, cmdq->hwid
+			,atomic_read(&cmdq->usage));
 	if (cmdq->suspended) {
 		cmdq_err("cmdq:%pa id:%u suspend:%d cannot disable usage:%d",
 			&cmdq->base_pa, cmdq->hwid, cmdq->suspended,

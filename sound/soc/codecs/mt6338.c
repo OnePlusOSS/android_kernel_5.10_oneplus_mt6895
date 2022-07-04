@@ -23,6 +23,10 @@
 #include <sound/soc.h>
 #include <sound/core.h>
 
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+
 #include "mt6338.h"
 #if IS_ENABLED(CONFIG_SND_SOC_MT6338_ACCDET)
 #include "mt6338-accdet.h"
@@ -1255,13 +1259,8 @@ static int mt6338_put_volsw(struct snd_kcontrol *kcontrol,
 	switch (mc->reg) {
 	case MT6338_ZCD_CON2:
 	case MT6338_ZCD_CON2_H:
-		if (priv->hp_hifi_mode) {
-			ucontrol->value.integer.value[0] = 2;
-			ucontrol->value.integer.value[1] = 2;
-		} else {
-			ucontrol->value.integer.value[0] = 1;
-			ucontrol->value.integer.value[1] = 1;
-		}
+		ucontrol->value.integer.value[0] = 2;
+		ucontrol->value.integer.value[1] = 2;
 		break;
 	case MT6338_AUDENC_PMU_CON1:
 		if (!priv->mic_hifi_mode)
@@ -3820,9 +3819,15 @@ static int mt_mic_bias_0_event(struct snd_soc_dapm_widget *w,
 		}
 
 		/* MISBIAS0 = 1P9V */
+#ifdef OPLUS_ARCH_EXTENDS
+		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON59,
+			RG_AUDMICBIAS0VREF_MASK_SFT,
+			MIC_BIAS_2P7 << RG_AUDMICBIAS0VREF_SFT);
+#else
 		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON59,
 			RG_AUDMICBIAS0VREF_MASK_SFT,
 			MIC_BIAS_1P9 << RG_AUDMICBIAS0VREF_SFT);
+#endif
 		if (priv->vow_enable) {
 			regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON59,
 				RG_AUDMICBIAS0LOWPEN_MASK_SFT,
@@ -3877,6 +3882,15 @@ static int mt_mic_bias_1_event(struct snd_soc_dapm_widget *w,
 		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON62,
 			RG_AUDMICBIAS1DCSW1PEN_MASK_SFT,
 			0x0 << RG_AUDMICBIAS1DCSW1PEN_SFT);
+#ifdef OPLUS_ARCH_EXTENDS
+		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON61,
+			RG_AUDMICBIAS1VREF_MASK_SFT,
+			MIC_BIAS_2P7 << RG_AUDMICBIAS1VREF_SFT);
+#else
+		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON61,
+			RG_AUDMICBIAS1VREF_MASK_SFT,
+			MIC_BIAS_1P9 << RG_AUDMICBIAS1VREF_SFT);
+#endif
 		if (priv->vow_enable) {
 			regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON61,
 				RG_AUDMICBIAS1LOWPEN_MASK_SFT,
@@ -3945,9 +3959,15 @@ static int mt_mic_bias_2_event(struct snd_soc_dapm_widget *w,
 		}
 
 		/* MISBIAS2 = 1P9V */
+#ifdef OPLUS_ARCH_EXTENDS
+		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON63,
+			RG_AUDMICBIAS2VREF_MASK_SFT,
+			MIC_BIAS_2P7 << RG_AUDMICBIAS2VREF_SFT);
+#else
 		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON63,
 			RG_AUDMICBIAS2VREF_MASK_SFT,
 			MIC_BIAS_1P9 << RG_AUDMICBIAS2VREF_SFT);
+#endif
 		if (priv->vow_enable) {
 			regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON63,
 				RG_AUDMICBIAS2LOWPEN_MASK_SFT,
@@ -4020,9 +4040,15 @@ static int mt_mic_bias_3_event(struct snd_soc_dapm_widget *w,
 		}
 
 		/* MISBIAS3 = 1P9V */
+#ifdef OPLUS_ARCH_EXTENDS
+		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON65,
+			RG_AUDMICBIAS3VREF_MASK_SFT,
+			MIC_BIAS_2P7 << RG_AUDMICBIAS3VREF_SFT);
+#else
 		regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON65,
 			RG_AUDMICBIAS3VREF_MASK_SFT,
 			MIC_BIAS_1P9 << RG_AUDMICBIAS3VREF_SFT);
+#endif
 		if (priv->vow_enable) {
 			regmap_update_bits(priv->regmap, MT6338_AUDENC_PMU_CON65,
 				RG_AUDMICBIAS3LOWPEN_MASK_SFT,
@@ -10009,6 +10035,7 @@ static int set_idac_trim_val(struct mt6338_priv *priv)
 			RG_AUDDACHPR_TRIM_EN_VAUDP18_MASK_SFT,
 			0x1 << RG_AUDDACHPR_TRIM_EN_VAUDP18_SFT);
 	}
+
 	return true;
 #else
 	return 0;

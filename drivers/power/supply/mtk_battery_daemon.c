@@ -3571,8 +3571,7 @@ static void mtk_battery_daemon_handler(struct mtk_battery *gm, void *nl_data,
 		if (gm->disableGM30)
 			vbat = 4000 * 10;
 		else
-			vbat = gauge_get_int_property(
-				GAUGE_PROP_BATTERY_VOLTAGE) * 10;
+			vbat = gauge_get_int_property(GAUGE_PROP_BATTERY_VOLTAGE) * 10;
 
 		ret_msg->fgd_data_len += sizeof(vbat);
 		memcpy(ret_msg->fgd_data, &vbat, sizeof(vbat));
@@ -3913,7 +3912,10 @@ static void mtk_battery_daemon_handler(struct mtk_battery *gm, void *nl_data,
 		rcv = &msg->fgd_data[0];
 		prcv = (struct fgd_cmd_param_t_4 *)rcv;
 		memcpy(&param, prcv->input, sizeof(struct fgd_cmd_param_t_8));
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		gm->prev_batt_fcc = param.data[4];
+		gm->prev_batt_remaining_capacity = param.data[4] /10 * param.data[6] / 10000;
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 		bm_err("[fr] FG_DAEMON_CMD_SET_BATTERY_CAPACITY = %d %d %d %d %d %d %d %d %d %d RM:%d\n",
 				param.data[0],
 				param.data[1],
@@ -4379,7 +4381,6 @@ static int nafg_irq_handler(struct mtk_battery *gm)
 		vbat = 4000;
 	else
 		vbat = gauge_get_int_property(GAUGE_PROP_BATTERY_VOLTAGE);
-
 
 	bm_err(
 		"[%s][cnt:%d dltv:%d cdltv:%d cdltvt:%d zcv:%d vbat:%d]\n",

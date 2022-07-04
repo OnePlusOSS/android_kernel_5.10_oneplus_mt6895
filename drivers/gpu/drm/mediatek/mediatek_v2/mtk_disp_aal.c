@@ -93,6 +93,10 @@ static atomic_t g_aal_interrupt_enabled = ATOMIC_INIT(1);
 static struct workqueue_struct *aal_flip_wq;
 static struct workqueue_struct *aal_refresh_wq;
 
+//#ifdef OPLUS_BUG_STABILITY
+extern unsigned int oplus_display_brightness;
+//#endif /*OPLUS_BUG_STABILITY*/
+
 enum AAL_UPDATE_HIST {
 	UPDATE_NONE = 0,
 	UPDATE_SINGLE,
@@ -473,6 +477,9 @@ void disp_aal_notify_backlight_changed(int trans_backlight, int max_backlight)
 
 	service_flags = 0;
 	if (trans_backlight == 0) {
+//#ifdef OPLUS_BUG_STABILITY
+		oplus_display_brightness = 0;
+//#endif /*OPLUS_BUG_STABILITY*/
 		mtk_leds_brightness_set("lcd-backlight", 0);
 		/* set backlight = 0 may be not from AAL, */
 		/* we have to let AALService can turn on backlight */
@@ -1524,14 +1531,19 @@ int mtk_drm_ioctl_aal_set_param(struct drm_device *dev, void *data,
 		if (g_aal_param.silky_bright_flag == 0) {
 			AALAPI_LOG("backlight_value = %d, silky_bright_flag = %d",
 				backlight_value, g_aal_param.silky_bright_flag);
+//#ifdef OPLUS_BUG_STABILITY
+			oplus_display_brightness = g_aal_param.FinalBacklight;
+//#endif /*OPLUS_BUG_STABILITY*/
 			mtk_leds_brightness_set("lcd-backlight", backlight_value);
 		}
 	} else if (m_new_pq_persist_property[DISP_PQ_GAMMA_SILKY_BRIGHTNESS]) {
 		//if (pre_bl != cur_bl)
 		AALAPI_LOG("gian = %d, backlight = %d",
 			g_aal_param.silky_bright_gain[0], backlight_value);
-		mtk_trans_gain_to_gamma(crtc, &g_aal_param.silky_bright_gain[0],
-			backlight_value);
+#if 0
+			mtk_trans_gain_to_gamma(crtc, &g_aal_param.silky_bright_gain[0],
+				backlight_value);
+#endif
 	} else {
 		AALAPI_LOG("%d", backlight_value);
 		mtk_leds_brightness_set("lcd-backlight", backlight_value);
@@ -1652,7 +1664,6 @@ static bool disp_aal_read_dre3(struct mtk_ddp_comp *comp,
 			hist_offset += 4) {
 
 		read_value = readl(dre3_va + DISP_AAL_SRAM_RW_IF_3);
-
 		if (arry_offset >= AAL_DRE30_HIST_REGISTER_NUM)
 			return false;
 		if (dump_start >= 0 && arry_offset >= dump_start
@@ -2576,10 +2587,23 @@ void disp_aal_on_end_of_frame(struct mtk_ddp_comp *comp)
 		return;
 	}
 
+	DRM_MMP_MARK(IRQ, 0, 0);
+
+	if (comp->id == DDP_COMPONENT_AAL0)
+		DRM_MMP_MARK(aal0, 0, 1);
+	else if (comp->id == DDP_COMPONENT_AAL1)
+		DRM_MMP_MARK(aal1, 1, 1);
+
+
 	if (g_aal_fo->mtk_dre30_support && gDre30Enabled)
 		disp_aal_dre3_irq_handle(comp);
 	else
 		disp_aal_single_pipe_hist_update(comp);
+
+	if (comp->id == DDP_COMPONENT_AAL0)
+		DRM_MMP_MARK(aal0, 0, 1);
+	else if (comp->id == DDP_COMPONENT_AAL1)
+		DRM_MMP_MARK(aal1, 1, 1);
 }
 
 static void disp_aal_wait_sof_irq(void)
@@ -2629,6 +2653,7 @@ static void disp_aal_wait_sof_irq(void)
 		CRTC_MMP_MARK(0, aal_sof_thread, 0, 2);
 
 		if (atomic_read(&g_aal_first_frame) == 1 &&
+
 			atomic_read(&g_aal1_first_frame) == 1) {
 			mtk_crtc_user_cmd(g_aal_data->crtc, default_comp, FLIP_SRAM, NULL);
 			mtk_crtc_check_trigger(default_comp->mtk_crtc, true, true);
@@ -2694,6 +2719,7 @@ void disp_aal_on_start_of_frame(void)
 		return;
 	if (!atomic_read(&g_aal_sof_irq_available)) {
 		atomic_set(&g_aal_sof_irq_available, 1);
+		AALIRQ_LOG("wake_up_interruptible g_aal_sof_irq_wq\n");
 		wake_up_interruptible(&g_aal_sof_irq_wq);
 	}
 }
@@ -3070,6 +3096,11 @@ void disp_aal_set_ess_en(int enable)
 
 	spin_lock_irqsave(&g_aal_hist_lock, flags);
 
+	if (g_aal_fo->mtk_dre30_support) {
+		if ((enable == 1) && !gDre30Enabled)
+			gDre30Enabled = true;
+	}
+
 	g_aal_ess_en_cmd_id += 1;
 	g_aal_ess_en_cmd_id = g_aal_ess_en_cmd_id % 64;
 	enable_command = AAL_CONTROL_CMD(g_aal_ess_en_cmd_id, enable);
@@ -3106,6 +3137,7 @@ void disp_aal_set_dre_en(int enable)
 	disp_aal_refresh_by_kernel();
 	AALAPI_LOG("en = %d (cmd = 0x%x)", enable, enable_command);
 }
+EXPORT_SYMBOL(disp_aal_set_dre_en);
 
 void disp_aal_debug(const char *opt)
 {

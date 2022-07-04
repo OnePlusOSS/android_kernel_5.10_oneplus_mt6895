@@ -194,7 +194,7 @@ static const struct aal_data mt6895_aal0_data = {
 	.min_tile_width = 50,
 	.tile_width = 1300,
 	.min_hist_width = 128,
-	.vcp_readback = true,
+	.vcp_readback = false,
 	.gpr = {CMDQ_GPR_R08, CMDQ_GPR_R10},
 	.cpr = {CMDQ_CPR_MML_PQ0_ADDR, CMDQ_CPR_MML_PQ1_ADDR},
 };
@@ -203,7 +203,7 @@ static const struct aal_data mt6895_aal1_data = {
 	.min_tile_width = 50,
 	.tile_width = 852,
 	.min_hist_width = 128,
-	.vcp_readback = true,
+	.vcp_readback = false,
 	.gpr = {CMDQ_GPR_R08, CMDQ_GPR_R10},
 	.cpr = {CMDQ_CPR_MML_PQ0_ADDR, CMDQ_CPR_MML_PQ1_ADDR},
 };

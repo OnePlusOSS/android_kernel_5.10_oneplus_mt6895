@@ -104,6 +104,7 @@ static int cm_aggr;
 static int cm_mgr_dram_opp_ceiling = -1;
 static int cm_mgr_dram_opp_floor = -1;
 unsigned int cm_hint;
+unsigned int cm_lmode;
 #endif
 int debounce_times_reset_adb;
 int light_load_cps = 1000;
@@ -533,6 +534,8 @@ static ssize_t dbg_cm_mgr_show(struct kobject *kobj,
 			cm_aggr);
 	len += cm_mgr_print("cm_hint %d\n",
 			cm_hint);
+	len += cm_mgr_print("cm_lmode %d\n",
+			cm_lmode);
 	len += cm_mgr_print("cm_mgr_dram_opp_ceiling %d\n",
 			    cm_mgr_dram_opp_ceiling);
 	len += cm_mgr_print("cm_mgr_dram_opp_floor %d\n",
@@ -702,6 +705,9 @@ static ssize_t dbg_cm_mgr_store(struct  kobject *kobj,
 		cm_mgr_to_sspm_command(IPI_CM_MGR_AGGRESSIVE, val_1);
 	} else if (!strcmp(cmd, "cm_hint")) {
 		cm_hint = val_1;
+	} else if (!strcmp(cmd, "cm_lmode")) {
+		cm_lmode = val_1;
+		cm_mgr_to_sspm_command(IPI_CM_MGR_LMODE, val_1);
 	} else if (!strcmp(cmd, "cm_mgr_dram_opp_ceiling")) {
 		cm_mgr_dram_opp_ceiling = val_1;
 		cm_mgr_to_sspm_command(IPI_CM_MGR_DRAM_OPP_CEILING, val_1);

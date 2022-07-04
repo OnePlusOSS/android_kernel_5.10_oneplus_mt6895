@@ -44,6 +44,9 @@ extern int clk_buf_control_bblpm(bool on);
 extern int clk_buf_dump_log(void);
 extern int clk_buf_get_xo_en_sta(const char *xo_name);
 extern int clk_buf_bblpm_enter_cond(void);
+//#ifdef OPLUS_FEATURE_CAMERA_COMMON
+extern int clk_buf_set_voter_by_name(const char *xo_name, const char *voter);
+//#endif
 
 #if defined(SRCLKEN_RC_SUPPORT)
 extern int srclken_dump_sta_log(void);

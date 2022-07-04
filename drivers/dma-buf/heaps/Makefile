@@ -4,6 +4,7 @@ obj-$(CONFIG_DMABUF_HEAPS_PAGE_POOL)	+= page_pool.o
 obj-$(CONFIG_DMABUF_HEAPS_SYSTEM)	+= system_heap.o
 obj-$(CONFIG_DMABUF_HEAPS_CMA)		+= cma_heap.o
 obj-$(CONFIG_DMABUF_HEAPS_MTK_MM)	+= mtk_mm_heap.o
+obj-$(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL) += mm_boost_pool/oplus_boost_pool_mtk.o
 
 ccflags-y += -I$(srctree)/drivers/iommu/
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/trusted_mem/

@@ -470,11 +470,11 @@ struct mtk_vcodec_ctx {
 	int is_hdr;
 	int last_is_hdr;
 	unsigned int errormap_info[VB2_MAX_FRAME];
+	u32 err_msg;
 	s64 input_max_ts;
 
 	bool is_flushing;
 	unsigned int eos_type;
-	void *dec_eos_vb;
 	u64 early_eos_ts;
 
 	int int_cond[MTK_VDEC_HW_NUM];

@@ -45,35 +45,35 @@ do {\
 
 #define bm_warn(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_WARNING_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
 
 #define bm_notice(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_NOTICE_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
 
 #define bm_info(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_INFO_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
 
 #define bm_debug(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_DEBUG_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
 
 #define bm_trace(fmt, args...)\
 do {\
-	if (bat_get_debug_level() >= BMLOG_TRACE_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args);\
 	}						\
 } while (0)
@@ -919,6 +919,11 @@ struct mtk_battery {
 	bool disableGM30;
 	bool ntc_disable_nafg;
 	bool cmd_disable_nafg;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/*fcc*/
+	int prev_batt_fcc;
+	int prev_batt_remaining_capacity;
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 	/*battery plug in out*/
 	int chr_type;

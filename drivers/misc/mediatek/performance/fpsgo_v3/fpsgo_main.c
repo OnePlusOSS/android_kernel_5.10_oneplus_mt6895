@@ -328,8 +328,8 @@ void fpsgo_notify_qudeq(int qudeq,
 	unsigned long long cur_ts;
 	struct FPSGO_NOTIFIER_PUSH_TAG *vpPush;
 
-	FPSGO_LOGI("[FPSGO_CTRL] qudeq %d-%d, id %llu pid %d\n",
-		qudeq, startend, id, pid);
+	//FPSGO_LOGI("[FPSGO_CTRL] qudeq %d-%d, id %llu pid %d\n",
+	//	qudeq, startend, id, pid);
 
 	if (!fpsgo_is_enable())
 		return;

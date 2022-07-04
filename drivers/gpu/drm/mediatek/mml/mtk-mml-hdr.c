@@ -186,7 +186,7 @@ static const struct hdr_data mt6895_hdr_data = {
 	.min_tile_width = 16,
 	.cpr = {CMDQ_CPR_MML_PQ0_ADDR, CMDQ_CPR_MML_PQ1_ADDR},
 	.gpr = {CMDQ_GPR_R08, CMDQ_GPR_R10},
-	.vcp_readback = true,
+	.vcp_readback = false,
 };
 
 struct mml_comp_hdr {

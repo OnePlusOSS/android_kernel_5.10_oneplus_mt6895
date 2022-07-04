@@ -231,6 +231,7 @@ struct ufs_mtk_host {
  *  SCSI_IOCTL_GET_PCI
  */
 #define UFS_IOCTL_QUERY			0x5388
+#define UFS_IOCTL_MONITOR               0x5392
 
 /**
  * struct ufs_ioctl_query_data - used to transfer data to and from user via
@@ -288,6 +289,44 @@ struct tag_bootmode {
 	u32 tag;
 	u32 bootmode;
 	u32 boottype;
+};
+
+struct ufs_transmission_status_t
+{
+	u8  transmission_status_enable;
+
+	u64 gear_min_write_sec;
+	u64 gear_max_write_sec;
+	u64 gear_min_read_sec;
+	u64 gear_max_read_sec;
+
+	u64 gear_min_write_us;
+	u64 gear_max_write_us;
+	u64 gear_min_read_us;
+	u64 gear_max_read_us;
+
+	u64 gear_min_dev_us;
+	u64 gear_max_dev_us;
+
+	u64 gear_min_other_sec;
+	u64 gear_max_other_sec;
+	u64 gear_min_other_us;
+	u64 gear_max_other_us;
+
+	u64 scsi_send_count;
+	u64 dev_cmd_count;
+
+	u64 active_count;
+	u64 active_time;
+
+	u64 sleep_count;
+	u64 sleep_time;
+
+	u64 powerdown_count;
+	u64 powerdown_time;
+
+	u64 power_total_count;
+	u32 current_pwr_mode;
 };
 
 #if IS_ENABLED(CONFIG_RPMB)

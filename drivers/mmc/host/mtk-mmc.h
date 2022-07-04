@@ -659,6 +659,8 @@ struct msdc_host {
 	bool qos_enable;
 	struct icc_path *bw_path;
 	unsigned int peak_bw;
+	u32 filter_enable;/*explorer not support cmd52*/
+	u32 explorer_support;/*explorer support or not*/
 };
 
 /*--------------------------------------------------------------------------*/

@@ -19,6 +19,9 @@
 #include <soc/mediatek/emi.h>
 
 #include "ccci_fsm_internal.h"
+//#ifdef OPLUS_BUG_DEBUG
+#include "ccci_fsm_sys.h"
+//#endif /*OPLUS_BUG_DEBUG*/
 #include "ccci_platform.h"
 #include "md_sys1_platform.h"
 #include "modem_sys.h"
@@ -560,8 +563,14 @@ static int ccci_md_epon_set(int md_id)
 			break;
 		}
 		if (md->hw_info->md_l2sram_base) {
+            //#ifdef OPLUS_BUG_DEBUG
+            md_cd_lock_modem_clock_src(1);
+            //#endif /*OPLUS_BUG_DEBUG*/
 			ret = *((int *)(md->hw_info->md_l2sram_base
 				+ md->hw_info->md_epon_offset)) == 0xBAEBAE10;
+            //#ifdef OPLUS_BUG_DEBUG
+            md_cd_lock_modem_clock_src(0);
+            //#endif /*OPLUS_BUG_DEBUG*/
 			in_md_l2sram = 1;
 		} else if (mdss_dbg && mdss_dbg->base_ap_view_vir)
 			ret = *((int *)(mdss_dbg->base_ap_view_vir

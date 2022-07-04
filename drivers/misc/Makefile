@@ -59,3 +59,11 @@ obj-$(CONFIG_XILINX_SDFEC)	+= xilinx_sdfec.o
 obj-$(CONFIG_HISI_HIKEY_USB)	+= hisi_hikey_usb.o
 obj-$(CONFIG_UID_SYS_STATS)	+= uid_sys_stats.o
 obj-y				+= mediatek/
+#ifdef OPLUS_FEATURE_TP_BASIC
+#Boyu.Wen@BSP.Vib.Basic 2021/08/07 add for vib aw86927
+obj-y += aw8697_haptic/
+#endif
+
+#ifdef OPLUS_FEATURE_TP_BASIC
+obj-$(CONFIG_SIM_DETECT)	+= sim_detect.o
+#endif

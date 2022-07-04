@@ -1342,6 +1342,10 @@ config TOUCHSCREEN_MTK_TOUCH
 
          To compile this dirver for used touch IC.
 
+#ifdef OPLUS_FEATURE_TP_BASIC
+source "drivers/input/touchscreen/touch_custom/Kconfig"
+source "drivers/input/touchscreen/oplus_touchscreen_v2/Kconfig"
+#endif
 config TOUCHSCREEN_MT6983_ALPHA_SUPPORT
 	tristate "Specify Alpha Touch Platform is mt6983"
 	help

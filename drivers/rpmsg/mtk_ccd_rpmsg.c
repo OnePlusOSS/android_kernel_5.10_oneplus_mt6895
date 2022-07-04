@@ -337,7 +337,11 @@ mtk_rpmsg_create_rpmsgdev(struct mtk_rpmsg_rproc_subdev *mtk_subdev,
 
 	ret = rpmsg_register_device(rpdev);
 	if (ret) {
-		/* need to free idr_alloc */
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		mutex_lock(&mtk_subdev->endpoints_lock);
+		idr_remove(&mtk_subdev->endpoints, info->src);
+		mutex_unlock(&mtk_subdev->endpoints_lock);
+#endif
 		kfree(mdev);
 		return NULL;
 	}
@@ -389,7 +393,12 @@ mtk_create_client_msgdevice(struct rproc_subdev *subdev,
 		if (ret != 0) {
 			dev_info(&mtk_subdev->pdev->dev,
 				"ccd listen wait error: %d\n", ret);
-			/* TBD: free mdev */
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			mutex_lock(&mtk_subdev->endpoints_lock);
+			idr_remove(&mtk_subdev->endpoints, info->src);
+			mutex_unlock(&mtk_subdev->endpoints_lock);
+			put_device(&mdev->rpdev.dev);
+#endif
 			return NULL;
 		}
 

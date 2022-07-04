@@ -669,9 +669,14 @@ return 0;
 
 
 static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int target,
-				  int exp_hsize, int exp_vsize)
+				  int exp_hsize, int exp_vsize, int dt)
 {
+	int exp_dt_hsize = exp_hsize;
 	void *mpSeninfCamMux_base = ctx->reg_if_cam_mux;
+
+	/* two times width size when yuv422 */
+	if (dt == 0x1f)
+		exp_dt_hsize = exp_hsize << 1;
 
 	if (target >= _seninf_ops->cam_mux_num) {
 		dev_info(ctx->dev, "%s err cam_mux %d >= SENINF_CAM_MUX_NUM %d\n",
@@ -680,6 +685,8 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 			_seninf_ops->cam_mux_num);
 		return 0;
 	}
+
+	dev_info(ctx->dev, "cam_mux %d src %d\n", target, src);
 
 #if	DEBUG_CAM_MUX_SWITCH
 	dev_info(ctx->dev, "%s cam_mux %d src %d exp_hsize %d, exp_hsize %d\n",
@@ -690,7 +697,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_0,
 			    RG_SENINF_CAM_MUX0_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX0_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX0_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX0_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX0_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX0_EXP_VSIZE, exp_vsize);
 		break;
@@ -698,7 +705,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_0,
 			    RG_SENINF_CAM_MUX1_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX1_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX1_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX1_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX1_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX1_EXP_VSIZE, exp_vsize);
 		break;
@@ -706,7 +713,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_0,
 			    RG_SENINF_CAM_MUX2_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX2_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX2_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX2_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX2_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX2_EXP_VSIZE, exp_vsize);
 		break;
@@ -714,7 +721,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_0,
 			    RG_SENINF_CAM_MUX3_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX3_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX3_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX3_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX3_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX3_EXP_VSIZE, exp_vsize);
 		break;
@@ -722,7 +729,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_1,
 			    RG_SENINF_CAM_MUX4_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX4_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX4_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX4_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX4_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX4_EXP_VSIZE, exp_vsize);
 		break;
@@ -730,7 +737,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_1,
 			    RG_SENINF_CAM_MUX5_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX5_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX5_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX5_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX5_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX5_EXP_VSIZE, exp_vsize);
 		break;
@@ -738,7 +745,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_1,
 			    RG_SENINF_CAM_MUX6_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX6_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX6_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX6_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX6_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX6_EXP_VSIZE, exp_vsize);
 		break;
@@ -746,7 +753,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_1,
 			    RG_SENINF_CAM_MUX7_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX7_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX7_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX7_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX7_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX7_EXP_VSIZE, exp_vsize);
 		break;
@@ -754,7 +761,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_2,
 			    RG_SENINF_CAM_MUX8_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX8_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX8_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX8_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX8_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX8_EXP_VSIZE, exp_vsize);
 		break;
@@ -762,7 +769,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_2,
 			    RG_SENINF_CAM_MUX9_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX9_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX9_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX9_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX9_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX9_EXP_VSIZE, exp_vsize);
 		break;
@@ -770,7 +777,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_2,
 			    RG_SENINF_CAM_MUX10_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX10_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX10_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX10_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX10_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX10_EXP_VSIZE, exp_vsize);
 		break;
@@ -778,7 +785,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_2,
 			    RG_SENINF_CAM_MUX11_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX11_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX11_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX11_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX11_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX11_EXP_VSIZE, exp_vsize);
 		break;
@@ -786,7 +793,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_3,
 			    RG_SENINF_CAM_MUX12_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX12_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX12_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX12_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX12_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX12_EXP_VSIZE, exp_vsize);
 		break;
@@ -794,7 +801,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_3,
 				RG_SENINF_CAM_MUX13_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX13_CHK_CTL_1,
-				RG_SENINF_CAM_MUX13_EXP_HSIZE, exp_hsize);
+				RG_SENINF_CAM_MUX13_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX13_CHK_CTL_1,
 				RG_SENINF_CAM_MUX13_EXP_VSIZE, exp_vsize);
 		break;
@@ -802,7 +809,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_3,
 			    RG_SENINF_CAM_MUX14_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX14_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX14_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX14_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX14_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX14_EXP_VSIZE, exp_vsize);
 		break;
@@ -810,7 +817,7 @@ static int mtk_cam_seninf_set_cammux_src(struct seninf_ctx *ctx, int src, int ta
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX_CTRL_3,
 			    RG_SENINF_CAM_MUX15_SRC_SEL, src);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX15_CHK_CTL_1,
-			    RG_SENINF_CAM_MUX15_EXP_HSIZE, exp_hsize);
+			    RG_SENINF_CAM_MUX15_EXP_HSIZE, exp_dt_hsize);
 		SENINF_BITS(mpSeninfCamMux_base, SENINF_CAM_MUX15_CHK_CTL_1,
 			    RG_SENINF_CAM_MUX15_EXP_VSIZE, exp_vsize);
 		break;
@@ -1165,7 +1172,7 @@ static int mtk_cam_seninf_set_test_model(struct seninf_ctx *ctx,
 	mtk_cam_seninf_set_top_mux_ctrl(ctx, mux, intf);
 
 	mtk_cam_seninf_set_cammux_vc(ctx, cam_mux, 0, 0, 0, 0);
-	mtk_cam_seninf_set_cammux_src(ctx, mux, cam_mux, 0, 0);
+	mtk_cam_seninf_set_cammux_src(ctx, mux, cam_mux, 0, 0, 0);
 	mtk_cam_seninf_set_cammux_chk_pixel_mode(ctx, cam_mux, pixel_mode);
 	mtk_cam_seninf_cammux(ctx, cam_mux);
 

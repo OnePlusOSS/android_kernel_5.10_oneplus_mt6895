@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2018-2020 Oplus. All rights reserved.
+
+config OPLUS_FEATURE_PERFORMANCE_MM
+	bool "config oplus kernel mm feature"
+	default y
+	help
+	  define this config to add oplus kernel mm feature
+
+config OPLUS_FEATURE_ZRAM_OPT
+	tristate "zram optimization"
+	default n
+	help
+	  define this config to add oplus zram optimization feature
+
+config VIRTUAL_RESERVE_MEMORY
+	tristate "reserved vma for gpu emergency mmap"
+	default m
+	help
+	  support reserved vma for gpu emergency mmap.
+
+config PROCESS_RECLAIM_ENHANCE
+	tristate "Enable process reclaim enchance"
+	depends on PROC_FS
+	default n
+	help
+	  It allows to reclaim different type pages.
+	  Call ioctl of /proc/prpocess_reclaim to get memory range,
+	  such as struct iovec.
+	  Then call process_madvise() to reclaim or read-ahead memory.
+
+config DUMP_TASKS_MEM
+	tristate "dump all userspace process meminfo"
+	default n
+	help
+	  dump all userspace process meminfo
+
+config MEMLEAK_DETECT
+	tristate "Enable kmalloc and vmalloc memleak detect feature"
+	default n
+	help
+	  If kmalloc-* slab has memleak, will create a new kmalloc cache
+	  with the same size but with SLAB_STORE_USER.
+	  Record the vmalloc stack for debugging vmalloc memleak.
+
+config DYNAMIC_TUNING_SWAPPINESS
+	bool "tuning swappiess depends on file_pages size"
+	default y
+	help
+	  Tuning swappiess depends on file_pages size.
+	  If the file pages too much, kswapd will reclaim more file pages,
+	  and support two levels.
+	  Say N if you not sure.
+
+source "mm/oplus_perf_mm/hybridswap_zram/Kconfig"

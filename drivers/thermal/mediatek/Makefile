@@ -23,3 +23,10 @@ obj-$(CONFIG_MTK_THERMAL_INTERFACE)	+= thermal_interface.o
 obj-$(CONFIG_MTK_THERMAL_JATM)	+= thermal_jatm.o
 
 obj-$(CONFIG_MTK_BOARD_THERMAL)	+= board_temp.o
+
+obj-$(CONFIG_OPLUS_CAM_THERMAL)	+= cam_temp.o
+
+obj-$(CONFIG_OPLUS_SHELL_THERMAL)  += shell_temp.o
+
+obj-$(CONFIG_MTK_OPLUS_THERMAL)	+= oplus_temp.o
+
