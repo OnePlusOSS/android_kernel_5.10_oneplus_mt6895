@@ -1,0 +1,1 @@
+obj-$(CONFIG_MTK_CAMERA_LDO) := wl2868c.o

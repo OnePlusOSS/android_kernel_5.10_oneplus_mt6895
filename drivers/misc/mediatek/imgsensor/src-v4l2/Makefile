@@ -25,6 +25,10 @@ imgsensor-objs := \
 	adaptor-ioctl.o \
 	adaptor-common-ctrl.o \
 
+ifeq ($(CONFIG_OPLUS_CAM_OLC_EXCEPTION),y)
+	imgsensor-objs += oplus_cam_olc_exception.o
+endif
+
 define FILTER_DRV
 ifeq ($(wildcard $(IMGSENSOR_DRIVER_PATH)/camera_project/$(IMGSENSOR_PROJECT)/$(1)),)
 ifeq ($(wildcard $(IMGSENSOR_DRIVER_PATH)/common/$(1)),)

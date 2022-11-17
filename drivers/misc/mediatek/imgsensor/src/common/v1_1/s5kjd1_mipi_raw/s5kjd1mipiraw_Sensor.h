@@ -6,7 +6,6 @@
 #ifndef _S5KJD1MIPI_SENSOR_H
 #define _S5KJD1MIPI_SENSOR_H
 
-/*#define VENDOR_EDIT*/
 
 enum IMGSENSOR_MODE {
 	IMGSENSOR_MODE_INIT,
@@ -73,7 +72,6 @@ struct imgsensor_struct {
 /* SENSOR PRIVATE STRUCT FOR CONSTANT*/
 struct imgsensor_info_struct {
 	kal_uint32 sensor_id;
-/*#ifdef VENDOR_EDIT*/
 /*zhaozhengtao 2016/02/19,modify for different module*/
 	kal_uint16 module_id;
 /*#endif*/

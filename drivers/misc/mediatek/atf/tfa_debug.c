@@ -4,6 +4,7 @@
  */
 
 #include <linux/arm-smccc.h>
+#include <linux/atomic.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
@@ -27,6 +28,8 @@
 #define DEBUG_BUF_ATF_LOGGER_PROC_NAME          "atf_log"
 #define DEBUG_BUF_ATF_LOGGER_SNAPSHOT_PROC_NAME "runtime_snapshot"
 #define DEBUG_BUF_TOTAL_RAW_PROC_NAME           "raw_dump_all"
+
+#define MAGIC_RELEASE_LOG 0x5678
 
 #if CONFIG_OF
 static const struct of_device_id tfa_debug_of_ids[] = {
@@ -101,6 +104,7 @@ struct tfa_debug_info {
 	void __iomem *vaddr;
 	/* Debug buffer entry */
 	struct tfa_debug_entry_info runtime;
+	atomic_t release_log;
 };
 
 struct tfa_debug_instance {
@@ -135,7 +139,7 @@ static int generic_open(struct inode *inode, struct file *file)
 		GFP_KERNEL);
 	if (IS_ERR(inst_p)) {
 		file->private_data = NULL;
-		pr_notice("Fail to kmalloc:%d\n", PTR_ERR(inst_p));
+		pr_notice("Fail to kmalloc:%ld\n", PTR_ERR(inst_p));
 		return -ENOMEM;
 	}
 	init_waitqueue_head(&inst_p->waitq);
@@ -167,7 +171,7 @@ static int raw_open(struct inode *inode, struct file *file)
 
 static int raw_release(struct inode *node, struct file *file)
 {
-	pr_info("%s:vaddr:0x%llx\n", __func__, file->private_data);
+	pr_info("%s:vaddr:0x%llx\n", __func__, (uint64_t)file->private_data);
 	if (file->private_data) {
 		struct tfa_debug_instance *inst_p = file->private_data;
 
@@ -199,7 +203,7 @@ static ssize_t raw_read(struct file *file,
 	/* Update the read pos */
 	inst_p->read_offset += copy_len;
 	pr_info("vaddr:0x%llx, count:%zu, read offset:%zu\n",
-		inst_p->vaddr, count, inst_p->read_offset);
+		(uint64_t)inst_p->vaddr, count, inst_p->read_offset);
 	return copy_len;
 }
 
@@ -259,7 +263,7 @@ static int getc_for_read(struct file *file, char *p)
 		return -1;
 	body = inst_p->vaddr;
 	if (inst_p->read_offset >= inst_p->debug_buf_size) {
-		pr_notice("%s read offset is invalid, :%u\n",
+		pr_notice("%s read offset is invalid, :%lu\n",
 			__func__, inst_p->read_offset);
 		inst_p->read_offset = 0;
 	}
@@ -285,6 +289,8 @@ static ssize_t runtime_log_read(struct file *file,
 		wait_event_ret = wait_event_timeout(inst_p->waitq,
 			!is_runtime_empty_for_read(file), HZ);
 		if (wait_event_ret != 0)
+			break;
+		if (atomic_read(&info.release_log))
 			break;
 	}
 
@@ -340,6 +346,11 @@ static ssize_t runtime_log_write(struct file *file,
 
 	pr_info("[%s]param:0x%lx, count:%zu, ret:%ld\n",
 		__func__, param, count, ret);
+
+	if (param == MAGIC_RELEASE_LOG)
+		atomic_set(&info.release_log, 1);
+	else
+		atomic_set(&info.release_log, 0);
 
 	if (!ret) {
 		arm_smccc_smc(MTK_SIP_KERNEL_ATF_DEBUG,
@@ -407,11 +418,11 @@ static int lookup_reserved_memory(void)
 	/* remap reserved memory as cacheale */
 	info.vaddr = ioremap(info.debug_buf_paddr, info.total_size);
 	if (IS_ERR(info.vaddr)) {
-		pr_notice("Fail to remap debug buf vaddr:%d\n",
+		pr_notice("Fail to remap debug buf vaddr:%ld\n",
 			PTR_ERR(info.vaddr));
 		return -ENOMEM;
 	}
-	pr_info("debug buf vaddr:0x%llx\n", info.vaddr);
+	pr_info("debug buf vaddr:0x%llx\n", (uint64_t)info.vaddr);
 	return 0;
 }
 
@@ -514,6 +525,7 @@ static int __init tfa_debug_probe(struct platform_device *pdev)
 		pr_info("tfa_debug proc_mkdir failed\n");
 		return -ENOMEM;
 	}
+	atomic_set(&info.release_log, 0);
 	if (lookup_runtime_log() == 0) {
 		runtime_log_snapshot_proc_file =
 			proc_create(DEBUG_BUF_ATF_LOGGER_SNAPSHOT_PROC_NAME, 0440,

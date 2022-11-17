@@ -69,8 +69,15 @@ EXPORT_SYMBOL_GPL(mt6368_set_mtkaif_protocol);
 static void mt6368_set_playback_gpio(struct mt6368_priv *priv)
 {
 	/* set gpio mosi mode, clk / data / sync */
-	regmap_write(priv->regmap, MT6368_GPIO_MODE4_CLR, 0x38);
-	regmap_write(priv->regmap, MT6368_GPIO_MODE4_SET, 0x8);
+	unsigned int reg_value = 0;
+
+	regmap_read(priv->regmap, MT6368_GPIO_MODE4, &reg_value);
+	/* only reset the IO mode if necessary */
+	if ((reg_value & 0x38) != 0x8) {
+		regmap_write(priv->regmap, MT6368_GPIO_MODE4_CLR, 0x38);
+		regmap_write(priv->regmap, MT6368_GPIO_MODE4_SET, 0x8);
+	}
+
 	regmap_write(priv->regmap, MT6368_GPIO_MODE5_CLR, 0x3f);
 	regmap_write(priv->regmap, MT6368_GPIO_MODE5_SET, 0x9);
 	regmap_write(priv->regmap, MT6368_GPIO_MODE6_CLR, 0x3f);
@@ -476,6 +483,58 @@ static int dmic_used_get(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int mt6368_snd_soc_put_volsw(struct snd_kcontrol *kcontrol,
+				    struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
+	struct soc_mixer_control *mc =
+		(struct soc_mixer_control *)kcontrol->private_value;
+	unsigned int reg = mc->reg;
+	unsigned int reg2 = mc->rreg;
+	unsigned int shift = mc->shift;
+	unsigned int rshift = mc->rshift;
+	int max = mc->max;
+	int min = mc->min;
+	unsigned int sign_bit = mc->sign_bit;
+	unsigned int mask = (1 << fls(max)) - 1;
+	unsigned int invert = mc->invert;
+	int err;
+	bool type_2r = false;
+	unsigned int val2 = 0;
+	unsigned int val, val_mask;
+
+	if (sign_bit)
+		mask = BIT(sign_bit + 1) - 1;
+
+	val = ucontrol->value.integer.value[0];
+	val = (val + min) & mask;
+	if (invert)
+		val = max - val;
+	val_mask = mask << shift;
+	val = val << shift;
+	if (snd_soc_volsw_is_stereo(mc)) {
+		val2 = ucontrol->value.integer.value[1];
+		val2 = (val2 + min) & mask;
+		if (invert)
+			val2 = max - val2;
+		if (reg == reg2) {
+			val_mask |= mask << rshift;
+			val |= val2 << rshift;
+		} else {
+			val2 = val2 << shift;
+			type_2r = true;
+		}
+	}
+	err = snd_soc_component_update_bits(component, reg, val_mask, val);
+	if (err < 0)
+		return err;
+
+	if (type_2r)
+		err = snd_soc_component_update_bits(component, reg2, val_mask, val2);
+
+	return err;
+}
+
 static int mt6368_put_volsw(struct snd_kcontrol *kcontrol,
 			    struct snd_ctl_elem_value *ucontrol)
 {
@@ -488,7 +547,7 @@ static int mt6368_put_volsw(struct snd_kcontrol *kcontrol,
 	int index = ucontrol->value.integer.value[0];
 	int ret;
 
-	ret = snd_soc_put_volsw(kcontrol, ucontrol);
+	ret = mt6368_snd_soc_put_volsw(kcontrol, ucontrol);
 	if (ret < 0)
 		return ret;
 
@@ -1747,10 +1806,17 @@ static int mt_mic_bias_0_event(struct snd_soc_dapm_widget *w,
 			break;
 		}
 
-		/* MISBIAS0 = 1P9V */
+//#ifdef OPLUS_ARCH_EXTENDS
+/*change micbias0 to 2P6V */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON31,
 				   RG_AUDMICBIAS0VREF_MASK_SFT,
-				   MIC_BIAS_1P9 << RG_AUDMICBIAS0VREF_SFT);
+				    MIC_BIAS_2P6 << RG_AUDMICBIAS0VREF_SFT);
+//#else
+		/* MISBIAS0 = 1P9V */
+//		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON31,
+//				   RG_AUDMICBIAS0VREF_MASK_SFT,
+//				   MIC_BIAS_1P9 << RG_AUDMICBIAS0VREF_SFT);
+//#endif
 		/* vow low power select */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON31,
 				   RG_AUDMICBIAS0LOWPEN_MASK_SFT,
@@ -1789,8 +1855,14 @@ static int mt_mic_bias_1_event(struct snd_soc_dapm_widget *w,
 			regmap_write(priv->regmap,
 				     MT6368_AUDENC_ANA_CON34, 0x1);
 		} else {
+//#ifdef OPLUS_BUG_COMPATIBILITY
+			/*add for setting micbias 2.7V after recording */
 			regmap_write(priv->regmap,
-				     MT6368_AUDENC_ANA_CON33, 0x60);
+				     MT6368_AUDENC_ANA_CON33, 0x70);
+//#else /* CONFIG_SND_SOC_CODEC_MICBIAS_2P7V */
+//			regmap_write(priv->regmap,
+//				     MT6368_AUDENC_ANA_CON33, 0x60);
+//#endif
 			regmap_write(priv->regmap,
 				     MT6368_AUDENC_ANA_CON34, 0x0);
 		}
@@ -1838,10 +1910,18 @@ static int mt_mic_bias_2_event(struct snd_soc_dapm_widget *w,
 			break;
 		}
 
-		/* MISBIAS2 = 1P9V */
+//#ifdef OPLUS_ARCH_EXTENDS
+/*change micbias0 to 2P6V */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON35,
 				   RG_AUDMICBIAS2VREF_MASK_SFT,
-				   MIC_BIAS_1P9 << RG_AUDMICBIAS2VREF_SFT);
+				   MIC_BIAS_2P6 << RG_AUDMICBIAS2VREF_SFT);
+
+//#else
+		/* MISBIAS2 = 1P9V */
+//		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON35,
+//				   RG_AUDMICBIAS2VREF_MASK_SFT,
+//				   MIC_BIAS_1P9 << RG_AUDMICBIAS2VREF_SFT);
+//#endif
 		/* vow low power select */
 		regmap_update_bits(priv->regmap, MT6368_AUDENC_ANA_CON35,
 				   RG_AUDMICBIAS2LOWPEN_MASK_SFT,
@@ -2006,22 +2086,28 @@ static int mt_vow_pll_event(struct snd_soc_dapm_widget *w,
 	struct snd_soc_component *cmpnt = snd_soc_dapm_to_component(w->dapm);
 	struct mt6368_priv *priv = snd_soc_component_get_drvdata(cmpnt);
 
-	dev_info(priv->dev, "%s(), event 0x%x\n", __func__, event);
+	dev_info(priv->dev, "%s(), event 0x%x, vow_relatch: %d\n", __func__, event, priv->vow_relatch);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		/* PLL VCOBAND */
-		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON5, 0x43);
+		if (priv->vow_relatch) {
+		    regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON5, 0x43);
+		}else{
+		    regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON5, 0x20);
+		}
 		/* PLL low power */
 		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON4, 0x81);
 		/* PLL devider ratio 32500*(48+2)*8 */
 		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON1, 0x30);
 		/* Set DCKO = 1/4 F_PLL */
 		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON0, 0x8);
-		/* Enable fbdiv relatch (low jitter) */
-		regmap_update_bits(priv->regmap, MT6368_VOWPLL_ANA_CON2,
-				   RG_PLL_RLATCH_EN_MASK_SFT,
-				   0x1 << RG_PLL_RLATCH_EN_SFT);
+		if (priv->vow_relatch) {
+			/* Enable fbdiv relatch (low jitter) */
+			regmap_update_bits(priv->regmap, MT6368_VOWPLL_ANA_CON2,
+					   RG_PLL_RLATCH_EN_MASK_SFT,
+					   0x1 << RG_PLL_RLATCH_EN_SFT);
+		}
 		/* Enable VOWPLL CLK */
 		regmap_update_bits(priv->regmap, MT6368_VOWPLL_ANA_CON0,
 				   RG_PLL_EN_MASK_SFT,
@@ -2036,10 +2122,12 @@ static int mt_vow_pll_event(struct snd_soc_dapm_widget *w,
 		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON1, 0x31);
 		/* Set DCKO = 1 F_PLL */
 		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON0, 0x0);
-		/* Disable fbdiv relatch (low jitter) */
-		regmap_update_bits(priv->regmap, MT6368_VOWPLL_ANA_CON2,
-				   RG_PLL_RLATCH_EN_MASK_SFT,
-				   0x0 << RG_PLL_RLATCH_EN_SFT);
+		if (priv->vow_relatch) {
+			/* Disable fbdiv relatch (low jitter) */
+			regmap_update_bits(priv->regmap, MT6368_VOWPLL_ANA_CON2,
+					   RG_PLL_RLATCH_EN_MASK_SFT,
+					   0x0 << RG_PLL_RLATCH_EN_SFT);
+		}
 		/* Disable PLL low power */
 		regmap_write(priv->regmap, MT6368_VOWPLL_ANA_CON4, 0x1);
 		/* PLL VCOBAND */
@@ -7183,6 +7271,15 @@ static int mt6368_parse_dt(struct mt6368_priv *priv)
 	} else {
 		for (i = MUX_MIC_TYPE_0; i <= MUX_MIC_TYPE_2; ++i)
 			priv->mux_select[i] = mic_type_mux[i];
+	}
+
+	/*get vow_relatch setting */
+	ret = of_property_read_u32(np, "mediatek,vow_relatch",
+				   &priv->vow_relatch);
+	if (ret) {
+		dev_info(dev, "%s() failed to read vow_relatche, default enable\n",
+			 __func__);
+		priv->vow_relatch = 1;
 	}
 
 	ret = of_property_read_bool(dev->of_node, "vow_dmic_lp");

@@ -33,6 +33,15 @@
 #if IS_ENABLED(CONFIG_MTK_ULTRASND_PROXIMITY)
 #include "../ultrasound/ultra_scp/mtk-scp-ultra-common.h"
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 /* FORCE_FPGA_ENABLE_IRQ use irq in fpga */
 /* #define FORCE_FPGA_ENABLE_IRQ */
 
@@ -1425,6 +1434,8 @@ static const struct snd_kcontrol_new memif_ul2_ch1_mix[] = {
 				    I_DL5_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL6_CH1", AFE_CONN5_1,
 				    I_DL6_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL7_CH1", AFE_CONN5_1,
+				    I_DL7_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_1_CAP_CH1", AFE_CONN5,
 				    I_PCM_1_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN5,
@@ -1435,6 +1446,8 @@ static const struct snd_kcontrol_new memif_ul2_ch1_mix[] = {
 				    I_CONNSYS_I2S_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("SRC_1_OUT_CH1", AFE_CONN5_1,
 				    I_SRC_1_OUT_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("GAIN1_OUT_CH1", AFE_CONN5,
+				    I_GAIN1_OUT_CH1, 1, 0),
 };
 
 static const struct snd_kcontrol_new memif_ul2_ch2_mix[] = {
@@ -1454,6 +1467,8 @@ static const struct snd_kcontrol_new memif_ul2_ch2_mix[] = {
 				    I_DL5_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL6_CH2", AFE_CONN6_1,
 				    I_DL6_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL7_CH2", AFE_CONN6_1,
+				    I_DL7_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_1_CAP_CH1", AFE_CONN6,
 				    I_PCM_1_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN6,
@@ -1464,6 +1479,8 @@ static const struct snd_kcontrol_new memif_ul2_ch2_mix[] = {
 				    I_CONNSYS_I2S_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("SRC_1_OUT_CH2", AFE_CONN6_1,
 				    I_SRC_1_OUT_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("GAIN1_OUT_CH2", AFE_CONN6,
+				    I_GAIN1_OUT_CH2, 1, 0),
 };
 
 static const struct snd_kcontrol_new memif_ul3_ch1_mix[] = {
@@ -1778,6 +1795,8 @@ static const struct snd_soc_dapm_route mt6895_memif_routes[] = {
 	{"UL2_CH2", "DL4_CH2", "Hostless_UL2 UL"},
 	{"UL2_CH1", "DL5_CH1", "Hostless_UL2 UL"},
 	{"UL2_CH2", "DL5_CH2", "Hostless_UL2 UL"},
+	{"UL2_CH1", "DL7_CH1", "Hostless_UL2 UL"},
+	{"UL2_CH2", "DL7_CH2", "Hostless_UL2 UL"},
 
 	{"Hostless_UL2 UL", NULL, "UL2_VIRTUAL_INPUT"},
 
@@ -1790,6 +1809,8 @@ static const struct snd_soc_dapm_route mt6895_memif_routes[] = {
 	{"UL2_CH2", "PCM_1_CAP_CH1", "PCM 1 Capture"},
 	{"UL2_CH1", "PCM_2_CAP_CH1", "PCM 2 Capture"},
 	{"UL2_CH2", "PCM_2_CAP_CH1", "PCM 2 Capture"},
+	{"UL2_CH1", "GAIN1_OUT_CH1", "HW Gain 1 Out"},
+	{"UL2_CH2", "GAIN1_OUT_CH2", "HW Gain 1 Out"},
 
 	{"UL_MONO_1", NULL, "UL_MONO_1_CH1"},
 	{"UL_MONO_1_CH1", "PCM_1_CAP_CH1", "PCM 1 Capture"},
@@ -3250,8 +3271,13 @@ static irqreturn_t mt6895_afe_irq_handler(int irq_id, void *dev)
 	status_mcu = status & mcu_en & AFE_IRQ_STATUS_BITS;
 
 	if (ret || status_mcu == 0) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_not_fb(afe->dev, "%s(), irq status err, ret %d, status 0x%x, mcu_en 0x%x\n",
+			__func__, ret, status, mcu_en);
+#else
 		dev_err(afe->dev, "%s(), irq status err, ret %d, status 0x%x, mcu_en 0x%x\n",
 			__func__, ret, status, mcu_en);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 		goto err_irq;
 	}
@@ -3600,13 +3626,12 @@ static int mt6895_afe_component_probe(struct snd_soc_component *component)
 	mtk_afe_add_sub_dai_control(component);
 	mt6895_add_misc_control(component);
 
-	if (component) {
-		bin_attr_afe_dump.private = (void *)afe;
-		ret = snd_card_add_dev_attr(card, &afe_bin_attr_group);
-		if (ret)
-			pr_info("snd_card_add_dev_attr fail\n");
-	}
-	return 0;
+	bin_attr_afe_dump.private = (void *)afe;
+	ret = snd_card_add_dev_attr(card, &afe_bin_attr_group);
+	if (ret)
+		pr_info("snd_card_add_dev_attr fail\n");
+
+	return ret;
 }
 
 static const struct snd_soc_component_driver mt6895_afe_component = {
@@ -7142,6 +7167,12 @@ static int mt6895_afe_pcm_dev_probe(struct platform_device *pdev)
 
 err_pm_disable:
 	pm_runtime_disable(&pdev->dev);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (ret) {
+		ratelimited_fb("payload@@%s:failed ret=%d", __func__, ret);
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 	return ret;
 }

@@ -66,8 +66,14 @@ static void mtk_merge_start(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
 	if (ret < 0)
 		DRM_ERROR("Failed to enable power domain: %d\n", ret);
 	DDPMSG("%s\n", __func__);
-	cmdq_pkt_write(handle, comp->cmdq_base,
-		       comp->regs_pa + DISP_REG_MERGE_CTRL, 0x1, ~0);
+	if (comp->mtk_crtc && comp->mtk_crtc->is_dual_pipe == false) {
+		/* bypass merge function */
+		cmdq_pkt_write(handle, comp->cmdq_base,
+				comp->regs_pa + DISP_REG_MERGE_CTRL, 0x100, ~0);
+	} else {
+		cmdq_pkt_write(handle, comp->cmdq_base,
+			       comp->regs_pa + DISP_REG_MERGE_CTRL, 0x1, ~0);
+	}
 }
 
 static void mtk_merge_stop(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
@@ -125,7 +131,7 @@ void mtk_merge_dump(struct mtk_ddp_comp *comp)
 	void __iomem *baddr = comp->regs;
 	int i = 0;
 
-	DDPDUMP("== DISP %s REGS:0x%x ==\n", mtk_dump_comp_str(comp), comp->regs);
+	DDPDUMP("== DISP %s REGS:0x%lx ==\n", mtk_dump_comp_str(comp), (unsigned long)comp->regs);
 	for (i = 0; i < 1; i++) {
 		DDPDUMP("0x%03X: 0x%08x 0x%08x 0x%08x 0x%08x\n", i * 0x10,
 			readl(baddr + i * 0x10), readl(baddr + i * 0x10 + 0x4),

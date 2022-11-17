@@ -81,7 +81,7 @@ static void mkp_trace_event_func(struct timer_list *unused) // do not use sleep
 struct rb_root mkp_rbtree = RB_ROOT;
 DEFINE_RWLOCK(mkp_rbtree_rwlock);
 
-#if !defined(CONFIG_KASAN_GENERIC) && !defined(CONFIG_KASAN_SW_TAGS)
+#if !IS_ENABLED(CONFIG_KASAN_GENERIC) && !IS_ENABLED(CONFIG_KASAN_SW_TAGS)
 static void *p_stext;
 static void *p_etext;
 static void *p__init_begin;
@@ -96,11 +96,11 @@ static void probe_android_vh_set_memory_ro(void *ignore, unsigned long addr,
 	region = is_module_or_bpf_addr((void *)addr);
 	if (region == MKP_DEMO_MODULE_CASE) {
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_DRV,
-			mkp_set_mapping_ro);
+			HELPER_MAPPING_RO);
 	} else if (region == MKP_DEMO_BPF_CASE) {
 #ifndef CONFIG_DEBUG_VIRTUAL
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_KERNEL_PAGES,
-			mkp_set_mapping_ro);
+			HELPER_MAPPING_RO);
 #endif
 	}
 }
@@ -114,11 +114,11 @@ static void probe_android_vh_set_memory_x(void *ignore, unsigned long addr,
 	region = is_module_or_bpf_addr((void *)addr);
 	if (region == MKP_DEMO_MODULE_CASE) {
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_DRV,
-			mkp_set_mapping_x);
+			HELPER_MAPPING_X);
 	} else if (region == MKP_DEMO_BPF_CASE) {
 #ifndef CONFIG_DEBUG_VIRTUAL
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_KERNEL_PAGES,
-			mkp_set_mapping_x);
+			HELPER_MAPPING_X);
 #endif
 	}
 }
@@ -135,11 +135,11 @@ static void probe_android_vh_set_memory_rw(void *ignore, unsigned long addr,
 	region = is_module_or_bpf_addr((void *)addr);
 	if (region == MKP_DEMO_MODULE_CASE) {
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_DRV,
-			mkp_set_mapping_rw);
+			HELPER_MAPPING_RW);
 	} else if (region == MKP_DEMO_BPF_CASE) {
 #ifndef CONFIG_DEBUG_VIRTUAL
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_KERNEL_PAGES,
-			mkp_set_mapping_rw);
+			HELPER_MAPPING_RW);
 #endif
 	}
 }
@@ -161,12 +161,12 @@ static void probe_android_vh_set_memory_nx(void *ignore, unsigned long addr,
 	region = is_module_or_bpf_addr((void *)addr);
 	if (region == MKP_DEMO_MODULE_CASE) {
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_DRV,
-			mkp_set_mapping_nx);
+			HELPER_MAPPING_NX);
 		policy = MKP_POLICY_DRV;
 	} else if (region == MKP_DEMO_BPF_CASE) {
 #ifndef CONFIG_DEBUG_VIRTUAL
 		ret = mkp_set_mapping_xxx_helper(addr, nr_pages, MKP_POLICY_KERNEL_PAGES,
-			mkp_set_mapping_nx);
+			HELPER_MAPPING_NX);
 		policy = MKP_POLICY_KERNEL_PAGES;
 #else
 		return;
@@ -186,7 +186,7 @@ static void probe_android_vh_set_memory_nx(void *ignore, unsigned long addr,
 	}
 }
 
-#if !defined(CONFIG_KASAN_GENERIC) && !defined(CONFIG_KASAN_SW_TAGS)
+#if !IS_ENABLED(CONFIG_KASAN_GENERIC) && !IS_ENABLED(CONFIG_KASAN_SW_TAGS)
 static int __init protect_kernel(void)
 {
 	int ret = 0;
@@ -630,11 +630,13 @@ static void probe_android_vh_check_bpf_syscall(void *ignore,
 	check_selinux_state(&rs_bpf);
 }
 
-static int protect_mkp_self(void)
+static int __init protect_mkp_self(void)
 {
 	module_enable_ro(THIS_MODULE, false, MKP_POLICY_MKP);
 	module_enable_nx(THIS_MODULE, MKP_POLICY_MKP);
 	module_enable_x(THIS_MODULE, MKP_POLICY_MKP);
+
+	mkp_start_granting_hvc_call();
 	return 0;
 }
 
@@ -740,6 +742,11 @@ int __init mkp_demo_init(void)
 			MKP_DEBUG("mkp_policy: %x\n", mkp_policy);
 		else
 			MKP_WARN("mkp,policy cannot be found, use default\n");
+
+		if (of_property_read_bool(node, "mkp_panic_on"))
+			enable_action_panic();
+		else
+			pr_info("%s: no mkp_panic_on\n", __func__);
 	} else
 		MKP_WARN("chosen node cannot be found, use default\n");
 
@@ -755,7 +762,20 @@ int __init mkp_demo_init(void)
 	/* Hook up interesting tracepoints and update corresponding policy_ctrl */
 	mkp_hookup_tracepoints();
 
-	/* Set up policy related operations */
+	/* Protect kernel code & rodata */
+	if (policy_ctrl[MKP_POLICY_KERNEL_CODE] != 0 ||
+		policy_ctrl[MKP_POLICY_KERNEL_RODATA] != 0) {
+#if !IS_ENABLED(CONFIG_KASAN_GENERIC) && !IS_ENABLED(CONFIG_KASAN_SW_TAGS)
+		ret = mkp_ka_init();
+		if (ret) {
+			MKP_ERR("mkp_ka_init failed: %d", ret);
+			return ret;
+		}
+		ret = protect_kernel();
+#endif
+	}
+
+	/* Protect MKP itself */
 	if (policy_ctrl[MKP_POLICY_MKP] != 0)
 		ret = protect_mkp_self();
 
@@ -875,17 +895,6 @@ int __init mkp_demo_init(void)
 		}
 	}
 
-	if (policy_ctrl[MKP_POLICY_KERNEL_CODE] != 0 ||
-		policy_ctrl[MKP_POLICY_KERNEL_RODATA] != 0) {
-#if !defined(CONFIG_KASAN_GENERIC) && !defined(CONFIG_KASAN_SW_TAGS)
-		ret = mkp_ka_init();
-		if (ret) {
-			MKP_ERR("mkp_ka_init failed: %d", ret);
-			return ret;
-		}
-		ret = protect_kernel();
-#endif
-	}
 	if (policy_ctrl[MKP_POLICY_TASK_CRED] ||
 		policy_ctrl[MKP_POLICY_SELINUX_STATE]) {
 		ret = register_trace_android_vh_check_mmap_file(

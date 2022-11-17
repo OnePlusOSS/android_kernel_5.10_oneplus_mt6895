@@ -549,6 +549,7 @@
   divider_ro_round_rate_parent
   divider_round_rate_parent
   dma_alloc_attrs
+  dma_alloc_noncoherent
   dma_async_device_register
   dma_async_device_unregister
   dma_async_tx_descriptor_init
@@ -584,6 +585,7 @@
   dma_fence_signal_timestamp_locked
   dma_fence_wait_timeout
   dma_free_attrs
+  dma_free_noncoherent
   dma_get_sgtable_attrs
   dma_get_slave_channel
   dma_heap_add
@@ -2032,6 +2034,7 @@
   resched_curr
   reset_control_assert
   reset_control_deassert
+  __reset_control_get
   reset_control_put
   reset_control_reset
   resume_cpus
@@ -2428,6 +2431,7 @@
   sysfs_create_groups
   sysfs_create_link
   sysfs_emit
+  sysfs_group_change_owner
   __sysfs_match_string
   sysfs_notify
   sysfs_remove_bin_file
@@ -2512,6 +2516,7 @@
   __traceiter_android_rvh_force_compatible_post
   __traceiter_android_rvh_force_compatible_pre
   __traceiter_android_rvh_gic_v3_set_affinity
+  __traceiter_android_rvh_iommu_setup_dma_ops
   __traceiter_android_rvh_irqs_disable
   __traceiter_android_rvh_irqs_enable
   __traceiter_android_rvh_migrate_queued_task
@@ -2599,12 +2604,14 @@
   __traceiter_ipi_entry
   __traceiter_ipi_raise
   __traceiter_irq_handler_entry
+  __traceiter_map
   __traceiter_rwmmio_post_read
   __traceiter_rwmmio_read
   __traceiter_rwmmio_write
   __traceiter_sched_overutilized_tp
   __traceiter_sched_switch
   __traceiter_suspend_resume
+  __traceiter_unmap
   __tracepoint_android_rvh_account_irq
   __tracepoint_android_rvh_after_dequeue_task
   __tracepoint_android_rvh_after_enqueue_task
@@ -2625,6 +2632,7 @@
   __tracepoint_android_rvh_force_compatible_post
   __tracepoint_android_rvh_force_compatible_pre
   __tracepoint_android_rvh_gic_v3_set_affinity
+  __tracepoint_android_rvh_iommu_setup_dma_ops
   __tracepoint_android_rvh_irqs_disable
   __tracepoint_android_rvh_irqs_enable
   __tracepoint_android_rvh_migrate_queued_task
@@ -2683,6 +2691,7 @@
   __tracepoint_android_vh_ftrace_size_check
   __tracepoint_android_vh_gic_resume
   __tracepoint_android_vh_gpio_block_read
+  __tracepoint_android_vh_handle_tlb_conf
   __tracepoint_android_vh_iommu_setup_dma_ops
   __tracepoint_android_vh_ipi_stop
   __tracepoint_android_vh_jiffies_update
@@ -2721,6 +2730,7 @@
   __tracepoint_ipi_entry
   __tracepoint_ipi_raise
   __tracepoint_irq_handler_entry
+  __tracepoint_map
   tracepoint_probe_register
   tracepoint_probe_register_prio
   tracepoint_probe_unregister
@@ -2730,6 +2740,7 @@
   __tracepoint_sched_overutilized_tp
   __tracepoint_sched_switch
   __tracepoint_suspend_resume
+  __tracepoint_unmap
   trace_print_array_seq
   trace_print_flags_seq
   trace_print_hex_seq

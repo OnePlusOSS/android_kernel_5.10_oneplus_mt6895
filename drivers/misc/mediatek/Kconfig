@@ -50,6 +50,7 @@ source "drivers/misc/mediatek/widevine_drm/Kconfig"
 source "drivers/misc/mediatek/mminfra/Kconfig"
 source "drivers/misc/mediatek/vmm_spm/Kconfig"
 source "drivers/misc/mediatek/vmm_dbg/Kconfig"
+source "drivers/misc/mediatek/wl2868c/Kconfig"
 endmenu # MultiMedia, Display, Camera
 
 menu "Security"
@@ -145,6 +146,9 @@ source "drivers/misc/mediatek/irtx/Kconfig"
 source "drivers/misc/mediatek/pwm/Kconfig"
 source "drivers/misc/mediatek/sensor/Kconfig"
 source "drivers/misc/mediatek/gate_ic/Kconfig"
+#ifdef OPLUS_BUG_STABILITY
+source "drivers/misc/mediatek/boot_common/Kconfig"
+#endif
 endmenu # Other Peripheral
 
 menu "Performance"
@@ -187,4 +191,7 @@ config FPGA_EARLY_PORTING
 	  platform and non-FPGA platform.
 	  Say Y here if you are doing FPGA early porting.
 	  If unsure, say N
+
+source "drivers/misc/mediatek/imgsensor/src/isp6s/camera_ldo/Kconfig"
+
 endmenu # Misc

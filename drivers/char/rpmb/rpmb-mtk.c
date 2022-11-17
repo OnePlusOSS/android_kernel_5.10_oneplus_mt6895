@@ -1832,7 +1832,7 @@ int rpmb_req_ioctl_write_data_emmc(struct mmc_card *card,
 	u32 wc = 0xFFFFFFFF;
 	u16 iCnt, total_blkcnt, tran_blkcnt, left_blkcnt;
 	u16 blkaddr;
-	u8 hmac[RPMB_SZ_MAC];
+	u8 hmac[RPMB_SZ_MAC] = {0};
 	u8 *dataBuf, *dataBuf_start;
 	int i, ret = 0;
 #ifdef RPMB_MULTI_BLOCK_ACCESS
@@ -2823,7 +2823,7 @@ static int __init rpmb_init(void)
 	int alloc_ret;
 	int cdev_ret = -1;
 	unsigned int major;
-	dev_t dev;
+	dev_t dev = 0;
 	struct device *device = NULL;
 #if IS_ENABLED(CONFIG_TRUSTONIC_TEE_SUPPORT)
 	struct device_node *mobicore_node;

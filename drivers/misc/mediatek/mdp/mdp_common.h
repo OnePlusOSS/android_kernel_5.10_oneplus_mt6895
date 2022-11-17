@@ -109,9 +109,11 @@ typedef void *(*MdpQosPathGet) (u32 thread_id, u32 port);
 
 typedef void (*MdpQosClearAll) (u32 thread_id);
 
+typedef void (*MdpQosCheckBWLimit) (u32 thread_id, u32 port, u32 user_bw, u32 set_bw);
+
 typedef u32 (*MdpGetGroup) (void);
 
-typedef const char *const (*MdpGetEngineGroupName) (void);
+typedef const char **const (*MdpGetEngineGroupName) (void);
 
 typedef phys_addr_t *(*MdpGetEngineBase) (void);
 
@@ -135,6 +137,9 @@ typedef void (*MdpVcpPQReadback) (struct cmdqRecStruct *handle,
 	u16 engine, u32 vcp_offset, u32 count);
 
 typedef bool (*MdpSvpSupportMetaData) (void);
+
+typedef u16 (*MdpGetReadbackEventLock) (void);
+typedef u16 (*MdpGetReadbackEventUnlock) (void);
 
 struct cmdqMDPFuncStruct {
 #ifdef CONFIG_MTK_SMI_EXT
@@ -184,6 +189,7 @@ struct cmdqMDPFuncStruct {
 	MdpQosPathGet qosGetPath;
 	MdpQosClearAll qosClearAll;
 	MdpQosClearAll qosClearAllIsp;
+	MdpQosCheckBWLimit qosCheckBWLimit;
 	MdpGetGroup getGroupMax;
 	MdpGetGroup getGroupIsp;
 	MdpGetGroup getGroupMdp;
@@ -200,7 +206,8 @@ struct cmdqMDPFuncStruct {
 	MdpVcpPQReadbackSupport mdpVcpPQReadbackSupport;
 	MdpVcpPQReadback mdpVcpPQReadback;
 	MdpSvpSupportMetaData mdpSvpSupportMetaData;
-
+	MdpGetReadbackEventLock mdpGetReadbackEventLock;
+	MdpGetReadbackEventUnlock mdpGetReadbackEventUnlock;
 };
 
 struct mdp_pmqos_record {
@@ -267,6 +274,8 @@ s32 cmdq_mdp_handle_create(struct cmdqRecStruct **handle_out);
 s32 cmdq_mdp_handle_flush(struct cmdqRecStruct *handle);
 s32 cmdq_mdp_handle_sec_setup(struct cmdqSecDataStruct *secData,
 			struct cmdqRecStruct *handle);
+void cmdq_mdp_cmdqSecIspMeta_fd_to_handle(struct cmdqSecIspMeta *ispMeta);
+void cmdq_mdp_init_secure_id(void *meta_array, u32 count);
 s32 cmdq_mdp_update_sec_addr_index(struct cmdqRecStruct *handle,
 	u32 sec_handle, u32 index, u32 instr_index);
 u32 cmdq_mdp_handle_get_instr_count(struct cmdqRecStruct *handle);
@@ -331,9 +340,10 @@ s32 cmdq_mdp_get_rdma_idx(u32 base);
 u32 cmdq_mdp_vcp_pq_readback_support(void);
 void cmdq_mdp_vcp_pq_readback(struct cmdqRecStruct *handle, u16 engine,
 	u32 vcp_offset, u32 count);
+u16 mdp_get_rb_event_lock(void);
+u16 mdp_get_rb_event_unlock(void);
 
 struct device *mdp_larb_dev_get(void);
-
 
 /* Platform virtual function setting */
 void cmdq_mdp_platform_function_setting(void);

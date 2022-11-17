@@ -39,7 +39,7 @@ void ccd_ipi_unregister(struct platform_device *pdev, enum ccd_ipi_id id)
 	if (!ccd)
 		return;
 
-	if (WARN_ON(id < 0) || WARN_ON(id >= CCD_IPI_MAX))
+	if (WARN_ON(id >= CCD_IPI_MAX))
 		return;
 }
 EXPORT_SYMBOL_GPL(ccd_ipi_unregister);
@@ -202,7 +202,7 @@ void ccd_master_listen(struct mtk_ccd *ccd,
 }
 EXPORT_SYMBOL_GPL(ccd_master_listen);
 
-void ccd_worker_read(struct mtk_ccd *ccd,
+int ccd_worker_read(struct mtk_ccd *ccd,
 		     struct ccd_worker_item *read_obj)
 {
 	int ret;
@@ -221,7 +221,7 @@ void ccd_worker_read(struct mtk_ccd *ccd,
 	if (!srcmdev) {
 		dev_dbg(ccd->dev, "src ept is not exist\n");
 		mutex_unlock(&mtk_subdev->endpoints_lock);
-		return;
+		return 0;
 	}
 	get_device(&srcmdev->rpdev.dev);
 
@@ -239,8 +239,10 @@ void ccd_worker_read(struct mtk_ccd *ccd,
 
 	if (atomic_read(&mept->ccd_mep_state) == CCD_MENDPOINT_DESTROY) {
 		dev_info_ratelimited(ccd->dev, "mept: %p src: %d is destroyed\n",
-				     mept, mept->mchinfo.chinfo.src);
-		goto err_ret;
+			 mept, mept->mchinfo.chinfo.src);
+		kref_put(&mept->ept.refcount, __ept_release);
+		put_device(&srcmdev->rpdev.dev);
+		return -ENODATA;
 	}
 
 	if (atomic_read(&mept->ccd_cmd_sent) == 0) {
@@ -258,14 +260,21 @@ void ccd_worker_read(struct mtk_ccd *ccd,
 			goto err_ret;
 		}
 	} else {
+		int cmd_sent = atomic_read(&mept->ccd_cmd_sent);
+
 		dev_info(ccd->dev, "ccd_cmd_sent is not null(%d)\n",
-			atomic_read(&mept->ccd_cmd_sent));
+			cmd_sent);
+
+		if (cmd_sent < 0)
+			goto err_ret;
 	}
 
 	if (atomic_read(&mept->ccd_mep_state) == CCD_MENDPOINT_DESTROY) {
 		dev_info(ccd->dev, "mept: %p src: %d would destroy\n",
 			 mept, mept->mchinfo.chinfo.src);
-		goto err_ret;
+		kref_put(&mept->ept.refcount, __ept_release);
+		put_device(&srcmdev->rpdev.dev);
+		return -ENODATA;
 	}
 
 	spin_lock(&mept->pending_sendq.queue_lock);
@@ -274,12 +283,13 @@ void ccd_worker_read(struct mtk_ccd *ccd,
 				      list_entry);
 	if (!ccd_params) {
 		spin_unlock(&mept->pending_sendq.queue_lock);
-		dev_info(ccd->dev, "%s: get MULL ccd_params, ccd_cmd_sent(%d)\n",
+		dev_info(ccd->dev, "%s: get NULL ccd_params, ccd_cmd_sent(%d)\n",
 			 __func__, atomic_read(&mept->ccd_cmd_sent));
 		goto err_ret;
 	}
 	list_del(&ccd_params->list_entry);
-	atomic_dec(&mept->ccd_cmd_sent);
+	if (atomic_read(&mept->ccd_cmd_sent) > 0)
+		atomic_dec(&mept->ccd_cmd_sent);
 	spin_unlock(&mept->pending_sendq.queue_lock);
 
 	memcpy(read_obj, &ccd_params->worker_obj, sizeof(*read_obj));
@@ -288,6 +298,7 @@ err_ret:
 	kref_put(&mept->ept.refcount, __ept_release);
 err_put:
 	put_device(&srcmdev->rpdev.dev);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(ccd_worker_read);
 

@@ -21,7 +21,22 @@
 #include <mt-plat/aee.h>
 #endif
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#define AUD_ASSERT(exp) \
+do { \
+	if (!(exp)) { \
+		ratelimited_fb("payload@@AUD_ASSERT:("#exp") fail"); \
+		aee_kernel_exception_api(__FILE__, __LINE__, DB_OPT_DEFAULT, \
+					 "[Audio]", "ASSERT("#exp") fail!!"); \
+	} \
+} while (0)
+#else /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
 #define AUD_ASSERT(exp) \
 do { \
 	if (!(exp)) { \
@@ -29,8 +44,20 @@ do { \
 					 "[Audio]", "ASSERT("#exp") fail!!"); \
 	} \
 } while (0)
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 #else
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#define AUD_ASSERT(exp) \
+do { \
+	if (!(exp)) { \
+		ratelimited_fb("payload@@AUD_ASSERT:("#exp") fail"); \
+		pr_notice("ASSERT("#exp") fail: \""  __FILE__ "\", %uL\n", \
+		__LINE__); \
+	} \
+} while (0)
+#else /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
 #define AUD_ASSERT(exp) \
 do { \
 	if (!(exp)) { \
@@ -38,6 +65,8 @@ do { \
 		__LINE__); \
 	} \
 } while (0)
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 #endif
 
 /* wake lock relate*/
@@ -91,12 +120,6 @@ int mtk_adsp_allocate_mem(struct snd_pcm_substream *substream,
 			  unsigned int size);
 int mtk_adsp_free_mem(struct snd_pcm_substream *substream);
 
-int mtk_adsp_genpool_allocate_memory(unsigned char **vaddr,
-				     dma_addr_t *paddr,
-				     unsigned int size,
-				     int id);
-int mtk_adsp_genpool_free_memory(unsigned char **vaddr,
-				 size_t *size, int id);
 int afe_get_pcmdir(int dir, struct audio_hw_buffer buf);
 int get_dsp_task_attr(int dsp_id, int task_attr);
 int get_dsp_task_id_from_str(const char *task_name);
@@ -108,11 +131,9 @@ struct mtk_base_afe *get_afe_base(void);
 int mtk_dsp_register_feature(int id);
 int mtk_dsp_deregister_feature(int id);
 
+int wait_dsp_ready(void);
 int mtk_audio_register_notify(void);
 
-int mtk_spk_send_ipi_buf_to_dsp(void *data_buffer, uint32_t data_size);
-int mtk_spk_recv_ipi_buf_from_dsp(int8_t *buffer,
-				  int16_t size,
-				  uint32_t *buf_len);
+int mtk_get_ipi_buf_scene_adsp(void);
 
 #endif

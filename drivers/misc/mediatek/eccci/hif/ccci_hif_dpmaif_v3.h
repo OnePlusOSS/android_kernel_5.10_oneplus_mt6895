@@ -162,8 +162,8 @@ struct dpmaif_bat_request {
 	void *bat_base;
 	dma_addr_t bat_phy_addr; /* physical address for DMA */
 	unsigned int    bat_size_cnt;
-	unsigned short    bat_wr_idx;
-	unsigned short    bat_rd_idx;
+	atomic_t        bat_wr_idx;
+	atomic_t        bat_rd_idx;
 	void *bat_skb_ptr;/* collect skb linked to bat */
 	unsigned int     skb_pkt_cnt;
 	unsigned int pkt_buf_sz;
@@ -209,9 +209,9 @@ struct dpmaif_rx_queue {
 	dma_addr_t pit_phy_addr; /* physical address for DMA */
 	unsigned int    pit_size_cnt;
 
-	unsigned short    pit_rd_idx;
-	unsigned short    pit_wr_idx;
-	unsigned short    pit_rel_rd_idx;
+	atomic_t        pit_rd_idx;
+	atomic_t        pit_wr_idx;
+	atomic_t        pit_rel_rd_idx;
 	unsigned int reg_int_mask_bak;
 
 	struct tasklet_struct dpmaif_rxq0_task;
@@ -292,9 +292,9 @@ struct dpmaif_tx_queue {
 	dma_addr_t drb_phy_addr;	/* physical address for DMA */
 	unsigned int    drb_size_cnt;
 
-	unsigned short    drb_wr_idx;
-	unsigned short    drb_rd_idx;
-	unsigned short    drb_rel_rd_idx;
+	atomic_t            drb_wr_idx;
+	atomic_t            drb_rd_idx;
+	atomic_t            drb_rel_rd_idx;
 	unsigned short    last_ch_id;
 
 	void    *drb_skb_base;
@@ -391,8 +391,6 @@ struct hif_dpmaif_ctrl {
 	atomic_t bat_paused_alloc;
 	int bat_alloc_running;
 
-	int enable_pit_debug;
-
 	int hw_reset_ver;
 	void __iomem *dpmaif_reset_pd_base;
 
@@ -400,8 +398,6 @@ struct hif_dpmaif_ctrl {
 	unsigned int dl_pit_entry_size;
 	unsigned int dl_bat_size;
 	unsigned int dl_pit_size;
-	/* gro_config:0 disable;1 enable */
-	unsigned int gro_config;
 };
 
 #ifndef CCCI_KMODULE_ENABLE
@@ -510,6 +506,7 @@ extern struct regmap *syscon_regmap_lookup_by_phandle(struct device_node *np,
 	const char *property);
 extern int regmap_write(struct regmap *map, unsigned int reg, unsigned int val);
 extern int regmap_read(struct regmap *map, unsigned int reg, unsigned int *val);
+extern void ccmni_set_cur_speed(u64 cur_dl_speed);
 
 #if IS_ENABLED(CONFIG_MTK_IRQ_DBG)
 extern void mt_irq_dump_status(unsigned int irq);

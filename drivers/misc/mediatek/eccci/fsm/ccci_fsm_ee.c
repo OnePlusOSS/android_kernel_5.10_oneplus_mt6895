@@ -28,7 +28,7 @@ void mdee_set_ex_start_str(struct ccci_fsm_ee *ee_ctl,
 	}
 	ts_nsec = local_clock();
 	rem_nsec = do_div(ts_nsec, 1000000000);
-	snprintf(ee_ctl->ex_start_time, MD_EX_START_TIME_LEN,
+	scnprintf(ee_ctl->ex_start_time, MD_EX_START_TIME_LEN,
 		"AP detect MDEE time:%5lu.%06lu\n",
 		(unsigned long)ts_nsec, rem_nsec / 1000);
 	CCCI_MEM_LOG_TAG(ee_ctl->md_id, FSM, "%s\n",
@@ -362,13 +362,12 @@ int fsm_ee_init(struct ccci_fsm_ee *ee_ctl)
 	ee_ctl->md_id = ctl->md_id;
 	spin_lock_init(&ee_ctl->ctrl_lock);
 	if (ee_ctl->md_id == MD_SYS1) {
-#if (MD_GENERATION >= 6297)
-		ret = mdee_dumper_v5_alloc(ee_ctl);
-#elif (MD_GENERATION >= 6292)
-		ret = mdee_dumper_v3_alloc(ee_ctl);
-#elif (MD_GENERATION == 6291)
-		ret = mdee_dumper_v2_alloc(ee_ctl);
-#endif
+		if (ctl->fsm_md_gen >= 6297)
+			ret = mdee_dumper_v5_alloc(ee_ctl);
+		else if (ctl->fsm_md_gen >= 6292)
+			ret = mdee_dumper_v3_alloc(ee_ctl);
+		else if (ctl->fsm_md_gen == 6291)
+			ret = mdee_dumper_v2_alloc(ee_ctl);
 	} else if (ee_ctl->md_id == MD_SYS3) {
 		ret = mdee_dumper_v1_alloc(ee_ctl);
 	}

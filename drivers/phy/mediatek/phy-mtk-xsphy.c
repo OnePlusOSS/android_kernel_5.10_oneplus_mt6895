@@ -233,6 +233,7 @@
 #define PHY_MODE_BC11_SW_CLR 2
 #define PHY_MODE_DPDMPULLDOWN_SET 3
 #define PHY_MODE_DPDMPULLDOWN_CLR 4
+
 #define PHY_MODE_DPPULLUP_SET 5
 #define PHY_MODE_DPPULLUP_CLR 6
 
@@ -1306,6 +1307,9 @@ static u32 phy_get_efuse_value(struct xsphy_instance *inst,
 	struct device_node *np = dev->of_node;
 	u32 val, mask;
 	int index = 0, ret = 0;
+
+	if (type < 0)
+		goto no_efuse;
 
 	index = of_property_match_string(np,
 			"nvmem-cell-names", efuse_name[type]);

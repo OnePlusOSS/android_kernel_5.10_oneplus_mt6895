@@ -78,17 +78,17 @@ void imgsys_cmdq_init(struct mtk_imgsys_dev *imgsys_dev, const int nr_imgsys_dev
 	switch (nr_imgsys_dev) {
 	case 1: /* DIP */
 		/* request thread by index (in dts) 0 */
-		for (idx = 0; idx < IMGSYS_ENG_MAX; idx++) {
+		for (idx = 0; idx < IMGSYS_NOR_THD; idx++) {
 			imgsys_clt[idx] = cmdq_mbox_create(dev, idx);
 			pr_info("%s: cmdq_mbox_create(%d, 0x%x)\n", __func__, idx, imgsys_clt[idx]);
 		}
 		#if IMGSYS_SECURE_ENABLE
 		/* request for imgsys secure gce thread */
-		for (idx = IMGSYS_ENG_MAX; idx < (IMGSYS_ENG_MAX + IMGSYS_SEC_THD); idx++) {
-			imgsys_sec_clt[idx-IMGSYS_ENG_MAX] = cmdq_mbox_create(dev, idx);
+		for (idx = IMGSYS_NOR_THD; idx < (IMGSYS_NOR_THD + IMGSYS_SEC_THD); idx++) {
+			imgsys_sec_clt[idx-IMGSYS_NOR_THD] = cmdq_mbox_create(dev, idx);
 			pr_info(
 				"%s: cmdq_mbox_create sec_thd(%d, 0x%x)\n",
-				__func__, idx, imgsys_sec_clt[idx-IMGSYS_ENG_MAX]);
+				__func__, idx, imgsys_sec_clt[idx-IMGSYS_NOR_THD]);
 		}
 		#endif
 		/* parse hardware event */
@@ -116,7 +116,7 @@ void imgsys_cmdq_release(struct mtk_imgsys_dev *imgsys_dev)
 	pr_info("%s: +\n", __func__);
 
 	/* Destroy cmdq client */
-	for (idx = 0; idx < IMGSYS_ENG_MAX; idx++) {
+	for (idx = 0; idx < IMGSYS_NOR_THD; idx++) {
 		cmdq_mbox_destroy(imgsys_clt[idx]);
 		imgsys_clt[idx] = NULL;
 	}
@@ -167,7 +167,7 @@ void imgsys_cmdq_streamoff(struct mtk_imgsys_dev *imgsys_dev)
 	is_stream_off = 1;
 
 	#if CMDQ_STOP_FUNC
-	for (idx = 0; idx < IMGSYS_ENG_MAX; idx++) {
+	for (idx = 0; idx < IMGSYS_NOR_THD; idx++) {
 		cmdq_mbox_stop(imgsys_clt[idx]);
 		dev_dbg(imgsys_dev->dev,
 			"%s: calling cmdq_mbox_stop(%d, 0x%x)\n",
@@ -625,6 +625,30 @@ void imgsys_cmdq_task_cb(struct cmdq_cb_data data)
 				event_hist[event_sft].wait.req_no,
 				event_hist[event_sft].wait.frm_no,
 				event_hist[event_sft].wait.ts);
+		} else if ((event >= IMGSYS_CMDQ_SW_EVENT2_BEGIN) &&
+			(event <= IMGSYS_CMDQ_SW_EVENT2_END)) {
+			event_sft = event - IMGSYS_CMDQ_SW_EVENT2_BEGIN +
+				(IMGSYS_CMDQ_SW_EVENT_END - IMGSYS_CMDQ_SW_EVENT_BEGIN);
+			event_diff = event_hist[event_sft].set.ts >
+						event_hist[event_sft].wait.ts ?
+						(event_hist[event_sft].set.ts -
+						event_hist[event_sft].wait.ts) :
+						(event_hist[event_sft].wait.ts -
+						event_hist[event_sft].set.ts);
+			pr_info(
+				"%s: [ERROR] SW event2 timeout! wfe(%d) event(%d) isHW(%d); event st(%d)_ts(%lld)_set(%d/%d/%d/%lld)_wait(%d/%d/%d/%lld)",
+				__func__,
+				cb_param->pkt->err_data.wfe_timeout,
+				cb_param->pkt->err_data.event, isHWhang,
+				event_hist[event_sft].st, event_diff,
+				event_hist[event_sft].set.req_fd,
+				event_hist[event_sft].set.req_no,
+				event_hist[event_sft].set.frm_no,
+				event_hist[event_sft].set.ts,
+				event_hist[event_sft].wait.req_fd,
+				event_hist[event_sft].wait.req_no,
+				event_hist[event_sft].wait.frm_no,
+				event_hist[event_sft].wait.ts);
 		} else if ((event >= IMGSYS_CMDQ_GPR_EVENT_BEGIN) &&
 			(event <= IMGSYS_CMDQ_GPR_EVENT_END)) {
 			isHWhang = 1;
@@ -768,7 +792,7 @@ int imgsys_cmdq_sendtask(struct mtk_imgsys_dev *imgsys_dev,
 		if (isPack == 0) {
 			if (frm_info->group_id == -1) {
 				/* Choose cmdq_client base on hw scenario */
-				for (thd_idx = 0; thd_idx < IMGSYS_ENG_MAX; thd_idx++) {
+				for (thd_idx = 0; thd_idx < IMGSYS_NOR_THD; thd_idx++) {
 					if (hw_comb & 0x1) {
 						clt = imgsys_clt[thd_idx];
 						pr_debug(
@@ -784,13 +808,13 @@ int imgsys_cmdq_sendtask(struct mtk_imgsys_dev *imgsys_dev,
 					clt = imgsys_clt[thd_idx];
 				}
 			} else {
-				if (frm_info->group_id < IMGSYS_ENG_MAX) {
+				if (frm_info->group_id < IMGSYS_NOR_THD) {
 					thd_idx = frm_info->group_id;
 					clt = imgsys_clt[thd_idx];
 				} else {
 					pr_info(
 						"%s: [ERROR] group_id(%d) is over max hw num(%d) for frm(%d/%d)!\n",
-						__func__, frm_info->group_id, IMGSYS_ENG_MAX,
+						__func__, frm_info->group_id, IMGSYS_NOR_THD,
 						frm_info->user_info[frm_idx].hw_comb,
 						frm_idx, frm_num);
 					return -1;
@@ -839,7 +863,7 @@ int imgsys_cmdq_sendtask(struct mtk_imgsys_dev *imgsys_dev,
 				pkt_ts_num = 0;
 
 				/* Assign task priority according to is_time_shared */
-				if (frm_info->user_info[frm_idx].is_time_shared)
+				if (frm_info->user_info[frm_idx].task_type == IMG_TASK_TIMESHARED)
 					pkt->priority = IMGSYS_PRI_LOW;
 				else
 					pkt->priority = IMGSYS_PRI_HIGH;
@@ -880,7 +904,7 @@ int imgsys_cmdq_sendtask(struct mtk_imgsys_dev *imgsys_dev,
 			/* Check for packing gce task */
 			pkt_ofst[task_cnt] = pkt->cmd_buf_size - CMDQ_INST_SIZE;
 			task_cnt++;
-			if ((frm_info->user_info[frm_idx].is_time_shared)
+			if ((frm_info->user_info[frm_idx].task_type == IMG_TASK_TIMESHARED)
 				|| (frm_info->user_info[frm_idx].is_secFrm)
 				|| (frm_info->user_info[frm_idx].is_earlycb)
 				|| ((frm_idx + 1) == frm_num)) {
@@ -1450,6 +1474,7 @@ void mtk_imgsys_mmqos_set_by_scen(struct mtk_imgsys_dev *imgsys_dev,
 				bool isSet)
 {
 	struct mtk_imgsys_qos *qos_info = &imgsys_dev->qos_info;
+	struct mtk_imgsys_dvfs *dvfs_info = &imgsys_dev->dvfs_info;
 	u32 hw_comb = 0;
 	u64 pixel_sz = 0;
 	u32 fps = 0;
@@ -1463,7 +1488,34 @@ void mtk_imgsys_mmqos_set_by_scen(struct mtk_imgsys_dev *imgsys_dev,
 
 	if (is_stream_off == 0) {
 		if (isSet == 1) {
-			if ((hw_comb & (IMGSYS_ENG_WPE_TNR | IMGSYS_ENG_DIP)) ==
+			if (dvfs_info->vss_task_cnt != 0) {
+				bw_final[0] = IMGSYS_QOS_VSS_BW_0;
+				bw_final[1] = IMGSYS_QOS_VSS_BW_1;
+				if (qos_info->bw_total[0][0] != bw_final[0]) {
+					dev_dbg(qos_info->dev,
+						"[%s] L9_0 idx=%d, path=%p, bw=%d/%d; L12_1 idx=%d, path=%p, bw=%d/%d,\n",
+						__func__,
+						IMGSYS_L9_COMMON_0,
+						qos_info->qos_path[IMGSYS_L9_COMMON_0].path,
+						qos_info->qos_path[IMGSYS_L9_COMMON_0].bw,
+						bw_final[0],
+						IMGSYS_L12_COMMON_1,
+						qos_info->qos_path[IMGSYS_L12_COMMON_1].path,
+						qos_info->qos_path[IMGSYS_L12_COMMON_1].bw,
+						bw_final[1]);
+					// Save for capture bw
+					qos_info->bw_total[0][0] = bw_final[0];
+					qos_info->bw_total[0][1] = bw_final[1];
+					mtk_icc_set_bw(
+					qos_info->qos_path[IMGSYS_L9_COMMON_0].path,
+					MBps_to_icc(qos_info->qos_path[IMGSYS_L9_COMMON_0].bw),
+					MBps_to_icc(qos_info->bw_total[0][0]));
+					mtk_icc_set_bw(
+					qos_info->qos_path[IMGSYS_L12_COMMON_1].path,
+					MBps_to_icc(qos_info->qos_path[IMGSYS_L12_COMMON_1].bw),
+					MBps_to_icc(qos_info->bw_total[0][1]));
+				}
+			} else if ((hw_comb & (IMGSYS_ENG_WPE_TNR | IMGSYS_ENG_DIP)) ==
 				(IMGSYS_ENG_WPE_TNR | IMGSYS_ENG_DIP)) {
 				if (fps == 30) {
 					if (pixel_sz > IMGSYS_QOS_4K_SIZE) {
@@ -1506,6 +1558,33 @@ void mtk_imgsys_mmqos_set_by_scen(struct mtk_imgsys_dev *imgsys_dev,
 						bw_final[1]);
 					qos_info->qos_path[IMGSYS_L9_COMMON_0].bw = bw_final[0];
 					qos_info->qos_path[IMGSYS_L12_COMMON_1].bw = bw_final[1];
+					mtk_icc_set_bw(
+					qos_info->qos_path[IMGSYS_L9_COMMON_0].path,
+					MBps_to_icc(qos_info->qos_path[IMGSYS_L9_COMMON_0].bw),
+					0);
+					mtk_icc_set_bw(
+					qos_info->qos_path[IMGSYS_L12_COMMON_1].path,
+					MBps_to_icc(qos_info->qos_path[IMGSYS_L12_COMMON_1].bw),
+					0);
+				}
+			}
+		} else if (isSet == 0) {
+			if (dvfs_info->vss_task_cnt == 0) {
+				if (qos_info->bw_total[0][0] != 0) {
+					dev_dbg(qos_info->dev,
+						"[%s] L9_0 idx=%d, path=%p, bw=%d/%d; L12_1 idx=%d, path=%p, bw=%d/%d,\n",
+						__func__,
+						IMGSYS_L9_COMMON_0,
+						qos_info->qos_path[IMGSYS_L9_COMMON_0].path,
+						qos_info->qos_path[IMGSYS_L9_COMMON_0].bw,
+						bw_final[0],
+						IMGSYS_L12_COMMON_1,
+						qos_info->qos_path[IMGSYS_L12_COMMON_1].path,
+						qos_info->qos_path[IMGSYS_L12_COMMON_1].bw,
+						bw_final[1]);
+					// Clear for capture bw
+					qos_info->bw_total[0][0] = 0;
+					qos_info->bw_total[0][1] = 0;
 					mtk_icc_set_bw(
 					qos_info->qos_path[IMGSYS_L9_COMMON_0].path,
 					MBps_to_icc(qos_info->qos_path[IMGSYS_L9_COMMON_0].bw),

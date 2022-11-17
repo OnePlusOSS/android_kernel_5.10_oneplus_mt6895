@@ -9,7 +9,6 @@ obj-$(CONFIG_MTK_NET_CCMNI) +=  ccmni/
 obj-$(CONFIG_MTK_NET_RPS) += rps/
 obj-$(CONFIG_NFC_CHIP_SUPPORT) += nfc/
 obj-$(CONFIG_MTK_ECCCI_DRIVER) +=  eccci/
-obj-$(CONFIG_MTK_ECCCI_DRIVER) += msg-center/
 obj-$(CONFIG_MTK_ECCCI_C2K_USB) += c2k_usb/
 obj-$(CONFIG_MTK_PID_MAP) += pidmap/
 obj-$(CONFIG_MTK_TINYSYS_SSPM_SUPPORT) += sspm/
@@ -101,4 +100,12 @@ obj-$(CONFIG_MTK_CPUQOS_V3) += cache-auditor/
 obj-$(CONFIG_MTK_GATE_IC) += gate_ic/
 obj-$(CONFIG_MTK_WIDEVINE_DRM) += widevine_drm/
 obj-$(CONFIG_INTERCONNECT_MTK_MMQOS_COMMON) += mmqos/
+#ifdef OPLUS_BUG_STABILITY
+obj-$(CONFIG_MTK_BOOT_COMMON) += boot_common/
+#endif
 obj-$(CONFIG_MTK_TIMER_ACCURACY_TEST) += timer/
+obj-$(CONFIG_MTK_CAMERA_LDO) += wl2868c/
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#Add for DFX camera log report
+obj-$(CONFIG_MTK_V4L2_IMGSENSOR) += imgsensor/oplus/
+#endif /* OPLUS_FEATURE_CAMERA_COMMON */

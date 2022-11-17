@@ -25,6 +25,11 @@
 #include "../mtk_mipi_tx.h"
 #include "mtk_drm_6789.h"
 
+#ifdef OPLUS_FEATURE_DISPLAY
+unsigned int oplus_panel_index;
+EXPORT_SYMBOL(oplus_panel_index);
+#endif   /*OPLUS_FEATURE_DISPLAY*/
+
 static void mt6789_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id id,
 			struct cmdq_pkt *handle, void *data);
 
@@ -52,7 +57,8 @@ const struct mtk_disp_ovl_data mt6789_ovl_driver_data = {
 	.issue_req_th_urg_dl = 95,
 	.issue_req_th_urg_dc = 15,
 	.greq_num_dl = 0x5555,
-	.is_support_34bits = true,
+	.is_support_34bits = false,
+	.source_bpc = 10,
 };
 
 // wdma
@@ -66,12 +72,13 @@ const struct mtk_disp_wdma_data mt6789_wdma_driver_data = {
 	.sodi_config = mt6789_mtk_sodi_config,
 	.support_shadow = false,
 	.need_bypass_shadow = true,
-	.is_support_34bits = true,
+	.is_support_34bits = false,
 };
 
 // rdma
 const struct mtk_disp_rdma_data mt6789_rdma_driver_data = {
-	.fifo_size = SZ_1K * 3 + SZ_32K,
+	.fifo_size = SZ_32K + SZ_8K + SZ_4K + SZ_2K + SZ_1K +
+			SZ_512 + SZ_256 + SZ_64 + SZ_32,
 	.pre_ultra_low_us = 250,
 	.pre_ultra_high_us = 260,
 	.ultra_low_us = 230,
@@ -83,7 +90,7 @@ const struct mtk_disp_rdma_data mt6789_rdma_driver_data = {
 	.support_shadow = false,
 	.need_bypass_shadow = true,
 	.has_greq_urg_num = false,
-	.is_support_34bits = true,
+	.is_support_34bits = false,
 	.dsi_buffer = false,
 };
 
@@ -91,6 +98,7 @@ const struct mtk_disp_rdma_data mt6789_rdma_driver_data = {
 const struct mtk_disp_dsc_data mt6789_dsc_driver_data = {
 	.support_shadow = false,
 	.need_bypass_shadow = false,
+	.need_obuf_sw = true,
 	.dsi_buffer = false,
 };
 
@@ -103,7 +111,7 @@ const struct mtk_disp_rsz_data mt6789_rsz_driver_data = {
 
 // postmask
 const struct mtk_disp_postmask_data mt6789_postmask_driver_data = {
-	.is_support_34bits = true,
+	.is_support_34bits = false,
 };
 
 // aal
@@ -158,17 +166,18 @@ const struct mtk_dsi_driver_data mt6789_dsi_driver_data = {
 	.support_shadow = false,
 	.need_bypass_shadow = true,
 	.need_wait_fifo = true,
-	.dsi_buffer = false,
-	.max_vfp = 0,
-	.mmclk_by_datarate = mtk_dsi_set_mmclk_by_datarate_V1,
+	.dsi_buffer = true,
+	.dsi_new_trail = false,
+	.max_vfp = 0x7ffe,
+	.mmclk_by_datarate = mtk_dsi_set_mmclk_by_datarate_V2,
 };
 
 // ddp
 #define MT6789_MMSYS_OVL_CON 0xF04
-	#define DISP_OVL0_GO_BG          BIT(1)
-	#define DISP_OVL0_GO_BLEND       BIT(0)
-	#define DISP_OVL0_2L_GO_BG       BIT(3)
-	#define DISP_OVL0_2L_GO_BLEND    BIT(2)
+	#define MT6789_DISP_OVL0_GO_BG          BIT(1)
+	#define MT6789_DISP_OVL0_GO_BLEND       BIT(0)
+	#define MT6789_DISP_OVL0_2L_GO_BG       BIT(3)
+	#define MT6789_DISP_OVL0_2L_GO_BLEND    BIT(2)
 
 #define MT6789_DISP_REG_CONFIG_DL_VALID_0 0xe9c
 #define MT6789_DISP_REG_CONFIG_DL_VALID_1 0xea0
@@ -181,7 +190,7 @@ const struct mtk_dsi_driver_data mt6789_dsi_driver_data = {
 #define DISP_REG_CONFIG_MMSYS_CG_CON0_MT6789 0x100
 #define DISP_REG_CONFIG_MMSYS_CG_CON1_MT6789 0x110
 
-#define RDMA0_SOUT_COLOR0 0x1
+#define MT6789_RDMA0_SOUT_COLOR0 0x1
 
 static const unsigned int mt6789_mutex_mod[DDP_COMPONENT_ID_MAX] = {
 		[DDP_COMPONENT_OVL0] = MT6789_MUTEX_MOD_DISP_OVL0,
@@ -217,7 +226,7 @@ const struct mtk_disp_ddp_data mt6789_ddp_driver_data = {
 const struct mtk_mmsys_reg_data mt6789_mmsys_reg_data = {
 	.ovl0_mout_en = MT6789_DISP_OVL0_MOUT_EN,
 	.rdma0_sout_sel_in = MT6789_DISP_REG_CONFIG_DISP_RDMA0_RSZ0_SOUT_SEL,
-	.rdma0_sout_color0 = RDMA0_SOUT_COLOR0,
+	.rdma0_sout_color0 = MT6789_RDMA0_SOUT_COLOR0,
 };
 
 static char *ddp_signal_0_mt6789(int bit)
@@ -640,36 +649,36 @@ int mtk_ddp_ovl_bg_blend_en_MT6789(const struct mtk_mmsys_reg_data *data,
 	if (cur == DDP_COMPONENT_OVL0_2L &&
 		next == DDP_COMPONENT_OVL0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_2L_GO_BG;
+		value = MT6789_DISP_OVL0_2L_GO_BG;
 	} else if (cur == DDP_COMPONENT_OVL0_2L &&
 		next == DDP_COMPONENT_RSZ0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_2L_GO_BLEND;
+		value = MT6789_DISP_OVL0_2L_GO_BLEND;
 	} else if (cur == DDP_COMPONENT_OVL0_2L &&
 		next == DDP_COMPONENT_RDMA0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_2L_GO_BLEND;
+		value = MT6789_DISP_OVL0_2L_GO_BLEND;
 	} else if (cur == DDP_COMPONENT_OVL0_2L &&
 		next == DDP_COMPONENT_WDMA0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_2L_GO_BLEND;
+		value = MT6789_DISP_OVL0_2L_GO_BLEND;
 	/*OVL0*/
 	} else if (cur == DDP_COMPONENT_OVL0 &&
 		next == DDP_COMPONENT_OVL0_2L) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_GO_BG;
+		value = MT6789_DISP_OVL0_GO_BG;
 	} else if (cur == DDP_COMPONENT_OVL0 &&
 		next == DDP_COMPONENT_RSZ0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_GO_BLEND;
+		value = MT6789_DISP_OVL0_GO_BLEND;
 	} else if (cur == DDP_COMPONENT_OVL0 &&
 		next == DDP_COMPONENT_RDMA0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_GO_BLEND;
+		value = MT6789_DISP_OVL0_GO_BLEND;
 	} else if (cur == DDP_COMPONENT_OVL0 &&
 		next == DDP_COMPONENT_WDMA0) {
 		*addr = MT6789_MMSYS_OVL_CON;
-		value = DISP_OVL0_GO_BLEND;
+		value = MT6789_DISP_OVL0_GO_BLEND;
 	/*No cur or next component*/
 	} else {
 		value = -1;
@@ -1002,6 +1011,8 @@ void mmsys_config_dump_analysis_mt6789(void __iomem *config_regs)
 #define MT6789_INFRA_DISP_DDR_MASK 0xC02
 #define MT6789_SODI_REQ_SEL_ALL                   REG_FLD_MSB_LSB(9, 8)
 #define MT6789_SODI_REQ_VAL_ALL                   REG_FLD_MSB_LSB(13, 12)
+#define MT6789_FLD_OVL0_RDMA_ULTRA_SEL            REG_FLD_MSB_LSB(3, 2)
+#define MT6789_FLD_OVL0_2L_RDMA_ULTRA_SEL         REG_FLD_MSB_LSB(7, 6)
 
 static void mt6789_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id id,
 			struct cmdq_pkt *handle, void *data)
@@ -1009,6 +1020,7 @@ static void mt6789_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id 
 	struct mtk_drm_private *priv = drm->dev_private;
 	unsigned int sodi_req_val = 0, sodi_req_mask = 0;
 	unsigned int emi_req_val = 0, emi_req_mask = 0;
+	unsigned int ultra_ovl_val = 0, ultra_ovl_mask = 0;
 	bool en = *((bool *)data);
 
 	if (id == DDP_COMPONENT_ID_MAX) { /* config when top clk on */
@@ -1075,6 +1087,16 @@ static void mt6789_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id 
 			} else
 				DDPINFO("%s: failed to disable infra ddr control\n", __func__);
 		}
+
+		/* enable ultra signal from rdma to ovl0 and ovl1_2l */
+		v = readl(priv->config_regs +  DISP_REG_CONFIG_MMSYS_MISC);
+		SET_VAL_MASK(ultra_ovl_val, ultra_ovl_mask, 0,
+			MT6789_FLD_OVL0_RDMA_ULTRA_SEL);
+		v = (v & ~ultra_ovl_mask) | (ultra_ovl_val & ultra_ovl_mask);
+		SET_VAL_MASK(ultra_ovl_val, ultra_ovl_mask, 0,
+			MT6789_FLD_OVL0_2L_RDMA_ULTRA_SEL);
+		v = (v & ~ultra_ovl_mask) | (ultra_ovl_val & ultra_ovl_mask);
+		writel_relaxed(v, priv->config_regs +  DISP_REG_CONFIG_MMSYS_MISC);
 	} else {
 		cmdq_pkt_write(handle, NULL, priv->config_regs_pa +
 			MMSYS_SODI_REQ_MASK, sodi_req_val, sodi_req_mask);
@@ -1089,12 +1111,22 @@ static void mt6789_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id 
 			} else
 				DDPINFO("%s: failed to disable infra ddr control\n", __func__);
 		}
+
+		/* enable ultra signal from rdma to ovl0 and ovl1_2l*/
+		SET_VAL_MASK(ultra_ovl_val, ultra_ovl_mask, 0,
+			MT6789_FLD_OVL0_RDMA_ULTRA_SEL);
+		cmdq_pkt_write(handle, NULL, priv->config_regs_pa + DISP_REG_CONFIG_MMSYS_MISC,
+			       ultra_ovl_val, ultra_ovl_mask);
+		SET_VAL_MASK(ultra_ovl_val, ultra_ovl_mask, 0,
+			MT6789_FLD_OVL0_2L_RDMA_ULTRA_SEL);
+		cmdq_pkt_write(handle, NULL, priv->config_regs_pa + DISP_REG_CONFIG_MMSYS_MISC,
+			       ultra_ovl_val, ultra_ovl_mask);
 	}
 }
 
 // drv
 static const enum mtk_ddp_comp_id mt6789_mtk_ddp_main[] = {
-#ifndef MTK_DRM_BRINGUP_STAGE
+#ifndef DRM_BYPASS_PQ
 	DDP_COMPONENT_OVL0_2L,
 #endif
 	DDP_COMPONENT_OVL0, DDP_COMPONENT_RDMA0,
@@ -1143,6 +1175,11 @@ static const struct mtk_addon_scenario_data mt6789_addon_main[ADDON_SCN_NR] = {
 		[TWO_SCALING] = {
 				.module_num = ARRAY_SIZE(addon_rsz_data),
 				.module_data = addon_rsz_data,
+				.hrt_type = HRT_TB_TYPE_GENERAL1,
+			},
+		[WDMA_WRITE_BACK] = {
+				.module_num = ARRAY_SIZE(addon_wdma0_data),
+				.module_data = addon_wdma0_data,
 				.hrt_type = HRT_TB_TYPE_GENERAL1,
 			},
 };
@@ -1228,8 +1265,10 @@ static int mtk_mipi_tx_pll_prepare_mt6789(struct clk_hw *hw)
 {
 	struct mtk_mipi_tx *mipi_tx = mtk_mipi_tx_from_clk_hw(hw);
 	unsigned int txdiv, txdiv0, txdiv1, tmp;
-	u32 rate;
+	u32 rate, rate_khz;
 
+	if (mipi_tx == NULL)
+		return -EINVAL;
 	DDPDBG("%s+\n", __func__);
 
 	/* if mipitx is on, skip it... */
@@ -1240,6 +1279,8 @@ static int mtk_mipi_tx_pll_prepare_mt6789(struct clk_hw *hw)
 
 	rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
 			mipi_tx->data_rate / 1000000;
+	rate_khz = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt * 1000 :
+			mipi_tx->data_rate / 1000;
 
 	DDPINFO(
 		"prepare: %u MHz, mipi_tx->data_rate_adpt: %d MHz, mipi_tx->data_rate : %d MHz\n",
@@ -1296,7 +1337,7 @@ static int mtk_mipi_tx_pll_prepare_mt6789(struct clk_hw *hw)
 	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_PWR,
 				FLD_AD_DSI_PLL_SDM_ISO_EN, 0);
 
-	tmp = _dsi_get_pcw(rate, txdiv);
+	tmp = _dsi_get_pcw_khz(rate_khz, txdiv);
 	writel(tmp, mipi_tx->regs + MIPITX_PLL_CON0);
 
 	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_CON1,
@@ -1308,7 +1349,19 @@ static int mtk_mipi_tx_pll_prepare_mt6789(struct clk_hw *hw)
 
 	/* TODO: should write bit8 to set SW_ANA_CK_EN here */
 	mtk_mipi_tx_set_bits(mipi_tx, MIPITX_SW_CTRL_CON4, 1);
-
+#ifdef OPLUS_FEATURE_DISPLAY
+	/*2228101 is "oplus22281_samsung_ams643ag01_1080p_dsi_cmd,lcm"*/
+	if (oplus_panel_index == 2228101) {
+		writel(0x01b10003, mipi_tx->regs + MIPITX_PLL_CON2);
+		/*example,mipi clock down n% ,(( n x mipi clock x 4 x 262144 + 281644 ) / 563329)*/
+		/*299M dowm 0.1%*/
+		writel(0x00380038, mipi_tx->regs + MIPITX_PLL_CON3);
+		/*reg_val = readl(mipi_tx->regs + MIPITX_PLL_CON2);
+		printk("%s - open ssc CON2 reg_val=0x%x \n",__func__,reg_val);
+		reg_val = readl(mipi_tx->regs + MIPITX_PLL_CON3);
+		printk("%s - open ssc CON3 reg_val=0x%x \n",__func__,reg_val);*/
+	}
+#endif   /*OPLUS_FEATURE_DISPLAY*/
 	DDPDBG("%s-\n", __func__);
 
 	return 0;
@@ -1318,6 +1371,8 @@ static void mtk_mipi_tx_pll_unprepare_mt6789(struct clk_hw *hw)
 {
 	struct mtk_mipi_tx *mipi_tx = mtk_mipi_tx_from_clk_hw(hw);
 
+	if (mipi_tx == NULL)
+		return;
 	DDPDBG("%s+\n", __func__);
 	dev_dbg(mipi_tx->dev, "unprepare\n");
 
@@ -1346,10 +1401,118 @@ static void mtk_mipi_tx_pll_unprepare_mt6789(struct clk_hw *hw)
 	DDPDBG("%s-\n", __func__);
 }
 
+static int mtk_mipi_tx_pll_cphy_prepare_mt6789(struct clk_hw *hw)
+{
+	struct mtk_mipi_tx *mipi_tx = mtk_mipi_tx_from_clk_hw(hw);
+	unsigned int txdiv, txdiv0, txdiv1, tmp;
+	u32 rate;
+
+	if (mipi_tx == NULL)
+		return -EINVAL;
+
+	DDPDBG("%s+\n", __func__);
+
+	/* if mipitx is on, skip it... */
+	if (mtk_is_mipi_tx_enable(hw)) {
+		DDPINFO("%s: mipitx already on\n", __func__);
+		return 0;
+	}
+
+	rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
+			mipi_tx->data_rate / 1000000;
+
+	dev_dbg(mipi_tx->dev, "prepare: %u MHz\n", rate);
+	if (rate >= 2000) {
+		txdiv = 1;
+		txdiv0 = 0;
+		txdiv1 = 0;
+	} else if (rate >= 1000) {
+		txdiv = 2;
+		txdiv0 = 1;
+		txdiv1 = 0;
+	} else if (rate >= 500) {
+		txdiv = 4;
+		txdiv0 = 2;
+		txdiv1 = 0;
+	} else if (rate > 250) {
+		txdiv = 8;
+		txdiv0 = 3;
+		txdiv1 = 0;
+	} else if (rate >= 125) {
+		txdiv = 16;
+		txdiv0 = 4;
+		txdiv1 = 0;
+	} else {
+		return -EINVAL;
+	}
+	/*set volate*/
+	writel(0x4444236A, mipi_tx->regs + MIPITX_VOLTAGE_SEL);
+
+	/* change the mipi_volt */
+	if (mipi_volt) {
+		DDPMSG("%s+ mipi_volt change: %d\n", __func__, mipi_volt);
+		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL,
+			FLD_RG_DSI_HSTX_LDO_REF_SEL, mipi_volt<<6);
+	}
+
+	writel(0x0, mipi_tx->regs + MIPITX_PRESERVED);
+	/* step 0 */
+	/* BG_LPF_EN / BG_CORE_EN */
+	writel(0x00FF12E0, mipi_tx->regs + MIPITX_PLL_CON4);
+	/* BG_LPF_EN=0 BG_CORE_EN=1 */
+	writel(0x3FFF0088, mipi_tx->regs + MIPITX_LANE_CON);
+	//usleep_range(1, 1); /* 1us */
+	/* BG_LPF_EN=1 */
+	writel(0x3FFF00C8, mipi_tx->regs + MIPITX_LANE_CON);
+
+	/* step 1: SDM_RWR_ON / SDM_ISO_EN */
+	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_PWR,
+				FLD_AD_DSI_PLL_SDM_PWR_ON, 1);
+	usleep_range(30, 100);
+	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_PWR,
+				FLD_AD_DSI_PLL_SDM_ISO_EN, 0);
+
+	tmp = mipi_tx->driver_data->dsi_get_pcw(rate, txdiv);
+	writel(tmp, mipi_tx->regs + MIPITX_PLL_CON0);
+
+	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_CON1,
+			      FLD_RG_DSI_PLL_POSDIV, txdiv0 << 8);
+	mtk_mipi_tx_set_bits(mipi_tx, MIPITX_PLL_CON1,
+			       mipi_tx->driver_data->dsi_pll_en);
+
+	usleep_range(50, 100);
+
+	DDPDBG("%s-\n", __func__);
+
+	return 0;
+}
+
+static void mtk_mipi_tx_pll_cphy_unprepare_mt6789(struct clk_hw *hw)
+{
+	struct mtk_mipi_tx *mipi_tx = mtk_mipi_tx_from_clk_hw(hw);
+
+	if (mipi_tx == NULL)
+		return;
+	DDPDBG("%s+\n", __func__);
+	dev_dbg(mipi_tx->dev, "cphy unprepare\n");
+
+	mtk_mipi_tx_clear_bits(mipi_tx, MIPITX_PLL_CON1, mipi_tx->driver_data->dsi_pll_en);
+
+	mtk_mipi_tx_set_bits(mipi_tx, MIPITX_PLL_PWR, AD_DSI_PLL_SDM_ISO_EN);
+	mtk_mipi_tx_clear_bits(mipi_tx, MIPITX_PLL_PWR, AD_DSI_PLL_SDM_PWR_ON);
+
+	writel(0x3FFF0080, mipi_tx->regs + MIPITX_LANE_CON);
+	writel(0x3FFF0000, mipi_tx->regs + MIPITX_LANE_CON);
+
+	DDPINFO("%s-\n", __func__);
+
+}
+
 const struct mtk_mipitx_data mt6789_mipitx_data = {
 	.mppll_preserve = (0 << 8),
 	.dsi_pll_sdm_pcw_chg = RG_DSI_PLL_SDM_PCW_CHG,
 	.dsi_pll_en = RG_DSI_PLL_EN,
+	.dsi_ssc_en = RG_DSI_PLL_SDM_SSC_EN,
 	.ck_sw_ctl_en = MIPITX_CK_SW_CTL_EN,
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN,
@@ -1367,6 +1530,34 @@ const struct mtk_mipitx_data mt6789_mipitx_data = {
 	.ckc_sw_lptx_pre_oe = MIPITX_CKC_SW_LPTX_PRE_OE,
 	.pll_prepare = mtk_mipi_tx_pll_prepare_mt6789,
 	.pll_unprepare = mtk_mipi_tx_pll_unprepare_mt6789,
+	.dsi_get_pcw = _dsi_get_pcw,
+	.backup_mipitx_impedance = backup_mipitx_impedance,
+	.refill_mipitx_impedance = refill_mipitx_impedance,
+	.mipi_tx_ssc_en = mtk_mipi_tx_ssc_en,
+};
+
+const struct mtk_mipitx_data mt6789_mipitx_cphy_data = {
+	.mppll_preserve = (0 << 8),
+	.dsi_pll_sdm_pcw_chg = RG_DSI_PLL_SDM_PCW_CHG,
+	.dsi_pll_en = RG_DSI_PLL_EN,
+	.dsi_ssc_en = RG_DSI_PLL_SDM_SSC_EN,
+	.ck_sw_ctl_en = MIPITX_CK_SW_CTL_EN,
+	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN,
+	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN,
+	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN,
+	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN,
+	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE,
+	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE,
+	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE,
+	.d1c_sw_lptx_pre_oe = MIPITX_D1C_SW_LPTX_PRE_OE,
+	.d2_sw_lptx_pre_oe = MIPITX_D2_SW_LPTX_PRE_OE,
+	.d2c_sw_lptx_pre_oe = MIPITX_D2C_SW_LPTX_PRE_OE,
+	.d3_sw_lptx_pre_oe = MIPITX_D3_SW_LPTX_PRE_OE,
+	.d3c_sw_lptx_pre_oe = MIPITX_D3C_SW_LPTX_PRE_OE,
+	.ck_sw_lptx_pre_oe = MIPITX_CK_SW_LPTX_PRE_OE,
+	.ckc_sw_lptx_pre_oe = MIPITX_CKC_SW_LPTX_PRE_OE,
+	.pll_prepare = mtk_mipi_tx_pll_cphy_prepare_mt6789,
+	.pll_unprepare = mtk_mipi_tx_pll_cphy_unprepare_mt6789,
 	.dsi_get_pcw = _dsi_get_pcw,
 	.backup_mipitx_impedance = backup_mipitx_impedance,
 	.refill_mipitx_impedance = refill_mipitx_impedance,

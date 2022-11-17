@@ -124,8 +124,8 @@ struct mtk_camsys_sensor_ctrl {
 	atomic_t sensor_request_seq_no;
 	atomic_t isp_request_seq_no;
 	atomic_t isp_enq_seq_no;
-	atomic_t isp_update_timer_seq_no;
 	atomic_t last_drained_seq_no;
+	atomic_t isp_update_timer_seq_no;
 	int initial_cq_done;
 	atomic_t initial_drop_frame_cnt;
 	struct list_head camsys_state_list;
@@ -151,6 +151,10 @@ struct mtk_camsys_ctrl {
 	/* resource ctrl */
 	struct mtk_camsys_dvfs dvfs_info;
 };
+void mtk_camsys_composed_delay_enque(struct mtk_raw_device *raw_dev,
+				       struct mtk_cam_ctx *ctx,
+				       struct mtk_cam_request_stream_data *req_stream_data);
+
 void mtk_camsys_state_delete(struct mtk_cam_ctx *ctx,
 				struct mtk_camsys_sensor_ctrl *sensor_ctrl,
 				struct mtk_cam_request *req);
@@ -180,7 +184,6 @@ void mtk_cam_req_seninf_change(struct mtk_cam_request *req);
 void mtk_cam_frame_done_work(struct work_struct *work);
 void mtk_cam_m2m_done_work(struct work_struct *work);
 void mtk_cam_meta1_done_work(struct work_struct *work);
-void mtk_cam_sv_work(struct work_struct *work);
 void mtk_cam_m2m_enter_cq_state(struct mtk_camsys_ctrl_state *ctrl_state);
 bool is_first_request_sync(struct mtk_cam_ctx *ctx);
 void
@@ -195,20 +198,25 @@ mtk_cam_set_sensor_switch(struct mtk_cam_request_stream_data *s_data,
 			  struct mtk_camsys_sensor_ctrl *sensor_ctrl);
 
 /*EXT ISP*/
+void mtk_cam_event_esd_recovery(struct mtk_raw_pipeline *pipeline,
+				     unsigned int frame_seq_no);
+
 int mtk_cam_extisp_prepare_meta(struct mtk_cam_ctx *ctx, int pad_src);
 void mtk_cam_extisp_sv_stream_delayed(struct mtk_cam_ctx *ctx,
 	struct mtk_camsv_device *camsv_dev, int seninf_padidx);
 void mtk_cam_extisp_sv_stream(struct mtk_cam_ctx *ctx, bool en);
 void mtk_cam_extisp_initial_sv_enque(struct mtk_cam_ctx *ctx);
-void mtk_cam_extisp_sv_frame_start(struct mtk_cam_ctx *ctx, unsigned int frm_no);
+void mtk_cam_extisp_sv_frame_start(struct mtk_cam_ctx *ctx,
+	struct mtk_camsys_irq_info *irq_info);
 int mtk_camsys_extisp_state_handle(struct mtk_raw_device *raw_dev,
-	struct mtk_camsys_sensor_ctrl *s_ctrl, struct mtk_camsys_ctrl_state **state, int frm_no);
+	struct mtk_camsys_sensor_ctrl *s_ctrl, struct mtk_camsys_ctrl_state **state,
+	struct mtk_camsys_irq_info *irq_info);
 void mtk_camsys_extisp_yuv_frame_start(struct mtk_camsv_device *camsv,
-		struct mtk_cam_ctx *ctx, struct mtk_camsys_irq_info *irq_info);
+	struct mtk_cam_ctx *ctx, struct mtk_camsys_irq_info *irq_info);
 void mtk_camsys_extisp_raw_frame_start(struct mtk_raw_device *raw_dev,
-		struct mtk_cam_ctx *ctx, struct mtk_camsys_irq_info *irq_info);
+	struct mtk_cam_ctx *ctx, struct mtk_camsys_irq_info *irq_info);
 void mtk_cam_extisp_handle_sv_tstamp(struct mtk_cam_ctx *ctx,
-			struct mtk_cam_request_stream_data *s_data);
+	struct mtk_cam_request_stream_data *s_data, struct mtk_camsys_irq_info *irq_info);
 int is_extisp_sv_all_frame_start(struct mtk_camsv_device *camsv,
 		struct mtk_cam_ctx *ctx);
 void mtk_cam_state_add_wo_sensor(struct mtk_cam_ctx *ctx);

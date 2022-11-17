@@ -6,12 +6,20 @@
 #include <linux/mutex.h>
 #include "mtk_drm_arr.h"
 #include "mtk_log.h"
+#include "mtk_drm_trace.h"
 
 
 static DEFINE_MUTEX(cb_table_lock);
 #define DISP_MAX_FPSCHG_CALLBACK 5
 static FPS_CHG_CALLBACK fps_chg_callback_table[DISP_MAX_FPSCHG_CALLBACK];
 static bool fisrt_invoke;
+
+//#ifdef OPLUS_LIMIT_FPS
+#define drm_trace_c(fmt, args...) do { \
+	mtk_drm_print_trace( \
+		"C|"fmt"\n", ##args); \
+} while (0)
+//#endif
 
 /****************ARR function start************************/
 int drm_register_fps_chg_callback(FPS_CHG_CALLBACK fps_chg_cb)
@@ -74,7 +82,8 @@ void drm_invoke_fps_chg_callbacks(unsigned int new_fps)
 {
 	unsigned int i = 0;
 
-	DDPMSG("[fps]: %s,new_fps =%d\n", __func__, new_fps);
+	DDPINFO("[fps]: %s,new_fps =%d\n", __func__, new_fps);
+	drm_trace_c("%d|fps_chg|%d", current->tgid, new_fps);
 	mutex_lock(&cb_table_lock);
 	for (i = 0; i < DISP_MAX_FPSCHG_CALLBACK; i++) {
 		if (fps_chg_callback_table[i]) {
@@ -84,6 +93,7 @@ void drm_invoke_fps_chg_callbacks(unsigned int new_fps)
 	}
 	mutex_unlock(&cb_table_lock);
 }
+EXPORT_SYMBOL(drm_invoke_fps_chg_callbacks);
 
 bool drm_need_fisrt_invoke_fps_callbacks(void)
 {

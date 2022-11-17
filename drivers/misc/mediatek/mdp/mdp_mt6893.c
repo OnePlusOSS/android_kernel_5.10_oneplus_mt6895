@@ -737,7 +737,7 @@ int32_t cmdq_mdp_reset_with_mmsys(const uint64_t engineToResetAgain)
 			continue;
 
 		if (engineToResetAgain & (1LL << engineResetBit[i]))
-			reset_bits0 |= (1 << i);
+			reset_bits0 |= (1ULL << i);
 	}
 	for (i = 32; i < 48; ++i) {
 		if (engineResetBit[i] < 0)
@@ -778,8 +778,7 @@ int cmdq_TranslationFault_callback(
 	char dispatchModel[MDP_DISPATCH_KEY_STR_LEN] = "MDP";
 
 	CMDQ_ERR("================= [MDP M4U] Dump Begin ================\n");
-	CMDQ_ERR("[MDP M4U]fault call port=%d, mva=0x%x", port, mva);
-
+	CMDQ_ERR("[MDP M4U]fault call port=%d, mva=%pa", port, &mva);
 	cmdq_core_dump_tasks_info();
 
 	switch (port) {
@@ -2844,13 +2843,13 @@ static u32 mdp_get_group_wpe_plat(void)
 	return CMDQ_GROUP_WPE;
 }
 
-static const char *const mdp_get_engine_group_name(void)
+static const char **const mdp_get_engine_group_name(void)
 {
 	static const char *const engineGroupName[] = {
 		CMDQ_FOREACH_GROUP(GENERATE_STRING)
 	};
 
-	return (const char *const)engineGroupName;
+	return (const char **const)engineGroupName;
 }
 
 phys_addr_t *mdp_engine_base_get(void)

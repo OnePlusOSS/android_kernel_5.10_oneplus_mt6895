@@ -147,18 +147,11 @@ static int data_debug_show(struct seq_file *s, void *data)
 {
 	struct dbg_info *di = s->private;
 	struct dbg_internal *d = &di->internal;
-	void *buffer;
 	u8 *pdata;
 	int i, ret;
 
-	if (d->data_buffer_size < d->size) {
-		buffer = kzalloc(d->size, GFP_KERNEL);
-		if (!buffer)
-			return -ENOMEM;
-		kfree(d->data_buffer);
-		d->data_buffer = buffer;
-		d->data_buffer_size = d->size;
-	}
+	if (d->data_buffer_size < d->size)
+		return -EINVAL;
 	/* read transfer */
 	if (!di->io_read)
 		return -EPERM;
@@ -186,7 +179,6 @@ static ssize_t data_debug_write(struct file *file,
 {
 	struct dbg_info *di = file->private_data;
 	struct dbg_internal *d = &di->internal;
-	void *buffer;
 	u8 *pdata;
 	char buf[PREALLOC_WBUFFER_SIZE + 1], *token, *cur;
 	int val_cnt = 0, ret;
@@ -197,14 +189,8 @@ static ssize_t data_debug_write(struct file *file,
 		return -EFAULT;
 	buf[cnt] = 0;
 	/* buffer size check */
-	if (d->data_buffer_size < d->size) {
-		buffer = kzalloc(d->size, GFP_KERNEL);
-		if (!buffer)
-			return -ENOMEM;
-		kfree(d->data_buffer);
-		d->data_buffer = buffer;
-		d->data_buffer_size = d->size;
-	}
+	if (d->data_buffer_size < d->size)
+		return -EINVAL;
 	/* data parsing */
 	cur = buf;
 	pdata = d->data_buffer;
@@ -266,8 +252,11 @@ static ssize_t lock_debug_read(struct file *file,
 	struct dbg_info *di = file->private_data;
 	struct dbg_internal *d = &di->internal;
 	char buf[10];
+	int ret = 0;
 
-	snprintf(buf, sizeof(buf), "%d\n", mutex_is_locked(&d->io_lock));
+	ret = snprintf(buf, sizeof(buf), "%d\n", mutex_is_locked(&d->io_lock));
+	if (ret < 0)
+		pr_debug("%s, ret = %d\n", __func__, ret);
 	return simple_read_from_buffer(user_buf, cnt, loff, buf, strlen(buf));
 }
 
@@ -385,26 +374,26 @@ static int rt5512_codec_classd_event(struct snd_soc_dapm_widget *w,
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		mdelay(11);
 		/*  charge pump disable & disable UVP */
 		ret |= snd_soc_component_update_bits(component, 0xb5, 0xf9fc,
 						     0xf9fc);
-		mdelay(2);
+		mdelay(11);
+
 		dev_info(component->dev, "%s rt5512 update bst mode %d\n",
 			 __func__, chip->bst_mode);
 		/* boost config to adaptive mode */
 		ret = snd_soc_component_update_bits(component, 0x40, 0x0003,
 						    chip->bst_mode);
+		mdelay(2);
 
 		ret |= snd_soc_component_update_bits(component, 0x98, 0x0700,
 						     0x0100);
-		mdelay(2);
 		/* charge pump enable */
 		ret |= snd_soc_component_update_bits(component, 0xb5, 0x0001,
 						     0x0001);
 		break;
 	case SND_SOC_DAPM_POST_PMU:
-		mdelay(15);
+		mdelay(2);
 		ret |= snd_soc_component_update_bits(component, 0x98, 0x0200,
 						     0x0200);
 		/* UV enable */
@@ -647,7 +636,7 @@ static int rt5512_component_setting(struct snd_soc_component *component)
 		ret |= snd_soc_component_update_bits(component, 0xA1, 0xff18,
 						     0x5b18);
 		ret |= snd_soc_component_write(component, 0x69, 0x0002);
-		ret |= snd_soc_component_write(component, 0x68, 0x000D);
+		ret |= snd_soc_component_write(component, 0x68, 0x000C);
 		ret |= snd_soc_component_write(component, 0x6C, 0x0010);
 		ret |= snd_soc_component_write(component, 0x6D, 0x0008);
 		ret |= snd_soc_component_write(component, 0x30, 0x0002);
@@ -698,7 +687,7 @@ static int rt5512_component_setting(struct snd_soc_component *component)
 		/* RT5512B_RU012D_algorithm_20201110.lua */
 		ret |= snd_soc_component_update_bits(component, 0xA1, 0xff18, 0x5b18);
 		ret |= snd_soc_component_write(component, 0x69, 0x0002);
-		ret |= snd_soc_component_write(component, 0x68, 0x000D);
+		ret |= snd_soc_component_write(component, 0x68, 0x000C);
 		ret |= snd_soc_component_write(component, 0x6C, 0x0010);
 		ret |= snd_soc_component_write(component, 0x6D, 0x0008);
 		ret |= snd_soc_component_write(component, 0x30, 0x0002);
@@ -1227,4 +1216,4 @@ module_i2c_driver(rt5512_i2c_driver);
 MODULE_AUTHOR("Jeff Chang <jeff_chang@richtek.com>");
 MODULE_DESCRIPTION("RT5512 SPKAMP Driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.0.4_M");
+MODULE_VERSION("2.0.5_M");

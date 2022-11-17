@@ -19,6 +19,12 @@
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 #endif
+#if IS_ENABLED(CONFIG_OF)
+#include <linux/of.h>
+#include <linux/of_fdt.h>
+#include <linux/of_irq.h>
+#include <linux/of_address.h>
+#endif
 
 #include "mt-plat/mtk_ccci_common.h"
 
@@ -45,6 +51,7 @@ atomic_t udc_status = ATOMIC_INIT(0);
 #define CHECK_MD_ID(md_id)
 #define CHECK_HIF_ID(hif_id)
 #define CHECK_QUEUE_ID(queue_id)
+int port_md_gen;
 
 struct ccci_proc_user {
 	unsigned int busy;
@@ -75,8 +82,7 @@ char *ccci_port_get_dev_name(unsigned int rx_user_id)
 }
 EXPORT_SYMBOL(ccci_port_get_dev_name);
 
-#if MD_GENERATION > (6295)
-int send_new_time_to_new_md(int md_id, int tz)
+int send_new_time_to_md_after_6297(int md_id, int tz)
 {
 	struct timespec64 tv;
 	unsigned int timeinfo[4];
@@ -100,7 +106,6 @@ int send_new_time_to_new_md(int md_id, int tz)
 
 	return ret;
 }
-#endif
 
 int port_dev_kernel_read(struct port_t *port, char *buf, int size)
 {
@@ -159,13 +164,7 @@ READ_START:
 		 */
 		if (port->rx_skb_list.qlen == 0)
 			port_ask_more_req_to_md(port);
-		if (port->rx_skb_list.qlen < 0) {
-			spin_unlock_irqrestore(&port->rx_skb_list.lock, flags);
-			CCCI_ERROR_LOG(-1, CHAR,
-				"%s:port->rx_skb_list.qlen < 0 %s\n",
-				__func__, port->name);
-			return -EFAULT;
-		}
+
 	} else {
 		read_len = size;
 	}
@@ -265,6 +264,14 @@ int mtk_ccci_read_data(int index, char *buf, size_t count)
 	ret = find_port_by_channel(index, &rx_port);
 	if (ret < 0)
 		return -EINVAL;
+
+	if (port_md_gen < 6297) {
+		if (rx_port->flags & PORT_F_GEN95_NOT_SUPPORT) {
+			CCCI_NORMAL_LOG(-1, TAG,
+				 "%s:not support %s\n", __func__, rx_port->name);
+			return -1;
+		}
+	}
 
 	if (atomic_read(&rx_port->usage_cnt)) {
 		ret = port_dev_kernel_read(rx_port, buf, count);
@@ -429,13 +436,6 @@ READ_START:
 		 */
 		if (port->rx_skb_list.qlen == 0)
 			port_ask_more_req_to_md(port);
-		if (port->rx_skb_list.qlen < 0) {
-			spin_unlock_irqrestore(&port->rx_skb_list.lock, flags);
-			CCCI_ERROR_LOG(md_id, CHAR,
-				"%s:port->rx_skb_list.qlen < 0 %s\n",
-				__func__, port->name);
-			return -EFAULT;
-		}
 	} else {
 		read_len = count;
 	}
@@ -586,9 +586,11 @@ ssize_t port_dev_write(struct file *file, const char __user *buf,
 		return actual_count;
 
  err_out:
-		CCCI_NORMAL_LOG(md_id, CHAR,
-			"write error done on %s, l=%zu r=%d\n",
-			port->name, actual_count, ret);
+		if ((ret != -ETXTBSY) && (ret != -ENODEV)) {
+			CCCI_NORMAL_LOG(md_id, CHAR,
+				"write error done on %s, l=%zu r=%d\n",
+				port->name, actual_count, ret);
+		}
 		ccci_free_skb(skb);
 		return ret;
 	}
@@ -1274,10 +1276,22 @@ static inline void proxy_setup_channel_mapping(struct port_proxy *proxy_p)
 	/*setup port mapping*/
 	for (i = 0; i < proxy_p->port_number; i++) {
 		port = proxy_p->ports + i;
-		if (port->rx_ch < CCCI_MAX_CH_NUM)
+		if (port->rx_ch >= 0 && port->rx_ch < CCCI_MAX_CH_NUM)
 			port_list[port->rx_ch] = port;
-		if (port->tx_ch < CCCI_MAX_CH_NUM)
+		else {
+			CCCI_ERROR_LOG(proxy_p->md_id, TAG,
+				"%s:%s rx_ch=%d error\n",
+				__func__, port->name, port->rx_ch);
+			continue;
+		}
+		if (port->tx_ch >= 0 && port->tx_ch < CCCI_MAX_CH_NUM)
 			port_list[port->tx_ch] = port;
+		else {
+			CCCI_ERROR_LOG(proxy_p->md_id, TAG,
+				"%s:%s tx_ch=%d error\n",
+				__func__, port->name, port->tx_ch);
+			continue;
+		}
 		/*setup RX_CH=>port list mapping*/
 		list_add_tail(&port->entry, &proxy_p->rx_ch_ports[port->rx_ch]);
 
@@ -1646,6 +1660,13 @@ static inline void proxy_init_all_ports(struct port_proxy *proxy_p)
 	/* init port */
 	for (i = 0; i < proxy_p->port_number; i++) {
 		port = proxy_p->ports + i;
+		if (port_md_gen < 6297) {
+			if (port->flags & PORT_F_GEN95_NOT_SUPPORT) {
+				CCCI_NORMAL_LOG(proxy_p->md_id, TAG,
+					 "%s:not support %s\n", __func__, port->name);
+				continue;
+			}
+		}
 		port_struct_init(port, proxy_p);
 		if (port->tx_ch == CCCI_SYSTEM_TX)
 			proxy_p->sys_port = port;
@@ -1923,12 +1944,22 @@ static void ccci_proc_init(void)
 int ccci_port_init(int md_id)
 {
 	struct port_proxy *proxy_p = NULL;
+	struct device_node *node = NULL;
 
 	if (md_id < 0 || md_id >= MAX_MD_NUM) {
 		CCCI_ERROR_LOG(-1, TAG,
 			"invalid md_id = %d\n", md_id);
 		return -1;
 	}
+
+	node = of_find_compatible_node(NULL, NULL,
+		"mediatek,mddriver");
+	if (node)
+		of_property_read_u32(node,
+			"mediatek,md_generation", &port_md_gen);
+	CCCI_NORMAL_LOG(md_id, TAG, "%s: port_md_gen=%d\n",
+		__func__, port_md_gen);
+
 	CHECK_MD_ID(md_id);
 	ccci_proc_init();
 	proxy_p = proxy_alloc(md_id);

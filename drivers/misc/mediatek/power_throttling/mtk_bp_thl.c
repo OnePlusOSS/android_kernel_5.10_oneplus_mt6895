@@ -57,7 +57,7 @@ void register_bp_thl_notify(
 		return;
 	}
 
-	if (prio_val >= BPCB_MAX_NUM || prio_val < 0) {
+	if (prio_val >= BPCB_MAX_NUM) {
 		pr_info("[%s] prio_val=%d, out of boundary\n", __func__, prio_val);
 		return;
 	}
@@ -82,7 +82,7 @@ void register_bp_thl_notify_ext(
 		return;
 	}
 
-	if (prio_val >= BPCB_MAX_NUM || prio_val < 0) {
+	if (prio_val >= BPCB_MAX_NUM) {
 		pr_info("[%s] prio_val=%d, out of boundary\n", __func__, prio_val);
 		return;
 	}
@@ -144,7 +144,7 @@ static ssize_t bp_thl_ut_store(
 		const char *buf, size_t size)
 {
 	unsigned int val = 0;
-	char cmd[20];
+	char cmd[21];
 
 	pr_info("[%s]\n", __func__);
 
@@ -182,7 +182,7 @@ static ssize_t bp_thl_stop_store(
 		const char *buf, size_t size)
 {
 	unsigned int val = 0;
-	char cmd[20];
+	char cmd[21];
 
 	pr_info("[%s]\n", __func__);
 

@@ -7,6 +7,7 @@
 #include <linux/string.h>
 #include <linux/io.h>
 #include <linux/genalloc.h>
+#include <linux/mutex.h>
 
 #include <linux/vmalloc.h>
 
@@ -126,6 +127,7 @@ static struct gen_pool *g_dma_pool[NUM_OPENDSP_TYPE];
 
 static bool g_dsp_init_flag[NUM_OPENDSP_TYPE];
 static bool g_region_reg_flag[TASK_SCENE_SIZE];
+static DEFINE_MUTEX(region_lock);
 
 static struct hal_dma_queue_t g_hal_dma_queue;
 
@@ -241,14 +243,13 @@ int init_audio_ipi_dma_by_dsp(const uint32_t dsp_id)
 		goto IPI_DMA_INIT_EXIT;
 	}
 
-#if !defined(MTK_AUDIO_CM4_DMA_SUPPORT)
 	if (dsp_id == AUDIO_OPENDSP_USE_CM4_A ||
 	    dsp_id == AUDIO_OPENDSP_USE_CM4_B) {
-		pr_info("dsp_id: %u", dsp_id);
+		pr_info("dsp_id: %u not support audio ipi dma", dsp_id);
 		ret = -ENODEV;
 		goto IPI_DMA_INIT_EXIT;
 	}
-#endif
+
 	ret = get_reserve_mem_size(dsp_id, &mem_id, &size);
 	if (ret != 0 || mem_id == 0xFFFFFFFF || size == 0) {
 		pr_info("dsp_id(%u), mem_id(%u), size(%u) ret %d error!!",
@@ -395,6 +396,7 @@ int audio_ipi_dma_init_dsp(const uint32_t dsp_id)
 	uint8_t task = TASK_SCENE_INVALID;
 	uint64_t payload[2];
 
+	ipi_dbg("+dsp_id: %u, task: %d, ret: %d", dsp_id, task, ret);
 	if (dsp_id >= NUM_OPENDSP_TYPE) {
 		pr_info("dsp_id(%u) invalid!!!", dsp_id);
 		return -ENODEV;
@@ -626,8 +628,10 @@ int audio_ipi_dma_alloc_region(const uint8_t task,
 		audio_ipi_dma_init_dsp(dsp_id);
 	}
 
+	mutex_lock(&region_lock);
 	if (g_region_reg_flag[task] == true) {
 		pr_notice("task: %d already register", task);
+		mutex_unlock(&region_lock);
 		return -EEXIST;
 	}
 	g_region_reg_flag[task] = true;
@@ -701,6 +705,8 @@ int audio_ipi_dma_alloc_region(const uint8_t task,
 		adsp_deregister_feature(AUDIO_CONTROLLER_FEATURE_ID);
 #endif
 
+	mutex_unlock(&region_lock);
+
 	return ret;
 }
 
@@ -743,8 +749,10 @@ int audio_ipi_dma_free_region(const uint8_t task)
 		return -ENODEV;
 	}
 
+	mutex_lock(&region_lock);
 	if (g_region_reg_flag[task] == false) {
 		pr_info("task: %d already unregister", task);
+		mutex_unlock(&region_lock);
 		return -ENODEV;
 	}
 	g_region_reg_flag[task] = false;
@@ -762,7 +770,7 @@ int audio_ipi_dma_free_region(const uint8_t task)
 		}
 		phy_value = offset_to_phy_addr(region->offset, dsp_id);
 		ipi_dbg("task %d, region[%d] sz 0x%x, offset 0x%x, phy_value 0x%x",
-			task, i, region->size, region->offset, phy_value);
+			task, i, region->size, region->offset, (uint32_t)phy_value);
 
 		gen_pool_free(g_dma_pool[dsp_id],
 			      phy_addr_to_vir_addr_val(phy_value, dsp_id),
@@ -803,6 +811,9 @@ int audio_ipi_dma_free_region(const uint8_t task)
 	if (is_audio_use_adsp(dsp_id))
 		adsp_deregister_feature(AUDIO_CONTROLLER_FEATURE_ID);
 #endif
+
+	mutex_unlock(&region_lock);
+
 	return 0;
 }
 
@@ -1314,9 +1325,12 @@ static int hal_dma_push(
 	if (msg_queue == NULL || p_ipi_msg == NULL || p_idx_msg == NULL)
 		return -EFAULT;
 
+	if (sizeof(struct ipi_msg_t) >= MAX_DSP_DMA_WRITE_SIZE)
+		return -EFAULT;
+
 	/* get data from DMA ASAP s.t. adsp could fill more data */
 	data_size = p_ipi_msg->dma_info.data_size;
-	if ((data_size + sizeof(struct ipi_msg_t)) > MAX_DSP_DMA_WRITE_SIZE) {
+	if (data_size > (MAX_DSP_DMA_WRITE_SIZE - sizeof(struct ipi_msg_t))) {
 		pr_info("task: %d, msg_id: 0x%x, data overflow, data_size %u, drop it",
 			p_ipi_msg->task_scene, p_ipi_msg->msg_id, data_size);
 		audio_ipi_dma_drop_region(p_ipi_msg->task_scene,

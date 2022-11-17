@@ -147,39 +147,31 @@ void mtk_cam_seninf_get_vcinfo_test(struct seninf_ctx *ctx)
 		vc->out_pad = PAD_SRC_PDAF0;
 		vc->group = 0;
 	} else if (ctx->is_test_model == 4) {
-		vc = &vcinfo->vc[vcinfo->cnt++];
+		vc = &vcinfo->vc[vcinfo->cnt++];/*0*/
 		vc->vc = 0;
 		vc->dt = 0x2b;
 		vc->feature = VC_RAW_DATA;
 		vc->out_pad = PAD_SRC_RAW0;
+		vc->exp_hsize = 4000;
+		vc->exp_vsize = 3000;
 		vc->group = 0;
 
-		vc = &vcinfo->vc[vcinfo->cnt++];
+		vc = &vcinfo->vc[vcinfo->cnt++];/*1*/
 		vc->vc = 0;
 		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_RAW1;
+		vc->feature = VC_GENERAL_EMBEDDED;
+		vc->out_pad = PAD_SRC_GENERAL0;
+		vc->exp_hsize = 1024;
+		vc->exp_vsize = 552;
 		vc->group = 0;
 
-		vc = &vcinfo->vc[vcinfo->cnt++];
+		vc = &vcinfo->vc[vcinfo->cnt++];/*2*/
 		vc->vc = 0;
 		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_RAW2;
-		vc->group = 0;
-
-		vc = &vcinfo->vc[vcinfo->cnt++];
-		vc->vc = 0;
-		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_PDAF0;
-		vc->group = 0;
-
-		vc = &vcinfo->vc[vcinfo->cnt++];
-		vc->vc = 0;
-		vc->dt = 0x2b;
-		vc->feature = VC_RAW_DATA;
-		vc->out_pad = PAD_SRC_PDAF1;
+		vc->feature = VC_RAW_PROCESSED_DATA;
+		vc->out_pad = PAD_SRC_RAW_EXT0;
+		vc->exp_hsize = 4000;
+		vc->exp_vsize = 3000;
 		vc->group = 0;
 	} else if (ctx->is_test_model == 5) {
 		vc = &vcinfo->vc[vcinfo->cnt++];
@@ -378,7 +370,7 @@ int mtk_cam_seninf_get_vcinfo(struct seninf_ctx *ctx)
 {
 	int ret = 0;
 	int i, grp, grp_metadata, raw_cnt;
-	struct mtk_mbus_frame_desc fd;
+	struct mtk_mbus_frame_desc fd = {0};
 	struct seninf_vcinfo *vcinfo = &ctx->vcinfo;
 	struct seninf_vc *vc;
 	int desc;
@@ -393,6 +385,7 @@ int mtk_cam_seninf_get_vcinfo(struct seninf_ctx *ctx)
 	if (!ctrl) {
 		dev_info(ctx->dev, "%s, no V4L2_CID_MTK_FRAME_DESC %s\n",
 			__func__, sensor_sd->name);
+		return -EINVAL;
 	}
 
 	ctrl->p_new.p = &fd;
@@ -415,6 +408,9 @@ int mtk_cam_seninf_get_vcinfo(struct seninf_ctx *ctx)
 		vc->vc = fd.entry[i].bus.csi2.channel;
 		vc->dt = fd.entry[i].bus.csi2.data_type;
 		desc = fd.entry[i].bus.csi2.user_data_desc;
+		#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		vc->dt_remap_to_type = fd.entry[i].bus.csi2.dt_remap_to_type;
+		#endif
 
 		switch (desc) {
 		case VC_3HDR_Y:
@@ -730,7 +726,7 @@ void mtk_cam_seninf_alloc_cam_mux(struct seninf_ctx *ctx)
 	mutex_lock(&core->mutex);
 
 	/* allocate all cam muxs */
-	for (i = 0; i < vcinfo->cnt; i++) {
+	for (i = 0; i < vcinfo->cnt && i < SENINF_VC_MAXCNT; i++) {
 		vc = &vcinfo->vc[i];
 		ent = list_first_entry_or_null(&core->list_cam_mux,
 					       struct seninf_cam_mux, list);
@@ -1031,6 +1027,23 @@ mtk_cam_seninf_sof_notify(struct mtk_seninf_sof_notify_param *param)
 	struct v4l2_subdev *sd = param->sd;
 	struct seninf_ctx *ctx = container_of(sd, struct seninf_ctx, subdev);
 	struct mtk_seninf_work *seninf_work = NULL;
+	struct v4l2_ctrl *ctrl;
+	struct v4l2_subdev *sensor_sd = ctx->sensor_sd;
+
+	ctrl = v4l2_ctrl_find(sensor_sd->ctrl_handler,
+				V4L2_CID_UPDATE_SOF_CNT);
+	if (!ctrl) {
+		dev_info(ctx->dev, "%s, no V4L2_CID_UPDATE_SOF_CNT %s\n",
+			__func__,
+			sensor_sd->name);
+		return;
+	}
+
+//	dev_info(ctx->dev, "%s sof %s cnt %d\n",
+//		__func__,
+//		sensor_sd->name,
+//		param->sof_cnt);
+	v4l2_ctrl_s_ctrl(ctrl, param->sof_cnt);
 
 	if (ctx->streaming) {
 		seninf_work = kmalloc(sizeof(struct mtk_seninf_work),
@@ -1045,6 +1058,18 @@ mtk_cam_seninf_sof_notify(struct mtk_seninf_sof_notify_param *param)
 		}
 	}
 }
+
+u8 is_reset_by_user(struct seninf_ctx *ctx)
+{
+	struct v4l2_subdev *sensor_sd = ctx->sensor_sd;
+	struct v4l2_ctrl *ctrl;
+
+	ctrl = v4l2_ctrl_find(sensor_sd->ctrl_handler,
+			V4L2_CID_MTK_SENSOR_RESET_BY_USER);
+
+	return (ctrl) ? v4l2_ctrl_g_ctrl(ctrl) : 0;
+}
+
 int reset_sensor(struct seninf_ctx *ctx)
 {
 	struct v4l2_subdev *sensor_sd = ctx->sensor_sd;

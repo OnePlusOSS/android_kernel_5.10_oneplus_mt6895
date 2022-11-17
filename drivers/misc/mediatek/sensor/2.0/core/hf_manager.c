@@ -289,14 +289,16 @@ int hf_manager_create(struct hf_device *device)
 	uint32_t gain = 0;
 	struct hf_manager *manager = NULL;
 
+	pr_err("mtkdebug:2 %s\n",__func__);
 	if (!device || !device->dev_name ||
 			!device->support_list || !device->support_size)
 		return -EINVAL;
 
+	pr_err("mtkdebug:3 %s\n",__func__);
 	manager = kzalloc(sizeof(*manager), GFP_KERNEL);
 	if (!manager)
 		return -ENOMEM;
-
+	pr_err("mtkdebug:4 %s\n",__func__);
 	manager->hf_dev = device;
 	manager->core = &hfcore;
 	device->manager = manager;
@@ -340,7 +342,7 @@ int hf_manager_create(struct hf_device *device)
 			goto out_err;
 		}
 	}
-
+	pr_err("mtkdebug:5 %s\n",__func__);
 	INIT_LIST_HEAD(&manager->list);
 	mutex_lock(&manager->core->manager_lock);
 	list_add(&manager->list, &manager->core->manager_list);
@@ -1041,6 +1043,9 @@ static int hf_manager_drive_device(struct hf_client *client,
 	if (unlikely(sensor_type >= SENSOR_TYPE_SENSOR_MAX))
 		return -EINVAL;
 
+	if (unlikely(cmd->length > sizeof(cmd->data)))
+		return -EINVAL;
+
 	mutex_lock(&core->manager_lock);
 	manager = hf_manager_find_manager(core, sensor_type);
 	if (!manager) {
@@ -1252,7 +1257,7 @@ int hf_client_poll_sensor_timeout(struct hf_client *client,
 
 	/* ret must be long to fill timeout(MAX_SCHEDULE_TIMEOUT) */
 	ret = wait_event_interruptible_timeout(hf_fifo->wait,
-		READ_ONCE(hf_fifo->head) != READ_ONCE(hf_fifo->tail), timeout);
+		hf_fifo->head != hf_fifo->tail, timeout);
 
 	if (!ret)
 		return -ETIMEDOUT;
@@ -1260,7 +1265,7 @@ int hf_client_poll_sensor_timeout(struct hf_client *client,
 		return ret;
 
 	for (;;) {
-		if (READ_ONCE(hf_fifo->head) == READ_ONCE(hf_fifo->tail))
+		if (hf_fifo->head == hf_fifo->tail)
 			return 0;
 		if (count == 0)
 			break;
@@ -1319,7 +1324,7 @@ static ssize_t hf_manager_read(struct file *filp,
 		return -EINVAL;
 
 	for (;;) {
-		if (READ_ONCE(hf_fifo->head) == READ_ONCE(hf_fifo->tail))
+		if (hf_fifo->head == hf_fifo->tail)
 			return 0;
 		if (count == 0)
 			break;
@@ -1363,7 +1368,7 @@ static unsigned int hf_manager_poll(struct file *filp,
 
 	poll_wait(filp, &hf_fifo->wait, wait);
 
-	if (READ_ONCE(hf_fifo->head) != READ_ONCE(hf_fifo->tail))
+	if (hf_fifo->head != hf_fifo->tail)
 		mask |= POLLIN | POLLRDNORM;
 
 	return mask;

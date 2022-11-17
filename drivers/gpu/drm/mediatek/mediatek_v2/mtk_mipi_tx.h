@@ -27,6 +27,8 @@
 #define FLD_RG_DSI_PLL_POSDIV_ REG_FLD_MSB_LSB(10, 8)
 
 #define MIPITX_PLL_CON2 (0x0034UL)
+#define RG_DSI_PLL_SDM_SSC_EN BIT(1)
+
 #define MIPITX_PLL_CON3 (0x0038UL)
 #define MIPITX_PLL_CON4 (0x003CUL)
 #define MIPITX_D2_SW_CTL_EN (0x0144UL)
@@ -173,6 +175,7 @@ void mtk_mipi_tx_set_bits(struct mtk_mipi_tx *mipi_tx, u32 offset, u32 bits);
 void mtk_mipi_tx_update_bits(struct mtk_mipi_tx *mipi_tx, u32 offset,
 		u32 mask, u32 data);
 unsigned int _dsi_get_pcw(unsigned long data_rate, unsigned int pcw_ratio);
+unsigned int _dsi_get_pcw_khz(unsigned long data_rate_khz, unsigned int pcw_ratio);
 void backup_mipitx_impedance(struct mtk_mipi_tx *mipi_tx);
 void refill_mipitx_impedance(struct mtk_mipi_tx *mipi_tx);
 #endif

@@ -4,6 +4,8 @@
 #ifndef __ADAPTOR_HW_H__
 #define __ADAPTOR_HW_H__
 
+#include "oplus_cam_olc_exception.h"
+
 int adaptor_hw_power_on(struct adaptor_ctx *ctx);
 int adaptor_hw_power_off(struct adaptor_ctx *ctx);
 int adaptor_hw_init(struct adaptor_ctx *ctx);

@@ -18,6 +18,10 @@
 #include <linux/sched/clock.h>
 #include <linux/spmi.h>
 
+#if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
+#include <mt-plat/aee.h>
+#endif
+
 #ifdef SUPPORT_EOSC_CALI
 #include <linux/mfd/mt6685/registers.h>
 #endif
@@ -139,7 +143,7 @@ static int rtc_field_read(struct mt6685_rtc *rtc, enum mtk_rtc_spare_enum cmd)
 	unsigned int tmp_val = 0;
 	int ret;
 
-	if (cmd >= 0 && cmd < SPARE_RG_MAX) {
+	if (cmd < SPARE_RG_MAX) {
 
 		ret = rtc_read(rtc, rtc->addr_base + rtc_spare_reg[cmd][RTC_REG], &tmp_val);
 		if (ret < 0)
@@ -162,7 +166,7 @@ static int rtc_spare_field_write(struct mt6685_rtc *rtc,
 {
 	unsigned int tmp_val = 0;
 
-	if (cmd >= 0 && cmd < SPARE_RG_MAX) {
+	if (cmd < SPARE_RG_MAX) {
 		pr_info("%s: cmd[%d], set rg[0x%x, 0x%x , %d] = 0x%x\n",
 				__func__, cmd,
 				rtc_spare_reg[cmd][RTC_REG],
@@ -419,8 +423,7 @@ static int mtk_rtc_restore_alarm(struct mt6685_rtc *rtc, struct rtc_time *tm)
 
 	ret =  rtc_update_bits(rtc,
 				rtc->addr_base + RTC_IRQ_EN,
-				RTC_IRQ_EN_ONESHOT_AL,
-				RTC_IRQ_EN_ONESHOT_AL);
+				RTC_IRQ_EN_AL, RTC_IRQ_EN_AL);
 	if (ret < 0)
 		goto exit;
 
@@ -577,8 +580,7 @@ exit:
 
 static int mtk_rtc_is_alarm_irq(struct mt6685_rtc *rtc)
 {
-	u32 irqsta = 0, bbpu;
-	u32 sck;
+	u32 irqsta = 0, bbpu = 0, sck = 0;
 	int ret;
 
 	power_on_mclk(rtc);
@@ -595,7 +597,14 @@ static int mtk_rtc_is_alarm_irq(struct mt6685_rtc *rtc)
 					rtc->addr_base + RTC_BBPU, bbpu);
 		if (ret < 0)
 			dev_err(rtc->rtc_dev->dev.parent,
-				"%s error\n", __func__);
+				"%s: %d error\n", __func__, __LINE__);
+
+		ret =  rtc_update_bits(rtc,
+				rtc->addr_base + RTC_IRQ_EN,
+				RTC_IRQ_EN_AL, 0);
+		if (ret < 0)
+			dev_err(rtc->rtc_dev->dev.parent,
+				"%s: %d error\n", __func__, __LINE__);
 		mtk_rtc_write_trigger(rtc);
 		power_down_mclk(rtc);
 		return RTC_ALSTA;
@@ -830,10 +839,73 @@ exit:
 	return ret;
 }
 
+static bool mtk_rtc_check_set_time(struct mt6685_rtc *rtc, struct rtc_time *tm,
+	int retry_time, int rtc_time_reg)
+{
+	int ret, i, j, write_fail = 0, prot_key = 0, hwid = 0, mclk = 0;
+	u16 data[RTC_OFFSET_COUNT], latest[RTC_OFFSET_COUNT];
+
+	data[RTC_OFFSET_SEC] = tm->tm_sec;
+	data[RTC_OFFSET_MIN] = tm->tm_min;
+	data[RTC_OFFSET_HOUR] = tm->tm_hour;
+	data[RTC_OFFSET_DOM] = tm->tm_mday;
+	data[RTC_OFFSET_MTH] = tm->tm_mon;
+	data[RTC_OFFSET_YEAR] = tm->tm_year;
+
+	for (j = 1; j <= retry_time; j++) {
+
+		write_fail = 0;
+
+		ret = rtc_bulk_read(rtc, rtc->addr_base + rtc_time_reg,
+				       latest, RTC_OFFSET_COUNT * 2);
+		if (ret < 0)
+			return ret;
+
+		for (i = 0; i < RTC_OFFSET_COUNT; i++) {
+			if (i == RTC_OFFSET_DOW)
+				continue;
+
+			latest[i] = latest[i] & rtc_time_mask[i];
+			if (latest[i] != data[i])
+				write_fail++;
+
+			if (j == retry_time) {
+				ret = rtc_read(rtc, MT6685_HWCID_L, &hwid);
+				if (ret < 0)
+					return ret;
+
+				ret = rtc_read(rtc, RG_RTC_MCLK_PDN, &mclk);
+				if (ret < 0)
+					return ret;
+				mclk = mclk >> RG_RTC_MCLK_PDN_STA_SHIFT & RG_RTC_MCLK_PDN_STA_MASK;
+
+				ret = rtc_read(rtc, rtc->addr_base + RTC_SPAR_MACRO, &prot_key);
+				if (ret < 0)
+					return ret;
+				prot_key = prot_key >> SPAR_PROT_STAT_SHIFT & SPAR_PROT_STAT_MASK;
+
+				dev_info(rtc->rtc_dev->dev.parent,
+				"[HWID 0x%x, MCLK 0x%x, prot key 0x%x] %s write %d, latest %d\n",
+				hwid, mclk, prot_key, rtc_time_reg_name[i], data[i], latest[i]);
+			}
+		}
+
+		if (write_fail > 0)
+			mdelay(2);
+		else
+			break;
+	}
+
+	if (write_fail > 0)
+		return false;
+
+	return true;
+}
+
 static int mtk_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
 	struct mt6685_rtc *rtc = dev_get_drvdata(dev);
-	int ret;
+	int ret, result = 0;
 	u16 data[RTC_OFFSET_COUNT];
 
 	power_on_mclk(rtc);
@@ -861,6 +933,18 @@ static int mtk_rtc_set_time(struct device *dev, struct rtc_time *tm)
 
 	/* Time register write to hardware after call trigger function */
 	ret = mtk_rtc_write_trigger(rtc);
+	if (ret < 0)
+		goto exit;
+
+	result = mtk_rtc_check_set_time(rtc, tm, 2, RTC_TC_SEC);
+
+	if (!result) {
+		dev_info(rtc->rtc_dev->dev.parent, "check rtc set time\n");
+#if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
+		aee_kernel_warning("mt6685-rtc", "mt6685-rtc: set tick time failed\n");
+#endif
+	}
+
 exit:
 	mutex_unlock(&rtc->lock);
 	power_down_mclk(rtc);
@@ -917,7 +1001,7 @@ static int mtk_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 {
 	struct rtc_time *tm = &alm->time;
 	struct mt6685_rtc *rtc = dev_get_drvdata(dev);
-	int ret;
+	int ret, result = 0;
 	u16 data[RTC_OFFSET_COUNT];
 	ktime_t target;
 
@@ -989,25 +1073,34 @@ static int mtk_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 			goto exit;
 
 		ret =  rtc_update_bits(rtc,
-					 rtc->addr_base + RTC_IRQ_EN,
-					 RTC_IRQ_EN_ONESHOT_AL,
-					 RTC_IRQ_EN_ONESHOT_AL);
+				rtc->addr_base + RTC_IRQ_EN,
+				RTC_IRQ_EN_AL, RTC_IRQ_EN_AL);
 		if (ret < 0)
 			goto exit;
-	} else {
-		ret = rtc_update_bits(rtc,
-					 rtc->addr_base + RTC_IRQ_EN,
-					 RTC_IRQ_EN_ONESHOT_AL, 0);
-
-		if (ret < 0)
-			goto exit;
-	}
+		} else {
+			ret =  rtc_update_bits(rtc,
+					rtc->addr_base + RTC_IRQ_EN,
+					RTC_IRQ_EN_AL, 0);
+			if (ret < 0)
+				goto exit;
+		}
 
 	/* All alarm time register write to hardware after calling
 	 * mtk_rtc_write_trigger. This can avoid race condition if alarm
 	 * occur happen during writing alarm time register.
 	 */
 	ret = mtk_rtc_write_trigger(rtc);
+	if (ret < 0)
+		goto exit;
+
+	result = mtk_rtc_check_set_time(rtc, tm, 2, RTC_AL_SEC);
+
+	if (!result) {
+		dev_info(rtc->rtc_dev->dev.parent, "check rtc set alarm\n");
+#if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
+		aee_kernel_warning("mt6685-rtc", "mt6685-rtc: set alarm time failed\n");
+#endif
+	}
 exit:
 	mutex_unlock(&rtc->lock);
 	power_down_mclk(rtc);
@@ -1072,7 +1165,7 @@ int rtc_nvram_read(void *priv, unsigned int offset, void *val,
 							size_t bytes)
 {
 	struct mt6685_rtc *rtc = dev_get_drvdata(priv);
-	unsigned int ret;
+	int ret;
 	u8 *buf = val;
 
 	mutex_lock(&rtc->lock);
@@ -1095,7 +1188,7 @@ int rtc_nvram_write(void *priv, unsigned int offset, void *val,
 							size_t bytes)
 {
 	struct mt6685_rtc *rtc = dev_get_drvdata(priv);
-	unsigned int ival;
+	int ival;
 	int ret;
 	u8 *buf = val;
 

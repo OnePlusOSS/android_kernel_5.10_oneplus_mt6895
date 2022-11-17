@@ -80,7 +80,7 @@ static const char *get_provider_name(struct device_node *node, u32 *cells)
 {
 	const char *name;
 	const char *p;
-	u32 cc;
+	u32 cc = 0;
 
 	if (of_property_read_u32(node, "#clock-cells", &cc) != 0)
 		cc = 0;
@@ -625,6 +625,8 @@ static int clkchk_evt_handling(struct notifier_block *nb,
 		break;
 	case CLK_EVT_HWV_PLL_TIMEOUT:
 		clkchk_dump_hwv_pll_reg(clkd->hwv_regmap, clkd->shift);
+		break;
+	case CLK_EVT_SUSPEND_CG_DUMP:
 		break;
 	default:
 		pr_notice("cannot get flags identify\n");

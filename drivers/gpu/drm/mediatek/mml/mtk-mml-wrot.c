@@ -179,12 +179,14 @@ struct wrot_data {
 	u32 fifo;
 	u32 tile_width;
 	u32 sram_size;
+	u8 rb_swap;	/* version for rb channel swap behavior */
 };
 
 static const struct wrot_data mml_wrot_data = {
 	.fifo = 256,
 	.tile_width = 512,
 	.sram_size = 512 * 1024,
+	.rb_swap = 1,
 };
 
 struct mml_comp_wrot {
@@ -1006,9 +1008,15 @@ static s32 wrot_config_frame(struct mml_comp *comp, struct mml_task *task,
 	if (cfg->alpharot) {
 		wrot_frm->mat_en = 0;
 
-		/* TODO: check if still need this sw workaround */
-		if (!MML_FMT_COMPRESS(src_fmt) || MML_FMT_10BIT(src_fmt))
-			out_swap ^= MML_FMT_SWAP(src_fmt);
+		if (wrot->data->rb_swap == 1) {
+			if (!MML_FMT_COMPRESS(src_fmt) && !MML_FMT_10BIT(src_fmt))
+				out_swap ^= MML_FMT_SWAP(src_fmt);
+			else if (MML_FMT_COMPRESS(src_fmt) && !MML_FMT_10BIT(src_fmt))
+				out_swap =
+					(MML_FMT_SWAP(src_fmt) == MML_FMT_SWAP(dest_fmt)) ? 1 : 0;
+			else if (MML_FMT_COMPRESS(src_fmt) && MML_FMT_10BIT(src_fmt))
+				out_swap = out_swap ? 0 : 1;
+		}
 	}
 
 	mml_msg("use config %p wrot %p", cfg, wrot);
@@ -1717,16 +1725,19 @@ static s32 wrot_config_tile(struct mml_comp *comp, struct mml_task *task,
 	/* qos accumulate tile pixel */
 	wrot_frm->pixel_acc += wrot_tar_xsize * wrot_tar_ysize;
 
-	/* calculate qos for later use */
-	plane = MML_FMT_PLANE(dest->data.format);
-	wrot_frm->datasize += mml_color_get_min_y_size(dest->data.format,
-		wrot_tar_xsize, wrot_tar_ysize);
-	if (plane > 1)
-		wrot_frm->datasize += mml_color_get_min_uv_size(dest->data.format,
+	/* no bandwidth for racing mode since wrot write to sram */
+	if (cfg->info.mode != MML_MODE_RACING) {
+		/* calculate qos for later use */
+		plane = MML_FMT_PLANE(dest->data.format);
+		wrot_frm->datasize += mml_color_get_min_y_size(dest->data.format,
 			wrot_tar_xsize, wrot_tar_ysize);
-	if (plane > 2)
-		wrot_frm->datasize += mml_color_get_min_uv_size(dest->data.format,
-			wrot_tar_xsize, wrot_tar_ysize);
+		if (plane > 1)
+			wrot_frm->datasize += mml_color_get_min_uv_size(dest->data.format,
+				wrot_tar_xsize, wrot_tar_ysize);
+		if (plane > 2)
+			wrot_frm->datasize += mml_color_get_min_uv_size(dest->data.format,
+				wrot_tar_xsize, wrot_tar_ysize);
+	}
 
 	mml_msg("%s min block width: %u min buf line num: %u",
 		__func__, setting.main_blk_width, setting.main_buf_line_num);
@@ -2342,11 +2353,11 @@ static s32 dbg_get(char *buf, const struct kernel_param *kp)
 			struct mml_comp *comp = &dbg_probed_components[i]->comp;
 
 			length += snprintf(buf + length, PAGE_SIZE - length,
-				"  - [%d] mml comp_id: %d.%d @%08x name: %s bound: %d\n", i,
+				"  - [%d] mml comp_id: %d.%d @%llx name: %s bound: %d\n", i,
 				comp->id, comp->sub_idx, comp->base_pa,
 				comp->name ? comp->name : "(null)", comp->bound);
 			length += snprintf(buf + length, PAGE_SIZE - length,
-				"  -         larb_port: %d @%08x pw: %d clk: %d\n",
+				"  -         larb_port: %d @%llx pw: %d clk: %d\n",
 				comp->larb_port, comp->larb_base,
 				comp->pw_cnt, comp->clk_cnt);
 			length += snprintf(buf + length, PAGE_SIZE - length,

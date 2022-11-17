@@ -314,7 +314,7 @@ static void mtk_dmdp_aal_prepare(struct mtk_ddp_comp *comp)
 {
 	struct mtk_dmdp_aal *dmdp_aal = comp_to_dmdp_aal(comp);
 
-	pr_notice("%s\n", __func__);
+	DDPINFO("%s\n", __func__);
 	mtk_ddp_comp_clk_prepare(comp);
 
 	/* Bypass shadow register and read shadow register */

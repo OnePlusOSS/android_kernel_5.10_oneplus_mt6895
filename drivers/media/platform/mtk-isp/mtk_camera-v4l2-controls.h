@@ -75,6 +75,8 @@
 	(V4L2_CID_USER_MTK_CAM_BASE + 20)
 #define V4L2_CID_MTK_CAM_CAMSYS_HW_MODE \
 	(V4L2_CID_USER_MTK_CAM_BASE + 21)
+#define V4L2_CID_MTK_CAM_FRAME_SYNC \
+	(V4L2_CID_USER_MTK_CAM_BASE + 22)
 
 /* Allowed value of V4L2_CID_MTK_CAM_RAW_PATH_SELECT */
 #define V4L2_MTK_CAM_RAW_PATH_SELECT_BPC	1
@@ -219,17 +221,27 @@ struct mtk_cam_resource {
 	__u8 status;
 };
 
+enum mtk_cam_ctrl_type {
+	CAM_SET_CTRL = 0,
+	CAM_TRY_CTRL,
+	CAM_CTRL_NUM,
+};
+
 /**
  * struct mtk_cam_pde_info - PDE module information for raw
  *
  * @pdo_max_size: the max pdo size of pde sensor.
  * @pdi_max_size: the max pdi size of pde sensor or max pd table size.
  * @pd_table_offset: the offest of meta config for pd table content.
+ * @meta_cfg_size: the enlarged meta config size.
+ * @meta_0_size: the enlarged meta 0 size.
  */
 struct mtk_cam_pde_info {
 	__u32 pdo_max_size;
 	__u32 pdi_max_size;
 	__u32 pd_table_offset;
+	__u32 meta_cfg_size;
+	__u32 meta_0_size;
 };
 
 /* I M G S Y S */
@@ -334,7 +346,14 @@ struct mtk_cam_pde_info {
 #define V4L2_CID_MTK_SOF_TIMEOUT_VALUE \
 	(V4L2_CID_USER_MTK_SENSOR_BASE + 33)
 
+#define V4L2_CID_MTK_SENSOR_RESET_S_STREAM \
+	(V4L2_CID_USER_MTK_SENSOR_BASE + 34)
 
+#define V4L2_CID_MTK_SENSOR_RESET_BY_USER \
+	(V4L2_CID_USER_MTK_SENSOR_BASE + 35)
+
+#define V4L2_CID_MTK_DO_NOT_POWER_ON \
+	(V4L2_CID_USER_MTK_SENSOR_BASE + 36)
 
 /* S E N I N F */
 #define V4L2_CID_MTK_SENINF_S_STREAM \
@@ -346,4 +365,6 @@ struct mtk_cam_pde_info {
 #define V4L2_CID_VSYNC_NOTIFY \
 	(V4L2_CID_USER_MTK_SENINF_BASE + 3)
 
+#define V4L2_CID_UPDATE_SOF_CNT \
+	(V4L2_CID_USER_MTK_SENINF_BASE + 4)
 #endif /* __MTK_CAMERA_V4l2_CONTROLS_H */

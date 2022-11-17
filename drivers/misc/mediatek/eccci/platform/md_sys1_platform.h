@@ -56,7 +56,6 @@ struct md_hw_info {
 	unsigned long md_rgu_base;
 	unsigned long md_boot_slave_Vector;
 	unsigned long md_boot_slave_Key;
-	unsigned long md_boot_slave_En;
 	unsigned int sram_size;
 
 	/* HW info - Interrutpt ID */
@@ -86,8 +85,10 @@ enum {
 	SRCLKEN_O1_BIT,
 	REVERT_SEQUENCER_BIT,
 	MD_PLL_SETTING,
+	SKIP_TOPCLK_BIT,
 };
 
+extern unsigned int ap_plat_info;
 
 /* ADD_SYS_CORE */
 int ccci_modem_syssuspend(void);
@@ -97,4 +98,8 @@ void md_dump_register_6873(unsigned int md_index);
 extern void ccci_mem_dump(int md_id, void *start_addr, int len);
 extern void dump_emi_outstanding(void);
 extern void mtk_emidbg_dump(void);
+extern unsigned int ccci_get_hs2_done_status(void);
+extern void reset_modem_hs2_status(void);
+
+
 #endif				/* __MD_SYS1_PLATFORM_H__ */

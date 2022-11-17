@@ -30,6 +30,9 @@
 #if IS_ENABLED(CONFIG_MTK_TINYSYS_SCP_SUPPORT)
 #include "scp.h"
 #endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#endif
 
 /* SCP -> AP ipi structure */
 /* 2 x 4-byte(unit) = 8 */
@@ -124,6 +127,10 @@ struct mt63xx_accdet_data {
 	/* when eint issued, queue work: eint_work */
 	struct work_struct eint_work;
 	struct workqueue_struct *eint_workqueue;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	struct delayed_work fb_delaywork;
+	struct workqueue_struct *fb_workqueue;
+#endif
 	u32 water_r;
 	u32 moisture_ext_r;
 	u32 moisture_int_r;
@@ -299,6 +306,8 @@ static void mini_dump_register(void)
 			idx+2, pmic_read(idx+2),
 			idx+3, pmic_read(idx+3));
 	}
+	if (log_size < 0)
+		pr_notice("sprintf failed\n");
 	pr_notice("\naccdet %s %d", accdet_log_buf, log_size);
 }
 
@@ -361,12 +370,15 @@ static void cat_register(char *buf)
 	ret = sprintf(accdet_log_buf, "[Accdet EINTx support][MODE_%d]regs:\n",
 		accdet_dts.mic_mode);
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
-
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 	dump_reg = true;
 	dump_register();
 	dump_reg = false;
 	ret = sprintf(accdet_log_buf, "ACCDET_RG\n");
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 	st_addr = MT6338_ACCDET_AUXADC_SEL_ADDR;
 	end_addr = MT6338_ACCDET_MON_FLAG_EN_ADDR;
 	for (addr = st_addr; addr <= end_addr; addr += 4) {
@@ -378,9 +390,13 @@ static void cat_register(char *buf)
 			idx+2, pmic_read(idx+2),
 			idx+3, pmic_read(idx+3));
 		strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+		if (ret < 0)
+			pr_notice("sprintf failed\n");
 	}
 	ret = sprintf(accdet_log_buf, "AUDDEC_ANA_RG\n");
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 	st_addr = MT6338_RG_AUDPREAMPLON_ADDR;
 	end_addr = MT6338_RG_ADCL_CLKMODE_ADDR;
 	for (addr = st_addr; addr <= end_addr; addr += 4) {
@@ -391,6 +407,8 @@ static void cat_register(char *buf)
 			idx+1, pmic_read(idx+1),
 			idx+2, pmic_read(idx+2),
 			idx+3, pmic_read(idx+3));
+		if (ret < 0)
+			pr_notice("sprintf failed\n");
 		strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
 	}
 
@@ -398,11 +416,15 @@ static void cat_register(char *buf)
 		      MT6338_RG_SCK32K_CK_PDN_ADDR,
 		      pmic_read(MT6338_RG_SCK32K_CK_PDN_ADDR));
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 
 	ret = sprintf(accdet_log_buf, "[0x%x]=0x%x\n",
 		      MT6338_RG_ACCDET_RST_ADDR,
 		      pmic_read(MT6338_RG_ACCDET_RST_ADDR));
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 
 	ret = sprintf(accdet_log_buf, "[0x%x]=0x%x, [0x%x]=0x%x, [0x%x]=0x%x\n",
 		      MT6338_RG_INT_EN_ACCDET_ADDR,
@@ -412,6 +434,8 @@ static void cat_register(char *buf)
 		      MT6338_RG_INT_STATUS_ACCDET_ADDR,
 		      pmic_read(MT6338_RG_INT_STATUS_ACCDET_ADDR));
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 
 	ret = sprintf(accdet_log_buf, "[0x%x]=0x%x,[0x%x]=0x%x\n",
 		      MT6338_RG_AUDPWDBMICBIAS1_ADDR,
@@ -419,6 +443,8 @@ static void cat_register(char *buf)
 		      MT6338_RG_AUDACCDETMICBIAS0PULLLOW_ADDR,
 		      pmic_read(MT6338_RG_AUDACCDETMICBIAS0PULLLOW_ADDR));
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 
 	ret = sprintf(accdet_log_buf, "[0x%x]=0x%x, [0x%x]=0x%x\n",
 		      MT6338_AUXADC_RQST_CH5_ADDR,
@@ -426,6 +452,8 @@ static void cat_register(char *buf)
 		      MT6338_AUXADC_ACCDET_AUTO_SPL_ADDR,
 		      pmic_read(MT6338_AUXADC_ACCDET_AUTO_SPL_ADDR));
 	strncat(buf, accdet_log_buf, strlen(accdet_log_buf));
+	if (ret < 0)
+		pr_notice("sprintf failed\n");
 
 	ret = sprintf(accdet_log_buf,
 		"dtsInfo:deb0=0x%x,deb1=0x%x,deb3=0x%x,deb4=0x%x\n",
@@ -496,7 +524,7 @@ static ssize_t set_reg_store(struct device_driver *ddri,
 
 	pr_info("%s() set addr[0x%x]=0x%x\n", __func__, addr_tmp, value_tmp);
 
-	if (addr_tmp < 0)
+	if (addr_tmp > MT6338_ACCDET_MON_FLAG_EN_ADDR)
 		pr_notice("%s() Illegal addr[0x%x]!!\n", __func__, addr_tmp);
 	else
 		pmic_write(addr_tmp, value_tmp);
@@ -1113,7 +1141,7 @@ static u32 adjust_eint_digital_setting(void)
 			       MT6338_ACCDET_EINT0_CEN_STABLE_SHIFT);
 		ret = get_moisture_sw_auxadc_check();
 		/* disable mtest en */
-		pmic_write_clr(MT6338_RG_MTEST_EN_ADDR, MT6338_RG_MTEST_EN_SHIFT);
+		//pmic_write_clr(MT6338_RG_MTEST_EN_ADDR, MT6338_RG_MTEST_EN_SHIFT);
 		pmic_write_clr(MT6338_AUDACCDETAUXADCSWCTRL_SEL_ADDR,
 			       MT6338_AUDACCDETAUXADCSWCTRL_SEL_SHIFT);
 		return ret;
@@ -1205,9 +1233,9 @@ static u32 adjust_moisture_analog_setting(u32 eintID)
 				MT6338_RG_EINTCOMPVTH_MASK,
 				accdet_dts.moisture_comp_vth);
 		/* Enable mtest en */
-		pmic_write_set(MT6338_RG_MTEST_EN_ADDR, MT6338_RG_MTEST_EN_SHIFT);
+		//pmic_write_set(MT6338_RG_MTEST_EN_ADDR, MT6338_RG_MTEST_EN_SHIFT);
 		/* select PAD_HP_EINT for moisture detection */
-		pmic_write_clr(MT6338_RG_MTEST_SEL_ADDR, MT6338_RG_MTEST_SEL_SHIFT);
+		//pmic_write_clr(MT6338_RG_MTEST_SEL_ADDR, MT6338_RG_MTEST_SEL_SHIFT);
 	} else if (accdet_dts.moisture_detect_mode == 0x4) {
 		/* do nothing */
 	} else if (accdet_dts.moisture_detect_mode == 0x5) {
@@ -1581,6 +1609,26 @@ static void dis_micbias_work_callback(struct work_struct *work)
 	}
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+static void feedback_work_callback(struct work_struct *work)
+{
+	char fd_buf[MM_KEVENT_MAX_PAYLOAD_SIZE] = {0};
+
+	pr_notice("%s enter\n", __func__);
+
+	mini_dump_register();
+
+	scnprintf(fd_buf, sizeof(fd_buf) - 1, \
+		"payload@@ACCDET_IRQ not trigger,cable_type=%u,caps=0x%x,cur_eint=%u," \
+		"eint0=%u,eint1=%u,regs:%s", \
+		accdet->cable_type, accdet->data->caps, accdet->eint_id, \
+		accdet->eint0_state, accdet->eint1_state, accdet_log_buf);
+
+	mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_HEADSET_DET,
+					MM_FB_KEY_RATELIMIT_5MIN, fd_buf);
+}
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 static void eint_work_callback(struct work_struct *work)
 {
 	if (accdet->cur_eint_state == EINT_PIN_PLUG_IN) {
@@ -1592,7 +1640,21 @@ static void eint_work_callback(struct work_struct *work)
 		accdet_init();
 
 		enable_accdet(0);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+/* delay time must less than __pm_wakeup_event time 7 * HZ */
+		if (accdet->fb_workqueue) {
+			queue_delayed_work(accdet->fb_workqueue, \
+					&accdet->fb_delaywork, 6 * HZ);
+			pr_notice("%s queue_delayed_work fb_delaywork\n", __func__);
+		}
+#endif
 	} else {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		if (accdet->fb_workqueue) {
+			cancel_delayed_work_sync(&accdet->fb_delaywork);
+			pr_notice("%s cancel_delayed_work_sync fb_delaywork\n", __func__);
+		}
+#endif
 		mutex_lock(&accdet->res_lock);
 		accdet->eint_sync_flag = false;
 		accdet->thing_in_flag = false;
@@ -1804,6 +1866,13 @@ static void accdet_work_callback(struct work_struct *work)
 {
 	u32 pre_cable_type = accdet->cable_type;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (accdet->fb_workqueue) {
+		cancel_delayed_work_sync(&accdet->fb_delaywork);
+		pr_notice("%s cancel_delayed_work_sync fb_delaywork\n", __func__);
+	}
+#endif
+
 	__pm_stay_awake(accdet->wake_lock);
 	check_cable_type();
 
@@ -1934,10 +2003,10 @@ static u32 config_moisture_detect_1_0(void)
 		       MT6338_AUDACCDETAUXADCSWCTRL_SW_SHIFT);
 
 	/* Enable moisture detection */
-	pmic_write_set(MT6338_RG_MTEST_EN_ADDR, MT6338_RG_MTEST_EN_SHIFT);
+	//pmic_write_set(MT6338_RG_MTEST_EN_ADDR, MT6338_RG_MTEST_EN_SHIFT);
 
 	/* select PAD_HP_EINT for moisture detection */
-	pmic_write_clr(MT6338_RG_MTEST_SEL_ADDR, MT6338_RG_MTEST_SEL_SHIFT);
+	//pmic_write_clr(MT6338_RG_MTEST_SEL_ADDR, MT6338_RG_MTEST_SEL_SHIFT);
 
 	/* select VTH to 2v */
 	pmic_write_mset(MT6338_RG_EINTCOMPVTH_ADDR,
@@ -2673,8 +2742,8 @@ static void accdet_init_once(void)
 		pmic_write(MT6338_RG_AUDACCDETMICBIAS0PULLLOW_ADDR,
 			reg | RG_ACCDET_MODE_ANA11_MODE1);
 		/* enable analog fast discharge */
-		pmic_write_set(MT6338_RG_ANALOGFDEN_ADDR,
-			MT6338_RG_ANALOGFDEN_SHIFT);
+		//pmic_write_set(MT6338_RG_ANALOGFDEN_ADDR,
+			//MT6338_RG_ANALOGFDEN_SHIFT);
 		pmic_write_mset(MT6338_RG_ACCDET_PL_ESDMOS_ADDR,
 				MT6338_RG_ACCDET_PL_ESDMOS_SHIFT, 0x3, 0x3);
 	} else if (accdet_dts.mic_mode == HEADSET_MODE_2) {
@@ -2682,8 +2751,8 @@ static void accdet_init_once(void)
 		pmic_write(MT6338_RG_AUDACCDETMICBIAS0PULLLOW_ADDR,
 			reg | RG_ACCDET_MODE_ANA11_MODE2);
 		/* enable analog fast discharge */
-		pmic_write_mset(MT6338_RG_ANALOGFDEN_ADDR,
-			MT6338_RG_ANALOGFDEN_SHIFT, 0x3, 0x3);
+		//pmic_write_mset(MT6338_RG_ANALOGFDEN_ADDR,
+			//MT6338_RG_ANALOGFDEN_SHIFT, 0x3, 0x3);
 	} else if (accdet_dts.mic_mode == HEADSET_MODE_6) {
 		/* DCC mode Low cost mode with internal bias,
 		 * bit8 = 1 to use internal bias
@@ -2693,8 +2762,8 @@ static void accdet_init_once(void)
 		pmic_write_set(MT6338_RG_AUDMICBIAS1DCSW1PEN_ADDR,
 				MT6338_RG_AUDMICBIAS1DCSW1PEN_SHIFT);
 		/* enable analog fast discharge */
-		pmic_write_mset(MT6338_RG_ANALOGFDEN_ADDR,
-			MT6338_RG_ANALOGFDEN_SHIFT, 0x3, 0x3);
+		//pmic_write_mset(MT6338_RG_ANALOGFDEN_ADDR,
+			//MT6338_RG_ANALOGFDEN_SHIFT, 0x3, 0x3);
 	}
 
 	if (HAS_CAP(accdet->data->caps, ACCDET_PMIC_EINT_IRQ)) {
@@ -3005,6 +3074,13 @@ static int accdet_probe(struct platform_device *pdev)
 		if (ret)
 			destroy_workqueue(accdet->eint_workqueue);
 	}
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	accdet->fb_workqueue = create_singlethread_workqueue("hs_feedback");
+	INIT_DELAYED_WORK(&accdet->fb_delaywork, feedback_work_callback);
+	if (!accdet->fb_workqueue) {
+		dev_dbg(&pdev->dev, "Error: Create feedback workqueue failed\n");
+	}
+#endif
 
 	ret = accdet_create_attr(&accdet_driver.driver);
 	if (ret) {

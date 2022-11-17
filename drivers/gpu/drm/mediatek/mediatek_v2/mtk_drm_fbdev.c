@@ -23,6 +23,10 @@
 #include "mtk_log.h"
 #include "mtk_drm_mmp.h"
 
+#if defined(CONFIG_PXLW_IRIS)
+#include "iris_api.h"
+#endif
+
 #define to_drm_private(x) container_of(x, struct mtk_drm_private, fb_helper)
 #define ALIGN_TO_32(x) ALIGN_TO(x, 32)
 

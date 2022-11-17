@@ -88,3 +88,11 @@ obj-$(CONFIG_QRTR)		+= qrtr/
 obj-$(CONFIG_NET_NCSI)		+= ncsi/
 obj-$(CONFIG_XDP_SOCKETS)	+= xdp/
 obj-$(CONFIG_MPTCP)		+= mptcp/
+
+#ifdef OPLUS_FEATURE_WIFI_CAPCENTER
+obj-$(CONFIG_OPLUS_FEATURE_WIFI_CAPCENTER) += oplus_wificapcenter/
+#endif /* OPLUS_FEATURE_WIFI_CAPCENTER */
+
+#ifdef OPLUS_FEATURE_WIFI_SLA
+obj-$(CONFIG_OPLUS_FEATURE_WIFI_SLA) += oplus_connectivity_sla/
+#endif /* OPLUS_FEATURE_WIFI_SLA */

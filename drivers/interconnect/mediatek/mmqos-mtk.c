@@ -312,11 +312,14 @@ static int mtk_mmqos_set(struct icc_node *src, struct icc_node *dst)
 				larb_node->old_peak_bw = src->peak_bw;
 				larb_node->old_avg_bw = src->avg_bw;
 			} else {
-				if (comm_port_node->hrt_type == HRT_DISP
-					&& gmmqos->dual_pipe_enable) {
+				if (comm_port_node->hrt_type == HRT_DISP) {
+					//&& gmmqos->dual_pipe_enable) {
 					chn_hrt_r_bw[comm_id][chnn_id] -= larb_node->old_peak_bw;
 					chn_hrt_r_bw[comm_id][chnn_id] += (src->peak_bw / 2);
 					larb_node->old_peak_bw = (src->peak_bw / 2);
+					if (log_level & 1 << log_bw)
+						pr_notice("%s disp comm_port_node dual_en=%d\n",
+						__func__, gmmqos->dual_pipe_enable);
 				} else {
 					chn_hrt_r_bw[comm_id][chnn_id] -= larb_node->old_peak_bw;
 					chn_hrt_r_bw[comm_id][chnn_id] += src->peak_bw;
@@ -397,11 +400,12 @@ static int mtk_mmqos_set(struct icc_node *src, struct icc_node *dst)
 		}
 		if (log_level & 1 << log_bw)
 			dev_notice(larb_node->larb_dev,
-				"larb=%d port=%d avg_bw:%d peak_bw:%d ostd=%#x\n",
+				"larb=%d port=%d avg:%d peak:%d ostd=%#x du_en=%d du_id=%d\n",
 				MTK_M4U_TO_LARB(src->id), MTK_M4U_TO_PORT(src->id),
 				icc_to_MBps(larb_port_node->base->icc_node->avg_bw),
 				icc_to_MBps(larb_port_node->base->icc_node->peak_bw),
-				value);
+				value, gmmqos->dual_pipe_enable, larb_node->dual_pipe_id);
+
 		//queue_work(mmqos->wq, &larb_node->work);
 		break;
 	default:
@@ -737,6 +741,7 @@ int mtk_mmqos_probe(struct platform_device *pdev)
 		memcpy(hrt, &mmqos_desc->hrt, sizeof(mmqos_desc->hrt));
 	pr_notice("[mmqos] ddr type: %d\n", mtk_dramc_get_ddr_type());
 
+	hrt->md_scen = mmqos_desc->md_scen;
 	mtk_mmqos_init_hrt(hrt);
 	mmqos->nb.notifier_call = update_mm_clk;
 	register_mmdvfs_notifier(&mmqos->nb);

@@ -30,7 +30,7 @@
 static struct layering_rule_ops l_rule_ops;
 static struct layering_rule_info_t l_rule_info;
 
-static DEFINE_SPINLOCK(hrt_table_lock);
+static DEFINE_MUTEX(hrt_table_lock);
 
 /* To backup for primary display drm_mtk_layer_config */
 static struct drm_mtk_layer_config *g_input_config;
@@ -113,9 +113,11 @@ static void layering_rule_scenario_decision(struct drm_device *dev,
 	if (scn_decision_flag & SCN_TRIPLE_DISP) {
 		l_rule_info.addon_scn[HRT_SECONDARY] = TRIPLE_DISP;
 		l_rule_info.addon_scn[HRT_THIRD] = TRIPLE_DISP;
+		l_rule_info.addon_scn[HRT_FOURTH] = TRIPLE_DISP;
 	} else {
 		l_rule_info.addon_scn[HRT_SECONDARY] = NONE;
 		l_rule_info.addon_scn[HRT_THIRD] = NONE;
+		l_rule_info.addon_scn[HRT_FOURTH] = NONE;
 	}
 /*TODO: need MMP support*/
 #ifdef IF_ZERO
@@ -329,7 +331,6 @@ static int layering_get_valid_hrt(struct drm_crtc *crtc, int mode_idx);
 static void copy_hrt_bound_table(struct drm_mtk_layering_info *disp_info,
 			int is_larb, int *hrt_table, struct drm_device *dev)
 {
-	unsigned long flags = 0;
 	int valid_num, ovl_bound, i;
 	struct drm_crtc *crtc;
 
@@ -343,7 +344,7 @@ static void copy_hrt_bound_table(struct drm_mtk_layering_info *disp_info,
 	}
 
 	/* update table if hrt bw is enabled */
-	spin_lock_irqsave(&hrt_table_lock, flags);
+	mutex_lock(&hrt_table_lock);
 	valid_num = layering_get_valid_hrt(crtc, disp_info->disp_mode_idx[0]);
 	ovl_bound = mtk_get_phy_layer_limit(
 		get_mapping_table(dev, 0, DISP_HW_LAYER_TB, MAX_PHY_OVL_CNT));
@@ -351,7 +352,7 @@ static void copy_hrt_bound_table(struct drm_mtk_layering_info *disp_info,
 
 	for (i = 0; i < HRT_LEVEL_NUM; i++)
 		emi_bound_table[l_rule_info.bound_tb_idx][i] = valid_num;
-	spin_unlock_irqrestore(&hrt_table_lock, flags);
+	mutex_unlock(&hrt_table_lock);
 
 	for (i = 0; i < HRT_LEVEL_NUM; i++)
 		hrt_table[i] = emi_bound_table[l_rule_info.bound_tb_idx][i];
@@ -534,19 +535,21 @@ static int layering_get_valid_hrt(struct drm_crtc *crtc, int mode_idx)
 
 	dvfs_bw *= 10000;
 
+	DDPDBG("%s mode_idx:%d->%d\n", __func__, mtk_crtc->mode_idx, mode_idx);
 	output_comp = mtk_ddp_comp_request_output(mtk_crtc);
-	if (mode_idx == mtk_crtc->mode_idx) {
+	if (!mtk_crtc->res_switch) {
 		if (output_comp)
 			mtk_ddp_comp_io_cmd(output_comp, NULL,
 				GET_FRAME_HRT_BW_BY_DATARATE, &tmp);
 	} else {
-		DDPMSG("%s mode_idx:%d->%d\n", __func__,
-			mtk_crtc->mode_idx, mode_idx);
+		DDPDBG("%s mode_idx:%d\n", __func__, mode_idx);
 		mtk_crtc->mode_idx = mode_idx;
+		tmp = mode_idx;
 		if (output_comp)
 			mtk_ddp_comp_io_cmd(output_comp, NULL,
 				GET_FRAME_HRT_BW_BY_MODE, &tmp);
 	}
+
 	if (!tmp) {
 		DDPPR_ERR("Get frame hrt bw by datarate is zero\n");
 		return 600;

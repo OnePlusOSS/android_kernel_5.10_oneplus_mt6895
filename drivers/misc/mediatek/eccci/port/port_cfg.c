@@ -8,6 +8,7 @@
 #include "ccci_hif.h"
 #include "port_cfg.h"
 
+extern int port_md_gen;
 #define EXP_CTRL_Q		6
 #define DATA_TX_Q		0
 #define DATA_RX_Q		0
@@ -193,19 +194,19 @@ static struct port_t md1_ccci_ports[] = {
 		MD1_NORMAL_HIF, 0,
 		&ccci_udc_port_ops, 30, "ccci_udc",},
 	{CCCI_WIFI_TX, CCCI_WIFI_RX, 1, 1, 0xFF, 0xFF,
-		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE,
+		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE|PORT_F_GEN95_NOT_SUPPORT,
 		&char_port_ops, 31, "ccci_wifi_proxy",},
 	{CCCI_VTS_TX, CCCI_VTS_RX, 3, 3, 0xFF, 0xFF,
-		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE,
+		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE|PORT_F_GEN95_NOT_SUPPORT,
 		&char_port_ops, 32, "ccci_vts",},
 	{CCCI_MD_DIRC_TX, CCCI_MD_DIRC_RX, 1, 1, 0xFF, 0xFF,
-		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE,
+		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE|PORT_F_GEN95_NOT_SUPPORT,
 		&char_port_ops, 33, "ccci_0_200",},
 	{CCCI_TIME_TX, CCCI_TIME_RX, 1, 1, 0xFF, 0xFF,
-		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE,
+		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE|PORT_F_GEN95_NOT_SUPPORT,
 		&char_port_ops, 34, "ccci_0_202",},
 	{CCCI_GARB_TX, CCCI_GARB_RX, 1, 1, 0xFF, 0xFF,
-		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE,
+		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE|PORT_F_GEN95_NOT_SUPPORT,
 		&char_port_ops, 35, "ccci_0_204",},
 	{CCCI_IKERAW_TX, CCCI_IKERAW_RX, 1, 1, 0xFF, 0xFF,
 		MD1_NORMAL_HIF, PORT_F_WITH_CHAR_NODE,
@@ -493,14 +494,23 @@ int port_get_cfg(int md_id, struct port_t **ports)
 int mtk_ccci_request_port(char *name)
 {
 	int i;
-
 	for (i = 0; i < ARRAY_SIZE(md1_ccci_ports); i++) {
 		if (!strcmp(md1_ccci_ports[i].name, name))
-			return i;
-
+			break;
 	}
-	CCCI_ERROR_LOG(-1, PORT, "can not find port %s", name);
-	return -1;
+	if (i == ARRAY_SIZE(md1_ccci_ports)) {
+		CCCI_ERROR_LOG(-1, PORT, "can not find port %s", name);
+		return -1;
+	}
+
+	if ((port_md_gen < 6297) && (md1_ccci_ports[i].flags & PORT_F_GEN95_NOT_SUPPORT)) {
+		CCCI_ERROR_LOG(-1, PORT, "%s:not support %s  md_gen = %d\n",
+				__func__, md1_ccci_ports[i].name, port_md_gen);
+		return -1;
+	}
+
+	return i;
+
 }
 EXPORT_SYMBOL(mtk_ccci_request_port);
 

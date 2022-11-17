@@ -24,7 +24,10 @@
 
 #include "u_ether.h"
 #include "rndis.h"
+
+#if IS_ENABLED(CONFIG_MTK_NET_RPS)
 #include "rps_perf.h"
+#endif
 
 /*
  * This component encapsulates the Ethernet link glue needed to provide
@@ -844,24 +847,6 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 		/* ignores USB_CDC_PACKET_TYPE_DIRECTED */
 	}
 
-	/*
-	 * No buffer copies needed, unless the network stack did it
-	 * or the hardware can't use skb buffers or there's not enough
-	 * enough space for extra headers we need.
-	 */
-	spin_lock_irqsave(&dev->lock, flags);
-	if (dev->wrap && dev->port_usb)
-		skb = dev->wrap(dev->port_usb, skb);
-	spin_unlock_irqrestore(&dev->lock, flags);
-
-	if (!skb) {
-		if (!dev->port_usb->supports_multi_frame)
-			dev->net->stats.tx_dropped++;
-		/* no error code for dropped packets */
-		U_ETHER_DBG("%s - skb dropped\n", __func__);
-		return NETDEV_TX_OK;
-	}
-
 	spin_lock_irqsave(&dev->req_lock, flags);
 
     /* Allocate memory for tx_reqs to support multi packet transfer */
@@ -897,7 +882,7 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	if (list_empty(&dev->tx_reqs)) {
 		busyCnt++;
 		if (__ratelimit(&ratelimit2))
-			U_ETHER_DBG("okCnt : %u, busyCnt : %u\n",
+			U_ETHER_DBG("okCnt : %lu, busyCnt : %lu\n",
 					okCnt, busyCnt);
 		spin_unlock_irqrestore(&dev->req_lock, flags);
 		rndis_test_tx_busy++;
@@ -919,6 +904,24 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	if (dev->port_usb == NULL) {
 		dev_kfree_skb_any(skb);
 		U_ETHER_DBG("port_usb NULL\n");
+		return NETDEV_TX_OK;
+	}
+
+	/*
+	 * No buffer copies needed, unless the network stack did it
+	 * or the hardware can't use skb buffers or there's not enough
+	 * space for extra headers we need.
+	 */
+	spin_lock_irqsave(&dev->lock, flags);
+	if (dev->wrap && dev->port_usb)
+		skb = dev->wrap(dev->port_usb, skb);
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	if (!skb) {
+		if (!dev->port_usb->supports_multi_frame)
+			dev->net->stats.tx_dropped++;
+		/* no error code for dropped packets */
+		U_ETHER_DBG("%s - skb dropped\n", __func__);
 		return NETDEV_TX_OK;
 	}
 
@@ -1166,8 +1169,12 @@ static void set_rps_map_work(struct work_struct *work)
 	if (!dev->port_usb)
 		return;
 
+#if IS_ENABLED(CONFIG_MTK_NET_RPS)
 	pr_info("%s - set rps to 0xff\n", __func__);
 	set_rps_map(dev->net->_rx, 0xff);
+#else
+	pr_info("%s - cannot set rps, CONFIG_MTK_NET_RPS is not set\n", __func__);
+#endif
 }
 
 /* defined but not used due to MAC customization */
@@ -1398,6 +1405,7 @@ int mtk_gether_set_dev_addr(struct net_device *net, const char *dev_addr)
 	struct eth_dev *dev;
 	u8 new_addr[ETH_ALEN];
 
+	memset(new_addr, 0, ETH_ALEN);
 	dev = netdev_priv(net);
 	if (get_ether_addr(dev_addr, new_addr))
 		return -EINVAL;
@@ -1420,6 +1428,7 @@ int mtk_gether_set_host_addr(struct net_device *net, const char *host_addr)
 	struct eth_dev *dev;
 	u8 new_addr[ETH_ALEN];
 
+	memset(new_addr, 0, ETH_ALEN);
 	dev = netdev_priv(net);
 	if (get_ether_addr(host_addr, new_addr))
 		return -EINVAL;

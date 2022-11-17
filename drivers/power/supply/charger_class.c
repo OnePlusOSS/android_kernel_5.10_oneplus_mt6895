@@ -331,8 +331,8 @@ EXPORT_SYMBOL(charger_dev_get_mivr);
 int charger_dev_enable_powerpath(struct charger_device *chg_dev, bool en)
 {
 	if (chg_dev != NULL && chg_dev->ops != NULL &&
-	    chg_dev->ops->enable_powerpath)
-		return chg_dev->ops->enable_powerpath(chg_dev, en);
+		chg_dev->ops->enable_powerpath)
+			return chg_dev->ops->enable_powerpath(chg_dev, en);
 
 	return -EOPNOTSUPP;
 }

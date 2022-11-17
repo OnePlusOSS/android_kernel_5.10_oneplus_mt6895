@@ -346,7 +346,7 @@ static inline int of_mml_read_comp_count(const struct device_node *np,
 static int comp_master_init(struct device *dev, struct mml_dev *mml)
 {
 	struct component_match *match = NULL;
-	u32 comp_count;
+	u32 comp_count = 0;
 	ulong i;
 	int ret;
 
@@ -576,6 +576,7 @@ s32 mml_comp_pw_disable(struct mml_comp *comp)
 s32 mml_comp_clk_enable(struct mml_comp *comp)
 {
 	u32 i;
+	int ret;
 
 	comp->clk_cnt++;
 	if (comp->clk_cnt > 1)
@@ -589,7 +590,9 @@ s32 mml_comp_clk_enable(struct mml_comp *comp)
 	for (i = 0; i < ARRAY_SIZE(comp->clks); i++) {
 		if (IS_ERR(comp->clks[i]))
 			break;
-		clk_prepare_enable(comp->clks[i]);
+		ret = clk_prepare_enable(comp->clks[i]);
+		if (ret)
+			mml_err("%s clk_prepare_enable fail %d", __func__, ret);
 	}
 
 	return 0;
@@ -666,7 +669,11 @@ void mml_comp_qos_set(struct mml_comp *comp, struct mml_task *task,
 	bool hrt;
 
 	datasize = comp->hw_ops->qos_datasize_get(task, ccfg);
-	if (cfg->info.mode == MML_MODE_RACING) {
+	if (!datasize) {
+		hrt = false;
+		bandwidth = 0;
+		hrt_bw = 0;
+	} else if (cfg->info.mode == MML_MODE_RACING) {
 		hrt = true;
 		bandwidth = mml_calc_bw_racing(datasize);
 		if (unlikely(mml_racing_urgent))

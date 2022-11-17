@@ -184,7 +184,8 @@ static void mt6375_irq_lock(struct irq_data *data)
 static void mt6375_irq_sync_unlock(struct irq_data *data)
 {
 	struct mt6375_data *ddata = irq_data_get_irq_chip_data(data);
-	int idx = data->hwirq / 8, ret;
+	int ret = 0;
+	unsigned long idx = data->hwirq / 8;
 
 	ret = regmap_write(ddata->rmap, MT6375_REG_CHG_MSK0 + idx,
 			   ddata->mask_buf[idx]);
@@ -304,6 +305,7 @@ static int mt6375_add_irq_chip(struct mt6375_data *ddata)
 	ddata->irq_chip.irq_bus_sync_unlock = mt6375_irq_sync_unlock;
 	ddata->irq_chip.irq_disable = mt6375_irq_disable;
 	ddata->irq_chip.irq_enable = mt6375_irq_enable;
+	ddata->irq_chip.flags = IRQCHIP_SKIP_SET_WAKE;
 
 	ddata->domain = irq_domain_add_linear(ddata->dev->of_node,
 					      MT6375_IRQ_REGS * 8,
@@ -430,12 +432,17 @@ static int __maybe_unused mt6375_suspend(struct device *dev)
 
 	if (device_may_wakeup(dev))
 		enable_irq_wake(i2c->irq);
+
+	disable_irq(i2c->irq);
+
 	return 0;
 }
 
 static int __maybe_unused mt6375_resume(struct device *dev)
 {
 	struct i2c_client *i2c = to_i2c_client(dev);
+
+	enable_irq(i2c->irq);
 
 	if (device_may_wakeup(dev))
 		disable_irq_wake(i2c->irq);

@@ -363,6 +363,7 @@ obj-$(CONFIG_SND_SOC_AK5558)	+= snd-soc-ak5558.o
 obj-$(CONFIG_SND_SOC_ALC5623)    += snd-soc-alc5623.o
 obj-$(CONFIG_SND_SOC_ALC5632)	+= snd-soc-alc5632.o
 obj-$(CONFIG_SND_SOC_ARIZONA)	+= snd-soc-arizona.o
+obj-$(CONFIG_SND_SOC_AW883XX)	+= aw883xx/
 obj-$(CONFIG_SND_SOC_BD28623)	+= snd-soc-bd28623.o
 obj-$(CONFIG_SND_SOC_BT_SCO)	+= snd-soc-bt-sco.o
 obj-$(CONFIG_SND_SOC_CQ0093VC) += snd-soc-cq93vc.o
@@ -459,6 +460,7 @@ obj-$(CONFIG_SND_SOC_MT6366)	+= snd-soc-mt6366.o
 obj-$(CONFIG_SND_SOC_MT6368)	+= snd-soc-mt6368.o
 obj-$(CONFIG_SND_SOC_MT6369)	+= snd-soc-mt6369.o
 obj-$(CONFIG_SND_SOC_MT6359P_ACCDET) += mt6359p-accdet.o
+obj-$(CONFIG_SND_SOC_MT6366_ACCDET) += mt6358-accdet.o
 obj-$(CONFIG_SND_SOC_MT6368_ACCDET) += mt6368-accdet.o
 obj-$(CONFIG_SND_SOC_MT6369_ACCDET) += mt6369-accdet.o
 obj-$(CONFIG_SND_SOC_NAU8540)   += snd-soc-nau8540.o
@@ -549,7 +551,10 @@ obj-$(CONFIG_SND_SOC_TAS5720)	+= snd-soc-tas5720.o
 obj-$(CONFIG_SND_SOC_TAS6424)	+= snd-soc-tas6424.o
 obj-$(CONFIG_SND_SOC_TDA7419)	+= snd-soc-tda7419.o
 obj-$(CONFIG_SND_SOC_TAS2770) += snd-soc-tas2770.o
-obj-$(CONFIG_SND_SOC_TFA9874)	+= tfa98xx/
+#ifdef OPLUS_ARCH_EXTENDS
+#obj-$(CONFIG_SND_SOC_TFA9874)	+= tfa98xx/
+obj-m	+= audio/
+#endif /* OPLUS_ARCH_EXTENDS */
 obj-$(CONFIG_SND_SOC_AA006)	+= aa006/
 obj-$(CONFIG_SND_SOC_BB007)	+= bb007/
 obj-$(CONFIG_SND_SOC_TFA9879)	+= snd-soc-tfa9879.o

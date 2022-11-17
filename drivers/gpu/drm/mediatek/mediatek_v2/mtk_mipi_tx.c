@@ -128,7 +128,6 @@
 #define MIPITX_LANE_CON_MT6983 (0x0004UL)
 #define MIPITX_VOLTAGE_SEL_MT6983 (0x0008UL)
 #define FLD_RG_DSI_PRD_REF_SEL (0x3f << 0)
-#define FLD_RG_DSI_V2I_REF_SEL (0xf << 10)
 #define MIPITX_PRESERVED_MT6983 (0x000CUL)
 
 #define RG_DSI_PLL_SDM_PCW_CHG_MT6983 BIT(2)
@@ -201,6 +200,11 @@
 #define MIPITX_D3C_SW_LPTX_PRE_OE_MT6983	(0x0580UL)
 #define MIPITX_CK_SW_LPTX_PRE_OE_MT6983	(0x0360UL)
 #define MIPITX_CKC_SW_LPTX_PRE_OE_MT6983	(0x0380UL)
+
+
+
+extern unsigned int oplus_enhance_mipi_strength;
+/*#endif*/
 
 enum MIPITX_PAD_VALUE {
 	PAD_D2P_T0A = 0,
@@ -1112,6 +1116,32 @@ unsigned int _dsi_get_pcw(unsigned long data_rate,
 	return tmp;
 }
 
+unsigned int _dsi_get_pcw_khz(unsigned long data_rate_khz,
+	unsigned int pcw_ratio)
+{
+	unsigned int pcw, tmp, pcw_floor;
+	u32 clk_26m = 26000;
+
+	/**
+	 * PCW bit 24~30 = floor(pcw)
+	 * PCW bit 16~23 = (pcw - floor(pcw))*256
+	 * PCW bit 8~15 = (pcw*256 - floor(pcw)*256)*256
+	 * PCW bit 0~7 = (pcw*256*256 - floor(pcw)*256*256)*256
+	 */
+	if (data_rate_khz == (data_rate_khz / 1000 * 1000)) {
+		pr_info("[%s]Error: this function only used for khz, used _dsi_get_pcw!!\n");
+		return _dsi_get_pcw(data_rate_khz / 1000, pcw_ratio);
+	}
+
+	pcw = data_rate_khz * pcw_ratio / clk_26m;
+	pcw_floor = data_rate_khz * pcw_ratio % clk_26m;
+	tmp = ((pcw & 0xFF) << 24) | (((256 * pcw_floor / clk_26m) & 0xFF) << 16) |
+		(((256 * (256 * pcw_floor % clk_26m) / clk_26m) & 0xFF) << 8) |
+		((256 * (256 * (256 * pcw_floor % clk_26m) % clk_26m) / clk_26m) & 0xFF);
+
+	return tmp;
+}
+
 static int mtk_mipi_tx_pll_prepare_mt6779(struct clk_hw *hw)
 {
 	struct mtk_mipi_tx *mipi_tx = mtk_mipi_tx_from_clk_hw(hw);
@@ -1368,15 +1398,11 @@ static int mtk_mipi_tx_pll_prepare_mt6983(struct clk_hw *hw)
 		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL_MT6983,
 			FLD_RG_DSI_PRD_REF_SEL, 0x4);
 
-	if (rate > 2000)
+	if (oplus_enhance_mipi_strength == 1) {
 		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL_MT6983,
-			FLD_RG_DSI_V2I_REF_SEL, 0x4);
-	else if (rate > 1200)
-		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL_MT6983,
-			FLD_RG_DSI_V2I_REF_SEL, 0x2);
-	else
-		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL_MT6983,
-			FLD_RG_DSI_V2I_REF_SEL, 0x0);
+			FLD_RG_DSI_HSTX_LDO_REF_SEL, 0xF << 6);
+	}
+	/*#endif*/
 
 	writel(0x0, mipi_tx->regs + MIPITX_PRESERVED_MT6983);
 	writel(0x00FF12E0, mipi_tx->regs + MIPITX_PLL_CON4);
@@ -2770,7 +2796,7 @@ void mtk_mipi_tx_pll_rate_switch_gce(struct phy *phy,
 	DDPINFO("%s-\n", __func__);
 }
 
-void mtk_mipi_tx_pll_rate_switch_gce_mt6895(struct phy *phy,
+void mtk_mipi_tx_pll_rate_switch_gce_mt6983(struct phy *phy,
 		void *handle, unsigned long rate)
 {
 	struct mtk_mipi_tx *mipi_tx = phy_get_drvdata(phy);
@@ -3292,19 +3318,21 @@ static int mtk_mipi_tx_probe(struct platform_device *pdev)
 
 	mipi_tx->cmdq_base = cmdq_register_device(dev);
 
-	ref_clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(ref_clk)) {
-		ret = PTR_ERR(ref_clk);
-		dev_err(dev, "Failed to get reference clock: %d\n", ret);
-		return ret;
-	}
-	ref_clk_name = __clk_get_name(ref_clk);
+	if (disp_helper_get_stage() == DISP_HELPER_STAGE_NORMAL) {
+		ref_clk = devm_clk_get(dev, NULL);
+		if (IS_ERR(ref_clk)) {
+			ret = PTR_ERR(ref_clk);
+			dev_err(dev, "Failed to get reference clock: %d\n", ret);
+				return ret;
+		}
+		ref_clk_name = __clk_get_name(ref_clk);
 
-	ret = of_property_read_string(dev->of_node, "clock-output-names",
-				      &clk_init.name);
-	if (ret < 0) {
-		dev_err(dev, "Failed to read clock-output-names: %d\n", ret);
-		return ret;
+		ret = of_property_read_string(dev->of_node, "clock-output-names",
+					      &clk_init.name);
+		if (ret < 0) {
+			dev_err(dev, "Failed to read clock-output-names: %d\n", ret);
+			return ret;
+		}
 	}
 
 	mtk_mipi_tx_pll_ops.prepare = mipi_tx->driver_data->pll_prepare;
@@ -3470,7 +3498,7 @@ static const struct mtk_mipitx_data mt6983_mipitx_data = {
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN_MT6983,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN_MT6983,
 	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
-	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
+	.d3_sw_ctl_en = MIPITX_D3_SW_CTL_EN_MT6983,
 	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE_MT6983,
 	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE_MT6983,
 	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE_MT6983,
@@ -3487,6 +3515,7 @@ static const struct mtk_mipitx_data mt6983_mipitx_data = {
 	.backup_mipitx_impedance = backup_mipitx_impedance_mt6983,
 	.refill_mipitx_impedance = refill_mipitx_impedance_mt6983,
 	.mipi_tx_ssc_en = mtk_mipi_tx_ssc_en,
+	.pll_rate_switch_gce = mtk_mipi_tx_pll_rate_switch_gce_mt6983,
 };
 
 static const struct mtk_mipitx_data mt6895_mipitx_data = {
@@ -3498,7 +3527,7 @@ static const struct mtk_mipitx_data mt6895_mipitx_data = {
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN_MT6983,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN_MT6983,
 	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
-	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
+	.d3_sw_ctl_en = MIPITX_D3_SW_CTL_EN_MT6983,
 	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE_MT6983,
 	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE_MT6983,
 	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE_MT6983,
@@ -3514,8 +3543,8 @@ static const struct mtk_mipitx_data mt6895_mipitx_data = {
 	.dsi_get_pcw = _dsi_get_pcw_mt6983,
 	.backup_mipitx_impedance = backup_mipitx_impedance_mt6983,
 	.refill_mipitx_impedance = refill_mipitx_impedance_mt6983,
-	.pll_rate_switch_gce = mtk_mipi_tx_pll_rate_switch_gce_mt6895,
 	.mipi_tx_ssc_en = mtk_mipi_tx_ssc_en,
+	.pll_rate_switch_gce = mtk_mipi_tx_pll_rate_switch_gce_mt6983,
 };
 
 static const struct mtk_mipitx_data mt6983_mipitx_cphy_data = {
@@ -3527,7 +3556,7 @@ static const struct mtk_mipitx_data mt6983_mipitx_cphy_data = {
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN_MT6983,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN_MT6983,
 	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
-	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
+	.d3_sw_ctl_en = MIPITX_D3_SW_CTL_EN_MT6983,
 	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE_MT6983,
 	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE_MT6983,
 	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE_MT6983,
@@ -3554,7 +3583,7 @@ static const struct mtk_mipitx_data mt6895_mipitx_cphy_data = {
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN_MT6983,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN_MT6983,
 	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
-	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN_MT6983,
+	.d3_sw_ctl_en = MIPITX_D3_SW_CTL_EN_MT6983,
 	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE_MT6983,
 	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE_MT6983,
 	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE_MT6983,
@@ -3767,7 +3796,7 @@ static const struct mtk_mipitx_data mt6855_mipitx_data = {
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN,
 	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN,
-	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN,
+	.d3_sw_ctl_en = MIPITX_D3_SW_CTL_EN,
 	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE,
 	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE,
 	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE,
@@ -3795,7 +3824,7 @@ static const struct mtk_mipitx_data mt6855_mipitx_cphy_data = {
 	.d0_sw_ctl_en = MIPITX_D0_SW_CTL_EN,
 	.d1_sw_ctl_en = MIPITX_D1_SW_CTL_EN,
 	.d2_sw_ctl_en = MIPITX_D2_SW_CTL_EN,
-	.d3_sw_ctl_en = MIPITX_D2_SW_CTL_EN,
+	.d3_sw_ctl_en = MIPITX_D3_SW_CTL_EN,
 	.d0_sw_lptx_pre_oe = MIPITX_D0_SW_LPTX_PRE_OE,
 	.d0c_sw_lptx_pre_oe = MIPITX_D0C_SW_LPTX_PRE_OE,
 	.d1_sw_lptx_pre_oe = MIPITX_D1_SW_LPTX_PRE_OE,
@@ -3857,7 +3886,7 @@ static const struct of_device_id mtk_mipi_tx_match[] = {
 	{.compatible = "mediatek,mt6879-mipi-tx", .data = &mt6879_mipitx_data},
 	{.compatible = "mediatek,mt6855-mipi-tx", .data = &mt6855_mipitx_data},
 	{.compatible = "mediatek,mt6789-mipi-tx-cphy",
-		.data = &mt6879_mipitx_cphy_data},
+		.data = &mt6789_mipitx_cphy_data},
 	{.compatible = "mediatek,mt6873-mipi-tx-cphy",
 		.data = &mt6873_mipitx_cphy_data},
 	{.compatible = "mediatek,mt6879-mipi-tx-cphy",
