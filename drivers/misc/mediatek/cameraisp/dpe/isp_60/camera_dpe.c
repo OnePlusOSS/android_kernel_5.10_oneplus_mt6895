@@ -1934,19 +1934,7 @@ void cmdq_cb_destroy(struct cmdq_cb_data data)
 		kfree((struct tee_mmu *)data.data);
 	}
 }
-struct sg_table *dpe_dma_buf_map_attachment(struct dma_buf_attachment *attach,
-					enum dma_data_direction direction)
-{
-	struct sg_table *sg_table;
 
-	might_sleep();
-	if (WARN_ON(!attach || !attach->dmabuf))
-		return ERR_PTR(-EINVAL);
-	sg_table = attach->dmabuf->ops->map_dma_buf(attach, direction);
-	if (!sg_table)
-		sg_table = ERR_PTR(-ENOMEM);
-	return sg_table;
-}
 static bool dpe_get_dma_buffer(struct tee_mmu *mmu, int fd)
 {
 	struct dma_buf *buf;
@@ -4157,6 +4145,7 @@ static signed int DPE_open(struct inode *pInode, struct file *pFile)
 	}
 	/* Enable clock */
 	DPE_EnableClock(MTRUE);
+	cmdq_mbox_enable(dpe_clt->chan);
 	g_SuspendCnt = 0;
 	LOG_INF("DPE open g_u4EnableClockCount: %d", g_u4EnableClockCount);
 	/*  */
@@ -4200,6 +4189,8 @@ static signed int DPE_release(struct inode *pInode, struct file *pFile)
 	/*  */
 	LOG_INF("Curr UsrCnt(%d), (process, pid, tgid)=(%s, %d, %d), last user",
 		DPEInfo.UserCount, current->comm, current->pid, current->tgid);
+
+	cmdq_mbox_disable(dpe_clt->chan);
 	/* Disable clock. */
 	DPE_EnableClock(MFALSE);
 	LOG_DBG("DPE release g_u4EnableClockCount: %d", g_u4EnableClockCount);

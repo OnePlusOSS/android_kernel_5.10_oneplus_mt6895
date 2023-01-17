@@ -860,7 +860,7 @@ static int ___tick_broadcast_oneshot_control(enum tick_broadcast_state state,
 	ktime_t now;
 #if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
 	uint64_t enter_offset = 0;
-	int i = 0, need_dump = 0, set_event = 0;
+	int need_dump = 0, set_event = 0;
 	unsigned long long now_sched_clock = sched_clock();
 #endif
 
@@ -1015,11 +1015,13 @@ out:
 		enter_offset = now_sched_clock -
 			tick_broadcast_enter_prev;
 		if (enter_offset > 5000) {
+			int i = 0;
+
 			tick_broadcast_enter_prev =
 				now_sched_clock;
 			need_dump = true;
 
-			for_each_possible_cpu(i) {
+			for (i = 0; i < NR_CPUS; i++) {
 				/* to avoid unexpected overrun */
 				if (i >= num_possible_cpus())
 					break;
@@ -1050,6 +1052,8 @@ out:
 	raw_spin_unlock(&tick_broadcast_lock);
 #if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
 	if (need_dump) {
+		int i = 0;
+
 		reset_bc_dump_buf(bc_dump_buf);
 
 		bc_dump_buf_append(bc_dump_buf,
@@ -1058,7 +1062,7 @@ out:
 		bc_dump_buf_append(bc_dump_buf,
 			"enter counter cpu: ");
 
-		for_each_possible_cpu(i) {
+		for (i = 0; i < NR_CPUS; i++) {
 			/* to avoid unexpected overrun */
 			if (i >= num_possible_cpus())
 				break;
@@ -1069,7 +1073,7 @@ out:
 		bc_dump_buf_append(bc_dump_buf,
 			"success counter cpu: ");
 
-		for_each_possible_cpu(i) {
+		for (i = 0; i < NR_CPUS; i++) {
 			/* to avoid unexpected overrun */
 			if (i >= num_possible_cpus())
 				break;
@@ -1080,7 +1084,7 @@ out:
 		bc_dump_buf_append(bc_dump_buf,
 			"fail counter cpu: ");
 
-		for_each_possible_cpu(i) {
+		for (i = 0; i < NR_CPUS; i++) {
 			/* to avoid unexpected overrun */
 			if (i >= num_possible_cpus())
 				break;
@@ -1091,7 +1095,7 @@ out:
 		bc_dump_buf_append(bc_dump_buf,
 			"interrupt counter cpu: ");
 
-		for_each_possible_cpu(i) {
+		for (i = 0; i < NR_CPUS; i++) {
 			/* to avoid unexpected overrun */
 			if (i >= num_possible_cpus())
 				break;
@@ -1110,8 +1114,12 @@ out:
 			cpumask_pr_args(&_tb_dbg_force_mask));
 		bc_dump_buf_append(bc_dump_buf,
 			", t: ");
-		for_each_possible_cpu(i) {
+		for (i = 0; i < NR_CPUS; i++) {
 			struct tick_device *td;
+
+			/* to avoid unexpected overrun */
+			if (i >= num_possible_cpus())
+				break;
 
 			td = &per_cpu(tick_cpu_device, i);
 			if (!td || !td->evtdev) {

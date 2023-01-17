@@ -94,6 +94,9 @@ static struct xo_buf_t xo_bufs[XO_NUM] = {
 		.xo_en_auxout_sel = 6,
 		.in_use = 1,
 	},
+	[XO_RSV1] = {
+		.in_use = 0,
+	},
 	[XO_RSV2] = {
 		MT6366_SET_REG_BY_NAME(xo_mode, XO_EXTBUF6_MODE)
 		MT6366_SET_REG_BY_NAME(xo_en, XO_EXTBUF6_EN_M)
@@ -101,7 +104,7 @@ static struct xo_buf_t xo_bufs[XO_NUM] = {
 		MT6366_SET_REG_BY_NAME(drv_curr, RG_XO_EXTBUF6_ISET)
 		MT6366_SET_REG_BY_NAME(hwbblpm_msk, XO_EXTBUF6_BBLPM_EN_MASK)
 		.xo_en_auxout_sel = 7,
-		.in_use = 1,
+		.in_use = 0,
 	},
 	[XO_EXT] = {
 		MT6366_SET_REG_BY_NAME(xo_mode, XO_EXTBUF7_MODE)
@@ -125,6 +128,9 @@ struct dcxo_hw mt6366_dcxo = {
 	SET_REG(bblpm_auxout, MT6366_XO_STATIC_AUXOUT_ADDR, 0x1, 5)
 	MT6366_SET_REG_BY_NAME(swbblpm_en, XO_BB_LPM_EN_M)
 	MT6366_SET_REG_BY_NAME(hwbblpm_sel, XO_BB_LPM_EN_SEL)
+	MT6366_SET_REG_BY_NAME(xo_cdac_fpm, XO_CDAC_FPM)
+	MT6366_SET_REG_BY_NAME(xo_aac_fpm_swen, XO_AAC_FPM_SWEN)
+	MT6366_SET_REG_BY_NAME(xo_heater_sel, RG_XO_HEATER_SEL)
 	.ops = {
 		.dcxo_dump_reg_log = mt6366_dcxo_dump_reg_log,
 	},
@@ -140,12 +146,10 @@ static int mt6366_dcxo_dump_reg_log(char *buf)
 		if (clk_buf_read(&mt6366_dcxo.hw,
 				((struct reg_t *)&debug_reg) + i, &val))
 			goto DUMP_REG_LOG_FAILED;
-		len += snprintf(buf+len, PAGE_SIZE - len, "DCXO_CW%2d=0x%x, ",
+		len += snprintf(buf + len, PAGE_SIZE - len, "DCXO_CW%2d=0x%x, ",
 				mt6366_debug_regs_index[i], val);
 	}
-	return len;
 DUMP_REG_LOG_FAILED:
-	len -= 2;
 	len += snprintf(buf + len, PAGE_SIZE - len, "\n");
 	return len;
 }

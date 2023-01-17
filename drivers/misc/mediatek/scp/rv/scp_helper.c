@@ -28,6 +28,7 @@
 #include <linux/of_fdt.h>
 #include <linux/ioport.h>
 #include <linux/io.h>
+#include <linux/debugfs.h>
 //#include <mt-plat/sync_write.h>
 //#include <mt-plat/aee.h>
 #include <linux/delay.h>
@@ -64,6 +65,8 @@
 #define SCP_A_TIMER 0
 unsigned int debug_timeout_reset_flag;
 
+#define DEBUG_CMD_BUFFER_SZ  0x40000
+
 /* scp ipi message buffer */
 uint32_t msg_scp_ready0, msg_scp_ready1;
 char msg_scp_err_info0[40], msg_scp_err_info1[40];
@@ -74,6 +77,8 @@ unsigned int scp_ready[SCP_CORE_TOTAL];
 /* scp enable status*/
 unsigned int scp_enable[SCP_CORE_TOTAL];
 
+bool system_shutdown;
+
 /* scp dvfs variable*/
 unsigned int last_scp_expected_freq;
 unsigned int scp_expected_freq;
@@ -82,8 +87,6 @@ unsigned int scp_dvfs_cali_ready;
 
 /*scp awake variable*/
 int scp_awake_counts[SCP_CORE_TOTAL];
-/* debug flag for Dump timeout*/
-unsigned int debug_dumptimeout_flag;
 
 unsigned int scp_recovery_flag[SCP_CORE_TOTAL];
 #define SCP_A_RECOVERY_OK	0x44
@@ -470,6 +473,8 @@ void scp_A_register_notify(struct notifier_block *nb)
 	case SCP_EVENT_READY:
 		nb->notifier_call(nb, SCP_EVENT_READY, NULL);
 		pr_debug("%s callback finished\n", __func__);
+		/* when scp ready also need add scp_A_notifier_list to register */
+		fallthrough;
 	case SCP_EVENT_STOP:
 		blocking_notifier_chain_register(&scp_A_notifier_list, nb);
 		pr_debug("%s register finished\n", __func__);
@@ -553,7 +558,25 @@ static void scp_A_notify_ws(struct work_struct *ws)
 
 #if SCP_DVFS_INIT_ENABLE
 		if (scp_dvfs_feature_enable()) {
-			sync_ulposc_cali_data_to_scp();
+			uint32_t cali_times = 0;
+
+			while (!sync_ulposc_cali_data_to_scp()) {
+				/*
+				 * Although notify_ipi has been sent,
+				 * the scp seems stop again, try to wait WDT.
+				 */
+				pr_notice("[SCP] cali #%d fail\n", ++cali_times);
+				msleep(2000);
+				if (atomic_read(&scp_reset_status) == RESET_STATUS_START_WDT ||
+					cali_times >= 20) {
+					pr_notice("[SCP] cali fail, do recovery\n");
+					atomic_set(&scp_reset_status, RESET_STATUS_START);
+					scp_send_reset_wq(RESET_TYPE_WDT);
+					return;
+				}
+			}
+			/* release pll clock after scp ulposc ready */
+			scp_pll_ctrl_set(PLL_DISABLE, CLK_26M);
 
 			/*
 			 * Calling sync_ulposc_cali_data_to_scp() will resets the frequency request
@@ -567,9 +590,6 @@ static void scp_A_notify_ws(struct work_struct *ws)
 					WARN_ON(1);
 				}
 			}
-
-			/* release pll clock after scp ulposc calibration */
-			scp_pll_ctrl_set(PLL_DISABLE, CLK_26M);
 		}
 #endif
 
@@ -1148,6 +1168,57 @@ static struct miscdevice scp_device = {
 #endif
 };
 
+static ssize_t scp_debug_read(struct file *filp, char __user *buf,
+			      size_t count, loff_t *pos)
+{
+	char *buffer = NULL;
+	size_t n = 0, size = 0;
+
+	/* use logger memory (offset from end) */
+	buffer = (char *)scp_get_reserve_mem_virt(SCP_A_LOGGER_MEM_ID);
+	size = scp_get_reserve_mem_size(SCP_A_LOGGER_MEM_ID);
+
+	if (buffer && (size > DEBUG_CMD_BUFFER_SZ)) {
+		buffer = buffer + size - DEBUG_CMD_BUFFER_SZ;
+		n = strnlen(buffer, DEBUG_CMD_BUFFER_SZ);
+	}
+
+	return simple_read_from_buffer(buf, count, pos, buffer, n);
+}
+
+static ssize_t scp_debug_write(struct file *filp, const char __user *buffer,
+			       size_t count, loff_t *ppos)
+{
+	char *vaddr = NULL;
+	unsigned int data[2]; /* addr, size */
+	int offset;
+
+	/* use logger memory (offset from end) */
+	vaddr = (char *)scp_get_reserve_mem_virt(SCP_A_LOGGER_MEM_ID);
+	offset = scp_get_reserve_mem_size(SCP_A_LOGGER_MEM_ID) - DEBUG_CMD_BUFFER_SZ;
+
+	if (!vaddr || offset < 0)
+		return -EFAULT;
+
+	if (copy_from_user(vaddr + offset,
+			   buffer, min(count, (size_t)DEBUG_CMD_BUFFER_SZ)))
+		return -EFAULT;
+
+	data[0] = scp_get_reserve_mem_phys(SCP_A_LOGGER_MEM_ID) + offset;
+	data[1] = DEBUG_CMD_BUFFER_SZ;
+
+	if (scp_ready[SCP_A_ID])
+		mtk_ipi_send(&scp_ipidev, IPI_OUT_DEBUG_CMD, 0, data,
+			     PIN_OUT_SIZE_DEBUG_CMD, 0);
+
+	return count;
+}
+
+const struct file_operations scp_debug_ops = {
+	.open = simple_open,
+	.read = scp_debug_read,
+	.write = scp_debug_write,
+};
 
 /*
  * register /dev and /sys files
@@ -1259,6 +1330,10 @@ static int create_files(void)
 		return ret;
 #endif
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	debugfs_create_file("scp_dbg", S_IFREG | 0644, NULL,
+			    NULL, &scp_debug_ops);
+#endif
 	return 0;
 }
 
@@ -1310,7 +1385,7 @@ EXPORT_SYMBOL_GPL(scp_get_reserve_mem_size);
 #if SCP_RESERVED_MEM && defined(CONFIG_OF)
 static int scp_reserve_memory_ioremap(struct platform_device *pdev)
 {
-#define MEMORY_TBL_ELEM_NUM (2)
+#define MEMORY_TBL_ELEM_NUM (3)
 	unsigned int num = (unsigned int)(sizeof(scp_reserve_mblock)
 			/ sizeof(scp_reserve_mblock[0]));
 	enum scp_reserve_mem_id_t id;
@@ -1319,7 +1394,7 @@ static int scp_reserve_memory_ioremap(struct platform_device *pdev)
 	struct reserved_mem *rmem;
 	const char *mem_key;
 	unsigned int scp_mem_num = 0;
-	unsigned int i, m_idx, m_size;
+	unsigned int i, m_idx, m_size, m_alignment;
 	int ret;
 
 	if (num != NUMS_MEM_ID) {
@@ -1391,7 +1466,12 @@ static int scp_reserve_memory_ioremap(struct platform_device *pdev)
 			pr_notice("Cannot get memory index(%d)\n", i);
 			return -1;
 		}
+		if (m_idx >= NUMS_MEM_ID) {
+			pr_notice("[SCP] skip unexpected index, %d\n", m_idx);
+			continue;
+		}
 
+		/* Probe memory size of feature that user register */
 		if (i == 0 && scpreg.secure_dump) {
 			/* secure_dump */
 			ret = of_property_read_u32(pdev->dev.of_node,
@@ -1408,13 +1488,20 @@ static int scp_reserve_memory_ioremap(struct platform_device *pdev)
 			return -1;
 		}
 
-		if (m_idx >= NUMS_MEM_ID) {
-			pr_notice("[SCP] skip unexpected index, %d\n", m_idx);
-			continue;
+		/* Probe memory alignment of feature that user register */
+		ret = of_property_read_u32_index(pdev->dev.of_node,
+				"scp_mem_tbl",
+				(i * MEMORY_TBL_ELEM_NUM) + 2,
+				&m_alignment);
+		if (ret) {
+			pr_notice("Cannot get memory alignment(%d)\n", i);
+			return -1;
 		}
 
+
 		scp_reserve_mblock[m_idx].size = m_size;
-		pr_notice("@@@@ reserved: <%d  %d>\n", m_idx, m_size);
+		scp_reserve_mblock[m_idx].alignment = m_alignment;
+		pr_notice("@@@@ reserved: <%d  %x  %x>\n", m_idx, m_size, m_alignment);
 	}
 
 	scp_mem_base_virt = (phys_addr_t)(size_t)ioremap_wc(scp_mem_base_phys,
@@ -1425,6 +1512,11 @@ static int scp_reserve_memory_ioremap(struct platform_device *pdev)
 		(uint64_t)scp_mem_base_virt, (uint64_t)scp_mem_size);
 
 	for (id = 0; id < NUMS_MEM_ID; id++) {
+		if (scp_reserve_mblock[id].alignment) {
+			accumlate_memory_size = (accumlate_memory_size +
+					scp_reserve_mblock[id].alignment - 1)
+				& ~(scp_reserve_mblock[id].alignment - 1);
+		}
 		scp_reserve_mblock[id].start_phys = scp_mem_base_phys +
 			accumlate_memory_size;
 		scp_reserve_mblock[id].start_virt = scp_mem_base_virt +
@@ -1494,7 +1586,7 @@ static void scp_control_feature(enum feature_id id, bool enable)
 		return;
 	}
 
-	if (id >= NUM_FEATURE_ID) {
+	if (id < 0 || id >= NUM_FEATURE_ID) {
 		pr_notice("[SCP] %s, invalid feature id:%u, max id:%u\n",
 			__func__, id, NUM_FEATURE_ID - 1);
 		return;
@@ -1599,7 +1691,7 @@ void scp_deregister_sensor(enum feature_id id, int sensor_id)
 		return;
 	}
 
-	if (sensor_id >= NUM_SENSOR_TYPE) {
+	if (sensor_id < 0 || sensor_id >= NUM_SENSOR_TYPE) {
 		pr_info("[SCP] sensor id not in sensor freq table");
 		return;
 	}
@@ -1725,13 +1817,6 @@ void print_clk_registers(void)
 	for (offset = 0x0000; offset <= 0x0114; offset += 4) {
 		value = (unsigned int)readl(cfg_core0 + offset);
 		pr_notice("[SCP] cfg_core0[0x%04x]: 0x%08x\n", offset, value);
-	}
-	if (debug_dumptimeout_flag == 1) {
-	// 0x31000 ~ 0x31428 DMA register
-		for (offset = 0x0000; offset <= 0x0428; offset += 4) {
-			value = (unsigned int)readl(cfg_core0 + 0x1000 + offset);
-			pr_notice("[SCP] cfg_core0_dma[0x%04x]: 0x%08x\n", offset, value);
-		}
 	}
 	if (scpreg.core_nums == 1)
 		return;
@@ -2240,7 +2325,6 @@ static int scp_device_probe(struct platform_device *pdev)
 	const char *core_status = NULL;
 	const char *scp_hwvoter = NULL;
 	const char *secure_dump = NULL;
-	const char *debug_dumptimeout = NULL;
 	const char *debug_timeout_reset = NULL;
 
 	struct device *dev = &pdev->dev;
@@ -2369,14 +2453,6 @@ static int scp_device_probe(struct platform_device *pdev)
 		}
 	}
 
-	debug_dumptimeout_flag = 0;
-	if (!of_property_read_string(pdev->dev.of_node, "debug_dumptimeout", &debug_dumptimeout)) {
-		if (!strncmp(debug_dumptimeout, "enable", strlen("enable"))) {
-			pr_notice("[SCP] debug dump timeout enabled\n");
-			debug_dumptimeout_flag = 1;
-		}
-	}
-
 	debug_timeout_reset_flag = 0;
 	if (!of_property_read_string(pdev->dev.of_node,
 			"debug_timeout_reset", &debug_timeout_reset)) {
@@ -2491,6 +2567,11 @@ static int scp_device_probe(struct platform_device *pdev)
 	return ret;
 }
 
+static void scp_device_shutdown(struct platform_device *dev)
+{
+	system_shutdown = true;
+}
+
 static int scp_device_remove(struct platform_device *dev)
 {
 	if (scp_mbox_info) {
@@ -2536,6 +2617,7 @@ static const struct of_device_id scp_of_ids[] = {
 
 static struct platform_driver mtk_scp_device = {
 	.probe = scp_device_probe,
+	.shutdown = scp_device_shutdown,
 	.remove = scp_device_remove,
 	.driver = {
 		.name = "scp",
@@ -2553,6 +2635,7 @@ static const struct of_device_id scpsys_of_ids[] = {
 };
 
 static struct platform_driver mtk_scpsys_device = {
+	.probe = scpsys_device_probe,
 	.driver = {
 		.name = "scpsys",
 		.owner = THIS_MODULE,
@@ -2562,6 +2645,39 @@ static struct platform_driver mtk_scpsys_device = {
 	},
 };
 
+#if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
+/* user-space event notify */
+static int scp_user_event_notify(struct notifier_block *nb,
+				  unsigned long event, void *ptr)
+{
+	struct device *dev = scp_device.this_device;
+	int ret = 0;
+
+	if (!dev)
+		return NOTIFY_DONE;
+
+	switch (event) {
+	case SCP_EVENT_STOP:
+		ret = kobject_uevent(&dev->kobj, KOBJ_OFFLINE);
+		break;
+	case SCP_EVENT_READY:
+		ret = kobject_uevent(&dev->kobj, KOBJ_ONLINE);
+		break;
+	default:
+		pr_info("%s, ignore event %lu", __func__, event);
+		break;
+	}
+
+	if (ret)
+		pr_info("%s, uevent(%lu) fail, ret %d", __func__, event, ret);
+
+	return NOTIFY_OK;
+}
+
+struct notifier_block scp_uevent_notifier = {
+	.notifier_call = scp_user_event_notify,
+};
+#endif
 int notify_scp_semaphore_event(struct notifier_block *nb,
 			       unsigned long event, void *v)
 {
@@ -2615,14 +2731,17 @@ static int __init scp_init(void)
 		scp_resource_req(SCP_REQ_26M);
 	}
 #endif /* SCP_DVFS_INIT_ENABLE */
-
-	if (platform_driver_register(&mtk_scp_device)) {
-		pr_notice("[SCP] scp probe fail\n");
+	ret = platform_driver_register(&mtk_scp_device);
+	if (ret) {
+		pr_notice("[SCP] scp probe fail %d\n", ret);
+		BUG_ON(1);
 		goto err_without_unregister;
 	}
 
-	if (platform_driver_probe(&mtk_scpsys_device, scpsys_device_probe)) {
-		pr_notice("[SCP] scpsys probe fail\n");
+	ret = platform_driver_register(&mtk_scpsys_device);
+	if (ret) {
+		pr_notice("[SCP] scpsys probe fail %d\n", ret);
+		BUG_ON(1);
 		goto err;
 	}
 
@@ -2716,13 +2835,17 @@ static int __init scp_init(void)
 #endif
 
 	driver_init_done = true;
-	reset_scp(SCP_ALL_ENABLE);
+	if (!system_shutdown)
+		reset_scp(SCP_ALL_ENABLE);
 
 #if SCP_DVFS_INIT_ENABLE
 	if (scp_dvfs_feature_enable())
 		scp_init_vcore_request();
 #endif /* SCP_DVFS_INIT_ENABLE */
 
+#if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
+	scp_A_register_notify(&scp_uevent_notifier);
+#endif
 	register_3way_semaphore_notifier(&scp_semaphore_init_notifier);
 
 	return ret;

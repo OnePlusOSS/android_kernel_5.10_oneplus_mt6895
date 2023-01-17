@@ -116,9 +116,6 @@ int clkbuf_pmif_get_misc_reg(u32 *mode_ctl, u32 *sleep_ctl, u32 pmif_idx)
 
 int clkbuf_pmif_get_inf_en(enum PMIF_INF inf, u32 *en)
 {
-	if (inf >= PMIF_INF_MAX)
-		return -EINVAL;
-
 	if (inf == PMIF_CONN_INF) {
 		return clk_buf_read(&clkbuf_pmif.pmif[0]->hw,
 			&clkbuf_pmif.pmif[0]->_conn_inf_en, en);
@@ -137,9 +134,6 @@ int clkbuf_pmif_get_inf_data(enum PMIF_INF inf, u32 *clr_addr, u32 *set_addr,
 		u32 *clr_cmd, u32 *set_cmd)
 {
 	int ret = 0;
-
-	if (inf >= PMIF_RC_INF)
-		return -EINVAL;
 
 	if (inf == PMIF_CONN_INF) {
 		pr_notice("ofs: %x\n", clkbuf_pmif.pmif[0]->_conn_clr_addr.ofs);
@@ -187,6 +181,8 @@ int clkbuf_pmif_get_inf_data(enum PMIF_INF inf, u32 *clr_addr, u32 *set_addr,
 			&clkbuf_pmif.pmif[0]->_nfc_set_cmd, set_cmd);
 		if (ret)
 			return ret;
+	} else {
+		ret = -EINVAL;
 	}
 
 	return ret;

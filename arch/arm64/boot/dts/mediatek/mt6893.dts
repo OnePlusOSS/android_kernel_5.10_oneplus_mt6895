@@ -1224,6 +1224,11 @@
 		interrupts = <0 0x8 0 0>;
 	};
 
+	odm: odm {
+		compatible = "simple-bus";
+		/* reserved for overlay by odm */
+	};
+
 	drm_wv: drm_wv {
 		compatible = "mediatek,drm_wv";
 		status = "okay";
@@ -1408,6 +1413,7 @@
 				regulator-min-microvolt = <1200000>;
 				regulator-max-microvolt = <3600000>;
 				regulator-allowed-modes = <0 2>;
+				regulator-always-on;
 			};
 			mt_pmic_vmch_ldo_reg: ldo5 {
 				regulator-compatible = "LDO5";

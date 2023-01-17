@@ -88,12 +88,6 @@ static struct i2c_driver _lcm_i2c_driver = {
 /*****************************************************************************
  * Function
  *****************************************************************************/
-
-#ifdef VENDOR_EDIT
-// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
-extern void lcd_queue_load_tp_fw(void);
-#endif /*VENDOR_EDIT*/
-
 static int _lcm_i2c_probe(struct i2c_client *client,
 			  const struct i2c_device_id *id)
 {
@@ -827,11 +821,6 @@ static int jdi_prepare(struct drm_panel *panel)
 	jdi_panel_get_data(ctx);
 #endif
 
-#ifdef VENDOR_EDIT
-	// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
-	lcd_queue_load_tp_fw();
-#endif
-
 	pr_info("%s-\n", __func__);
 	return ret;
 }
@@ -971,7 +960,7 @@ static int jdi_probe(struct mipi_dsi_device *dsi)
 	unsigned int value;
 	int ret;
 
-	pr_info("%s+\n", __func__);
+	pr_info("[boe]%s+\n", __func__);
 
 	dsi_node = of_get_parent(dev->of_node);
 	if (dsi_node) {
@@ -985,6 +974,7 @@ static int jdi_probe(struct mipi_dsi_device *dsi)
 			pr_info("device node name:%s\n", remote_node->name);
 		}
 	}
+
 	if (remote_node != dev->of_node) {
 		pr_info("%s+ skip probe due to not current lcm\n", __func__);
 		return -ENODEV;

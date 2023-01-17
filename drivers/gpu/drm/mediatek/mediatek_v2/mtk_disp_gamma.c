@@ -57,7 +57,7 @@ static unsigned int g_gamma_relay_value[DISP_GAMMA_TOTAL];
 // It's a work around for no comp assigned in functions.
 static struct mtk_ddp_comp *default_comp;
 
-static unsigned int g_gamma_data_mode;
+unsigned int g_gamma_data_mode;
 
 struct gamma_color_protect {
 	unsigned int gamma_color_protect_support;
@@ -427,8 +427,10 @@ int mtk_drm_ioctl_set_12bit_gammalut(struct drm_device *dev, void *data,
 	memcpy(&ioctl_data, (struct DISP_GAMMA_12BIT_LUT_T *)data,
 			sizeof(struct DISP_GAMMA_12BIT_LUT_T));
 	atomic_set(&g_gamma_sof_filp, 1);
-	if (g_gamma_flip_comp[0]->mtk_crtc != NULL)
+	if (g_gamma_flip_comp[0]->mtk_crtc != NULL) {
+		mtk_drm_idlemgr_kick(__func__, &g_gamma_flip_comp[0]->mtk_crtc->base, 1);
 		mtk_crtc_check_trigger(g_gamma_flip_comp[0]->mtk_crtc, false, false);
+	}
 	DDPINFO("%s:update IOCTL g_gamma_sof_filp to 1\n", __func__);
 	CRTC_MMP_EVENT_END(0, gamma_ioctl, 0, 1);
 	mutex_unlock(&g_gamma_sram_lock);
@@ -491,7 +493,13 @@ static int mtk_gamma_sof_irq_trigger(void *data)
 	while (1) {
 		disp_gamma_wait_sof_irq();
 		atomic_set(&g_gamma_sof_irq_available, 0);
+
+		if (kthread_should_stop()) {
+			DDPPR_ERR("%s stopped\n", __func__);
+			break;
+		}
 	}
+	return 0;
 }
 
 static void mtk_gamma_start(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
@@ -567,6 +575,8 @@ static void mtk_gamma_set(struct mtk_ddp_comp *comp,
 	}
 }
 
+#if 0
+
 static void calculateGammaLut(struct DISP_GAMMA_LUT_T *data)
 {
 	int i;
@@ -583,10 +593,7 @@ static void calculateGammaLut(struct DISP_GAMMA_LUT_T *data)
 
 static void calculateGamma12bitLut(struct DISP_GAMMA_12BIT_LUT_T *data)
 {
-	int i, lut_size;
-
-	if (g_gamma_data_mode == HW_12BIT_MODE_8BIT)
-		lut_size = DISP_GAMMA_LUT_SIZE;
+	int i, lut_size = DISP_GAMMA_LUT_SIZE;
 
 	if (g_gamma_data_mode == HW_12BIT_MODE_12BIT)
 		lut_size = DISP_GAMMA_12BIT_LUT_SIZE;
@@ -643,7 +650,7 @@ void mtk_trans_gain_to_gamma(struct drm_crtc *crtc,
 		}
 	}
 }
-
+#endif
 static int mtk_gamma_user_cmd(struct mtk_ddp_comp *comp,
 	struct cmdq_pkt *handle, unsigned int cmd, void *data)
 {
@@ -800,7 +807,7 @@ void mtk_gamma_dump(struct mtk_ddp_comp *comp)
 {
 	void __iomem *baddr = comp->regs;
 
-	DDPDUMP("== %s REGS:0x%x ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
 	mtk_cust_dump_reg(baddr, 0x14, 0x20, 0x700, 0xb00);
 }
 

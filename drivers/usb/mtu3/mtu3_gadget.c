@@ -159,7 +159,7 @@ static int mtu3_ep_enable(struct mtu3_ep *mep)
 		if (usb_endpoint_xfer_int(desc) ||
 				usb_endpoint_xfer_isoc(desc)) {
 			interval = desc->bInterval;
-			interval = clamp_val(interval, 1, 16) - 1;
+			interval = clamp_val(interval, 1, 16);
 			if (usb_endpoint_xfer_isoc(desc) && comp_desc)
 				mult = comp_desc->bmAttributes;
 		}
@@ -171,9 +171,16 @@ static int mtu3_ep_enable(struct mtu3_ep *mep)
 		if (usb_endpoint_xfer_isoc(desc) ||
 				usb_endpoint_xfer_int(desc)) {
 			interval = desc->bInterval;
-			interval = clamp_val(interval, 1, 16) - 1;
+			interval = clamp_val(interval, 1, 16);
 			mult = usb_endpoint_maxp_mult(desc) - 1;
 		}
+		break;
+	case USB_SPEED_FULL:
+		if (usb_endpoint_xfer_isoc(desc))
+			interval = clamp_val(desc->bInterval, 1, 16);
+		else if (usb_endpoint_xfer_int(desc))
+			interval = clamp_val(desc->bInterval, 1, 255);
+
 		break;
 	default:
 		break; /*others are ignored */
@@ -337,6 +344,7 @@ struct usb_request *mtu3_alloc_request(struct usb_ep *ep, gfp_t gfp_flags)
 	mreq->request.dma = DMA_ADDR_INVALID;
 	mreq->epnum = mep->epnum;
 	mreq->mep = mep;
+	INIT_LIST_HEAD(&mreq->list);
 	trace_mtu3_alloc_request(mreq);
 
 	return &mreq->request;
@@ -577,6 +585,7 @@ static int mtu3_gadget_set_self_powered(struct usb_gadget *gadget,
 	return 0;
 }
 
+#ifndef OPLUS_FEATURE_CHG_BASIC
 static void mtu3_gadget_set_ready(struct usb_gadget *gadget)
 {
 	struct mtu3 *mtu = gadget_to_mtu3(gadget);
@@ -588,6 +597,7 @@ static void mtu3_gadget_set_ready(struct usb_gadget *gadget)
 
 	mtu->is_gadget_ready = 1;
 }
+#endif
 
 static int mtu3_gadget_pullup(struct usb_gadget *gadget, int is_on)
 {
@@ -620,7 +630,11 @@ static int mtu3_gadget_pullup(struct usb_gadget *gadget, int is_on)
 	enable_irq(mtu->irq);
 
 	if (!mtu->is_gadget_ready && is_on)
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		mtu->is_gadget_ready = 1;
+#else
 		mtu3_gadget_set_ready(gadget);
+#endif
 
 	return 0;
 }

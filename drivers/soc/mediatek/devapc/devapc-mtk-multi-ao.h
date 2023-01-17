@@ -3,16 +3,11 @@
  * Copyright (C) 2019 MediaTek Inc.
  */
 
-#ifndef __DEVAPC_MTK_MULTI_4_H__
-#define __DEVAPC_MTK_MULTI_4_H__
+#ifndef __DEVAPC_MTK_MULTI_AO_H__
+#define __DEVAPC_MTK_MULTI_AO_H__
 
 #include <linux/platform_device.h>
 #include <linux/types.h>
-
-#ifdef KBUILD_MODNAME
-#undef KBUILD_MODNAME
-#define KBUILD_MODNAME	"devapc"
-#endif
 
 /******************************************************************************
  * VARIABLE DEFINATION
@@ -101,16 +96,6 @@ enum DEVAPC_SWP_CON_BIT {
 };
 #endif
 
-enum DEVAPC_TYPE {
-	DEVAPC_TYPE_INFRA = 0,
-	DEVAPC_TYPE_INFRA1,
-	DEVAPC_TYPE_PERI_PAR,
-	DEVAPC_TYPE_VLP,
-	DEVAPC_TYPE_ADSP,
-	DEVAPC_TYPE_MMINFRA,
-	DEVAPC_TYPE_MMUP,
-};
-
 struct mtk_devapc_dbg_status {
 	bool enable_ut;
 	bool enable_KE;
@@ -193,8 +178,8 @@ struct mtk_devapc_pd_reg {
 	uint32_t pd_vio_shift_sta_reg;
 	uint32_t pd_vio_shift_sel_reg;
 	uint32_t pd_vio_shift_con_reg;
-	void __iomem *pd_vio_mask_reg;
-	void __iomem *pd_vio_sta_reg;
+	uint32_t *pd_vio_mask_reg;
+	uint32_t *pd_vio_sta_reg;
 };
 
 struct mtk_devapc_soc {
@@ -208,10 +193,6 @@ struct mtk_devapc_soc {
 	const struct mtk_sramrom_sec_vio_desc *sramrom_sec_vios;
 	const uint32_t *devapc_pds;
 	uint32_t irq_type_num;
-	bool slave_error;
-#ifdef CONFIG_MTK_SABORT_HOOK
-	bool abort_error;
-#endif
 
 	/* platform specific operations */
 	const char* (*subsys_get)(int slave_type, uint32_t vio_index,
@@ -224,14 +205,14 @@ struct mtk_devapc_soc {
 	uint32_t (*shift_group_get)(int slave_type, uint32_t vio_index);
 };
 
-extern int devapc_suspend_noirq(struct device *dev);
-extern int devapc_resume_noirq(struct device *dev);
-extern int mtk_devapc_probe(struct platform_device *pdev,
+int devapc_suspend_noirq(struct device *dev);
+int devapc_resume_noirq(struct device *dev);
+int mtk_devapc_probe(struct platform_device *pdev,
 		struct mtk_devapc_soc *soc);
-extern int mtk_devapc_remove(struct platform_device *dev);
+int mtk_devapc_remove(struct platform_device *dev);
 ssize_t mtk_devapc_dbg_read(struct file *file, char __user *buffer,
 	size_t count, loff_t *ppos);
 ssize_t mtk_devapc_dbg_write(struct file *file, const char __user *buffer,
 	size_t count, loff_t *data);
 
-#endif /* __DEVAPC_MTK_MULTI_4_H__ */
+#endif /* __DEVAPC_MTK_MULTI_AO_H__ */

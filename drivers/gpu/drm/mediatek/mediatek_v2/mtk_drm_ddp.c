@@ -16,6 +16,10 @@
 #include "mtk-cmdq-ext.h"
 #endif
 
+/*#ifdef OPLUS_BUG_STABILITY*/
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+/*#endif*/
+
 #include "mtk_drm_ddp.h"
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_drv.h"
@@ -24,6 +28,9 @@
 #include "mtk_drm_mmp.h"
 #include "mtk_disp_aal.h"
 #include "mtk_disp_c3d.h"
+// #ifdef OPLUS_BUG_STABILITY
+#include "mtk_disp_ccorr.h"
+// #endif OPLUS_BUG_STABILITY
 #include "mtk_disp_gamma.h"
 #include "platform/mtk_drm_6789.h"
 #ifdef CONFIG_MTK_SMI_EXT
@@ -536,7 +543,6 @@
 
 #define MT6983_DISP_MDP_ALL0_SEL_IN	0xF4C
 	#define DISP_MDP_ALL0_SEL_IN_FROM_DISP_C3D0_SOUT_SEL	0x1
-
 #define MT6983_DISP_MERGE0_L_SEL_IN 0xF60
 	#define DISP_MERGE0_L_SEL_IN_FROM_DISP_TV0_SOUT_SEL	0x1
 
@@ -556,7 +562,9 @@
 	#define DISP_WDMA0_SEL_IN_FROM_DISP_SPR0      0x2
 
 #define MT6983_DISP_MAIN0_SEL_IN	0xF78
+	#define DISP_MAIN0_SEL_IN_FROM_DISP_DLI_ASYNC1		  0x0
 	#define DISP_MAIN0_SEL_IN_FROM_DISP_PQ0_SOUT_SEL	  0x1
+	#define DISP_MAIN0_SEL_IN_FROM_DISP_MERGE0_MOUT_EN	  0x2
 	#define DISP_MAIN0_SEL_IN_FROM_DISP_DSC_WRAP0_MOUT_EN	0x3
 	#define DISP_MAIN0_SEL_IN_FROM_DISP_RDMA1_SOUT_SEL		0x4
 
@@ -639,6 +647,7 @@
 	#define DISP_OVL0_2L_NWCG_MOUT_EN_TO_DISP_WDMA1_SEL_IN		BIT(3)
 
 #define MT6983_DISP_MERGE0_MOUT_EN 0xFF0
+	#define DISP_MERGE0_MOUT_EN_TO_DISP_MAIN0_SEL_IN BIT(1)
 	#define DISP_MERGE0_MOUT_EN_TO_DISP_SUB0_SEL_IN	BIT(2)
 
 #define MT6983_DISP_DSC_WRAP0_MOUT_EN	0xFF4
@@ -772,6 +781,8 @@
 	#define MT6895_DISP_OVL0_UFDO_SEL_IN_FROM_DISP_RSZ0_MAIN_OVL_SOUT_SEL		0x0
 #define MT6895_DISP_OVL0_PQ_SEL_IN				0xF10
 	#define MT6895_DISP_OVL0_PQ_SEL_IN_FROM_DISP_RSZ0_MAIN_OVL_SOUT_SEL			0x1
+#define MT6895_DISP_MAIN_OVL_DISP_WDMA_SEL_IN 0xF2C
+	#define MT6895_DISP_OVL0_BLEND_MOUT_TO_DISP_MAIN_OVL_DISP_WDMA_SEL_IN		0x3
 #define MT6895_DISP_RSZ0_SEL_IN					0xF24
 	#define MT6895_DISP_RSZ0_SEL_IN_FROM_DISP_OVL1_2L_BLEND_MOUT_EN				0x1
 #define MT6895_DISP_MAIN_OVL_DISP_PQ0_SEL_IN	0xF34
@@ -796,6 +807,7 @@
 	#define MT6895_DISP_RDMA0_SOUT_SEL_TO_DISP_RDMA0_OUT_RELAY			0x0
 	#define MT6895_DISP_RDMA0_SOUT_SEL_TO_DISP_RDMA0_POS_SEL_IN			0x1
 #define MT6895_DISP_OVL0_BLEND_MOUT_EN			0xFCC
+	#define MT6895_DISP_OVL0_BLEND_MOUT_EN_TO_DISP_MAIN_OVL_DISP_WDMA_SEL	BIT(2)
 	#define MT6895_DISP_OVL0_BLEND_MOUT_EN_TO_DISP_MAIN_OVL_DISP_PQ_SEL		BIT(4)
 #define	MT6895_DISP_OVL1_2L_BLEND_MOUT_EN		0xFD4
 	#define MT6895_DISP_OVL1_2L_BLEND_MOUT_EN_TO_DISP_RSZ0_SEL_IN		BIT(0)
@@ -833,6 +845,7 @@
 	#define MT6895_DISP_DSC_WRAP0_R_SEL_IN_FROM_DISP_DLI2_SOUT_SEL				0x1
 
 #define MT6895_DISP_WDMA0_SEL_IN				0xF70
+	#define MT6895_DISP_WDMA0_SEL_IN_FROM_DISP_MAIN_OVL_DISP_WDMA_SEL_IN		0x1
 	#define MT6895_DISP_WDMA0_SEL_IN_FROM_DISP_SPR0						0x2
 
 #define MT6895_DISP_MAIN0_SEL_IN				0xF78
@@ -1818,12 +1831,15 @@ struct dummy_mapping mt6983_dispsys_dummy_register[MT6983_DUMMY_REG_CNT] = {
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x668},//[0:31]
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x66c},//[0:31]
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x404},//[0:31]
-//DISP_SLOT_CUR_CONFIG_FENCE(15) MAX_PLANE_NR-1
+	{0, NULL, DDP_COMPONENT_OVL0, 0x200},
+	{0, NULL, DDP_COMPONENT_OVL0_2L, 0x200},
+//DISP_SLOT_CUR_CONFIG_FENCE(17) MAX_PLANE_NR-1
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x408},//[0:31]
 //DISP_SLOT_PRESENT_FENCE(0) = DISP_SLOT_PRESENT_FENCE(MAX_PLANE_NR)
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x40c},//[0:31]
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x500},//[0:31] //DISP_SLOT_PRESENT_FENCE(1)
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x210},//[0:31] //DISP_SLOT_PRESENT_FENCE(2)
+	{0, NULL, DDP_COMPONENT_OVL0_2L_NWCG, 0x200},
 
 	/* can only use 3 bit */
 //DISP_SLOT_SUBTRACTOR_WHEN_FREE(0) = DISP_SLOT_PRESENT_FENCE(MAX_CRTC)
@@ -1843,7 +1859,10 @@ struct dummy_mapping mt6983_dispsys_dummy_register[MT6983_DUMMY_REG_CNT] = {
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x2c},//[0:2]
 
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x20},//[0:2]
-//DISP_SLOT_SUBTRACTOR_WHEN_FREE(15) MAX_PLANE_NR-1
+
+	{0, NULL, DDP_COMPONENT_RDMA0, 0x090},
+	{0, NULL, DDP_COMPONENT_RDMA1, 0x090},
+//DISP_SLOT_SUBTRACTOR_WHEN_FREE(17) MAX_PLANE_NR-1
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x24},//[0:2]
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x20c},//[0:23]//DISP_SLOT_RDMA_FB_IDX
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x22c},//[0:23]//DISP_SLOT_RDMA_FB_ID
@@ -1871,8 +1890,86 @@ struct dummy_mapping mt6983_dispsys_dummy_register[MT6983_DUMMY_REG_CNT] = {
 	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6]
 };
 
+struct dummy_mapping mt6895_dispsys_dummy_register[MT6983_DUMMY_REG_CNT] = {
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x404},//[0:31] //DISP_SLOT_CUR_CONFIG_FENCE(0)
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x408},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x40c},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x500},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x210},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x214},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x230},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x234},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x640},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x644},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x660},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x664},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x668},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x66c},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x404},//[0:31]
+	//redudant slot which not used in 6895
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6] //use this as dummy slot
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6] //use this as dummy slot
+//DISP_SLOT_CUR_CONFIG_FENCE(17) MAX_PLANE_NR-1
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x408},//[0:31]
+//DISP_SLOT_PRESENT_FENCE(0) = DISP_SLOT_PRESENT_FENCE(MAX_PLANE_NR)
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x40c},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x500},//[0:31] //DISP_SLOT_PRESENT_FENCE(1)
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x210},//[0:31] //DISP_SLOT_PRESENT_FENCE(2)
+	//redudant slot which not used in 6895
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6] //use this as dummy slot
+
+	/* can only use 3 bit */
+//DISP_SLOT_SUBTRACTOR_WHEN_FREE(0) = DISP_SLOT_PRESENT_FENCE(MAX_CRTC)
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x20},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x24},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x28},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x2c},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x30},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x34},//[0:14]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x38},//[0:6]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x190},//[0:1]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x600},//[0:5]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x654},//[0:5]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x208},//[0:19]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x228},//[0:19]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x28},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x2c},//[0:2]
+
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x20},//[0:2]
+
+	//redudant slot which not used in 6895
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6] //use this as dummy slot
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6] //use this as dummy slot
+//DISP_SLOT_SUBTRACTOR_WHEN_FREE(17) MAX_PLANE_NR-1
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x24},//[0:2]
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x20c},//[0:23]//DISP_SLOT_RDMA_FB_IDX
+	{0, NULL, DDP_COMPONENT_ID_MAX, 0x22c},//[0:23]//DISP_SLOT_RDMA_FB_ID
+
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x214},//[0:31]//DISP_SLOT_CUR_HRT_IDX
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x20c},//[0:23]//DISP_SLOT_CUR_HRT_LEVEL
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x234},//[0:31]//DISP_SLOT_CUR_OUTPUT_FENCE
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x640},//[0:31]//DISP_SLOT_CUR_INTERFACE_FENCE
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x22c},//[0:23]//DISP_SLOT_OVL_STATUS
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x660},//[0:31]//DISP_SLOT_READ_DDIC_BASE
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x664},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x668},//[0:31]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x66c},//[0:31]//DISP_SLOT_READ_DDIC_BASE+3*0x4
+
+	/* can only use 3 bit */
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x230},//[0:31]//DISP_SLOT_OVL_DSI_SEQ
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x644},//[0:31]//DISP_SLOT_OVL_WDMA_SEQ
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x30},//[0:2]//DISP_SLOT_VFP_PERIOD
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x208},//[0:19]//DISP_SLOT_DSI_STATE_DBG7
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x228},//[0:19]	//DISP_SLOT_DSI_STATE_DBG7_2
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x190},//[0:1]//DISP_SLOT_TE1_EN
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x600},//[0:5]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x654},//[0:5]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x34},//[0:14]
+	{0, NULL, DDP_COMPONENT_ID_MAX | BIT(31), 0x38},//[0:6] //use this as dummy slot
+};
+
 struct dummy_mapping mt6879_dispsys_dummy_register[MT6879_DUMMY_REG_CNT] = {
-	//DISP_SLOT_CUR_CONFIG_FENCE(0 ~ 15)
+	//DISP_SLOT_CUR_CONFIG_FENCE(0 ~ 17)
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x170},
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x174},
 	{0, NULL, DDP_COMPONENT_ID_MAX, 0x190},
@@ -1889,13 +1986,18 @@ struct dummy_mapping mt6879_dispsys_dummy_register[MT6879_DUMMY_REG_CNT] = {
 	{0, NULL, DDP_COMPONENT_OVL0_2L, 0x200},
 	{0, NULL, DDP_COMPONENT_OVL0_2L_NWCG, 0x200},
 	{0, NULL, DDP_COMPONENT_RDMA0, 0x090},
+	//redudant slot which not used in 6879
+	{0, NULL, DDP_COMPONENT_WDMA1, 0x100},
+	{0, NULL, DDP_COMPONENT_WDMA1, 0x100},
 
-	//DISP_SLOT_PRESENT_FENCE(0 ~ 2)
+	//DISP_SLOT_PRESENT_FENCE(0 ~ 3)
 	{0, NULL, DDP_COMPONENT_RDMA1, 0x090},
 	{0, NULL, DDP_COMPONENT_WDMA0, 0x100},
 	{0, NULL, DDP_COMPONENT_DSI0, 0x0F4},
+	//redudant slot which not used in 6879
+	{0, NULL, DDP_COMPONENT_WDMA1, 0x100},
 
-	//DISP_SLOT_SUBTRACTOR_WHEN_FREE(0 ~ 15)
+	//DISP_SLOT_SUBTRACTOR_WHEN_FREE(0 ~ 17)
 	{0, NULL, DDP_COMPONENT_TDSHP0, 0x334},
 	{0, NULL, DDP_COMPONENT_TDSHP0, 0x344},
 	{0, NULL, DDP_COMPONENT_TDSHP0, 0x354},
@@ -1912,6 +2014,9 @@ struct dummy_mapping mt6879_dispsys_dummy_register[MT6879_DUMMY_REG_CNT] = {
 	{0, NULL, DDP_COMPONENT_TDSHP0, 0x388},
 	{0, NULL, DDP_COMPONENT_RSZ0, 0x228},
 	{0, NULL, DDP_COMPONENT_RSZ0, 0x20c},
+	//redudant slot which not used in 6879
+	{0, NULL, DDP_COMPONENT_WDMA1, 0x100},
+	{0, NULL, DDP_COMPONENT_WDMA1, 0x100},
 
 	//DISP_SLOT_RDMA_FB_IDX
 	{0, NULL, DDP_COMPONENT_AAL0, 0x0C0},
@@ -2476,6 +2581,7 @@ static const unsigned int mt6895_dispsys_map[DDP_COMPONENT_ID_MAX] = {
 		[DDP_COMPONENT_SUB0_VIRTUAL0] = 0,
 		[DDP_COMPONENT_SUB0_VIRTUAL1] = 0,
 		[DDP_COMPONENT_SUB_OVL_DISP0_PQ0_VIRTUAL] = 0,
+		[DDP_COMPONENT_MAIN_OVL_DISP_WDMA_VIRTUAL] = 0,
 
 		[DDP_COMPONENT_INLINE_ROTATE0] = 0,
 		[DDP_COMPONENT_Y2R0] = 0,
@@ -2530,6 +2636,7 @@ static const unsigned int mt6895_dispsys_map[DDP_COMPONENT_ID_MAX] = {
 		[DDP_COMPONENT_SUB1_VIRTUAL0] = 1,
 		[DDP_COMPONENT_SUB1_VIRTUAL1] = 1,
 		[DDP_COMPONENT_SUB_OVL_DISP1_PQ0_VIRTUAL] = 1,
+		[DDP_COMPONENT_MAIN_OVL_DISP1_WDMA_VIRTUAL] = 1,
 
 		[DDP_COMPONENT_INLINE_ROTATE1] = 1,
 		[DDP_COMPONENT_Y2R1] = 1,
@@ -7773,14 +7880,6 @@ static int mtk_ddp_sout_sel_MT6885(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_DP_INTF0) {
 		*addr = MT6885_DISP_DSC_WRAP_SOUT_SEL;
 		value = DISP_DSC_WRAP_SOUT_TO_DISP_DP_WRAP_SEL;
-	} else if (cur == DDP_COMPONENT_CCORR1 &&
-		next == DDP_COMPONENT_DMDP_AAL1) {
-		*addr = MT6885_DISP_CCORR1_SOUT_SEL;
-		value = DISP_CCORR1_SOUT_SEL_TO_DISP_MDP_AAL5_SEL;
-	} else if (cur == DDP_COMPONENT_DMDP_AAL1 &&
-		next == DDP_COMPONENT_AAL1) {
-		*addr = MT6885_DISP_MDP_AAL5_SOUT_SEL;
-		value = DISP_MDP_AAL5_SOUT_SEL_TO_DISP_AAL1_SEL;
 	} else {
 		value = -1;
 	}
@@ -7873,6 +7972,7 @@ static int mtk_ddp_mout_en_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_WDMA2)) {
 		*addr = MT6983_DISP_SPR0_MOUT_EN;
 		value = DISP_SPR0_MOUT_EN_TO_DISP_WDMA0_SEL_IN;
+	/* MT6983 OVL0_2l is OVL1_2L actually */
 	} else if ((cur == DDP_COMPONENT_OVL0_2L &&
 		next == DDP_COMPONENT_OVL0_2L_VIRTUAL0) ||
 		(cur == DDP_COMPONENT_OVL2_2L &&
@@ -7903,10 +8003,12 @@ static int mtk_ddp_mout_en_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_RDMA3)) {
 		*addr = MT6983_DISP_OVL0_2L_NWCG_MOUT_EN;
 		value = DISP_OVL0_2L_NWCG_MOUT_EN_TO_DISP_RDMA1_SEL_IN;
-	} else if (cur == DDP_COMPONENT_OVL0_2L &&
+	/* aply this statements when real OVL0_2L is used */
+	/*} else if (cur == DDP_COMPONENT_OVL0_2L &&
 		next == DDP_COMPONENT_OVL0_2L_VIRTUAL0) {
 		*addr = MT6983_MMSYS_OVL_CON;
 		value = DISP_OVL0_2L_TO_DISP_OVL0_2L_BLEND_MOUT;
+	*/
 	} else if ((cur == DDP_COMPONENT_OVL0_2L_VIRTUAL0 &&
 		next == DDP_COMPONENT_DLO_ASYNC3) ||
 		(cur == DDP_COMPONENT_OVL2_2L_VIRTUAL0 &&
@@ -7925,6 +8027,12 @@ static int mtk_ddp_mout_en_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_MAIN_OVL_DISP1_WDMA_VIRTUAL)) {
 		*addr = MT6983_DISP_OVL0_BLEND_MOUT_EN;
 		value = DISP_OVL0_BLEND_MOUT_EN_TO_DISP_MAIN_OVL_DISP_WDMA_SEL;
+	} else if ((cur == DDP_COMPONENT_MERGE0 &&
+		next == DDP_COMPONENT_MAIN0_VIRTUAL) ||
+		(cur == DDP_COMPONENT_MERGE1 &&
+		next == DDP_COMPONENT_MAIN1_VIRTUAL)) {
+		*addr = MT6983_DISP_MERGE0_MOUT_EN;
+		value = DISP_MERGE0_MOUT_EN_TO_DISP_MAIN0_SEL_IN;
 	} else {
 		value = -1;
 	}
@@ -8002,6 +8110,24 @@ static int mtk_ddp_sel_in_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_MAIN1_VIRTUAL)) {
 		*addr = MT6983_DISP_MAIN0_SEL_IN;
 		value = DISP_MAIN0_SEL_IN_FROM_DISP_RDMA1_SOUT_SEL;
+	} else if ((cur == DDP_COMPONENT_DLI_ASYNC1 &&
+		next == DDP_COMPONENT_MAIN0_VIRTUAL) ||
+		(cur == DDP_COMPONENT_DLI_ASYNC5 &&
+		next == DDP_COMPONENT_MAIN1_VIRTUAL)) {
+		*addr = MT6983_DISP_MAIN0_SEL_IN;
+		value = DISP_MAIN0_SEL_IN_FROM_DISP_DLI_ASYNC1;
+	} else if ((cur == DDP_COMPONENT_PQ0_VIRTUAL &&
+		next == DDP_COMPONENT_DSC0) ||
+		(cur == DDP_COMPONENT_PQ1_VIRTUAL &&
+		next == DDP_COMPONENT_DSC1)) {
+		*addr = MT6983_DISP_DSC_WRAP0_L_SEL_IN;
+		value = DISP_DSC_WRAP0_L_SEL_IN_FROM_DISP_PQ0_SOUT_SEL;
+	} else if ((cur == DDP_COMPONENT_MERGE0 &&
+		next == DDP_COMPONENT_MAIN0_VIRTUAL) ||
+		(cur == DDP_COMPONENT_MERGE1 &&
+		next == DDP_COMPONENT_MAIN1_VIRTUAL)) {
+		*addr = MT6983_DISP_MAIN0_SEL_IN;
+		value = DISP_MAIN0_SEL_IN_FROM_DISP_MERGE0_MOUT_EN;
 	} else if ((cur == DDP_COMPONENT_PWM0 && /* Wired path */
 		next == DDP_COMPONENT_CHIST0) || (cur == DDP_COMPONENT_PWM1 &&
 		next == DDP_COMPONENT_CHIST2)) {
@@ -8081,6 +8207,12 @@ static int mtk_ddp_sel_in_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_WDMA2)) {
 		*addr = MT6983_DISP_WDMA0_SEL_IN;
 		value = DISP_WDMA0_SEL_IN_FROM_DISP_MAIN_OVL_DISP_WDMA_SEL_IN;
+	} else if ((cur == DDP_COMPONENT_DLI_ASYNC2 &&
+		next == DDP_COMPONENT_MERGE0) ||
+		(cur == DDP_COMPONENT_DLI_ASYNC6 &&
+		next == DDP_COMPONENT_MERGE1)) {
+		*addr = MT6983_DISP_MERGE0_R_SEL_IN;
+		value = DISP_MERGE0_R_SEL_IN_FROM_DISP_DLI2_SOUT_SEL;
 	} else {
 		value = -1;
 	}
@@ -8136,6 +8268,12 @@ static int mtk_ddp_sout_sel_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_DLO_ASYNC4)) {
 		*addr = MT6983_DISP_PQ0_SOUT_SEL;
 		value = DISP_PQ0_SOUT_SEL_TO_DISP_DLO_RELAY0;
+	} else if ((cur == DDP_COMPONENT_PQ0_VIRTUAL &&
+		next == DDP_COMPONENT_DSC0) ||
+		(cur == DDP_COMPONENT_PQ1_VIRTUAL &&
+		next == DDP_COMPONENT_DSC1)) {
+		*addr = MT6983_DISP_PQ0_SOUT_SEL;
+		value = DISP_PQ0_SOUT_SEL_TO_DISP_DSC_WRAP0_L_SEL_IN;
 	} else if ((cur == DDP_COMPONENT_MAIN0_VIRTUAL &&
 		next == DDP_COMPONENT_DSI0) ||
 		(cur == DDP_COMPONENT_MAIN1_VIRTUAL &&
@@ -8176,6 +8314,12 @@ static int mtk_ddp_sout_sel_MT6983(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_OVL1)) {
 		*addr = MT6983_DMDP_MAIN_OVL_SOUT_SEL;
 		value = DMDP_MAIN_OVL_SOUT_TO_DISP_OVL0_UFOD_SEL_SOUT;
+	} else if ((cur == DDP_COMPONENT_DLI_ASYNC2 &&
+		next == DDP_COMPONENT_MERGE0) ||
+		(cur == DDP_COMPONENT_DLI_ASYNC6 &&
+		next == DDP_COMPONENT_MERGE1)) {
+		*addr = MT6983_DISP_DLI2_SOUT_SEL;
+		value = DISP_DLI2_SOUT_SEL_TO_DISP_MERGE0_R_SEL_IN;
 	} else {
 		value = -1;
 	}
@@ -8265,22 +8409,18 @@ static int mtk_ddp_mout_en_MT6895(const struct mtk_mmsys_reg_data *data,
 		*addr = MT6895_DISP_RSZ0_MOUT_EN;
 		value = MT6895_DISP_RSZ0_MOUT_EN_TO_DISP_RSZ0_MAIN_OVL_SOUT_SEL;
 	/* for mt6895 rsz path */
-	} else if ((cur == DDP_COMPONENT_OVL1_2L && next == DDP_COMPONENT_OVL1_2L_VIRTUAL0) ||
-		(cur == DDP_COMPONENT_OVL3_2L && next == DDP_COMPONENT_OVL3_2L_VIRTUAL0)) {
-		*addr = MT6895_MMSYS_OVL_CON;
-		value = MT6895_DISP_OVL1_2L_TO_DISP_OVL1_2L_BLENDOUT_MOUT;
-	} else if ((cur == DDP_COMPONENT_OVL1_2L_VIRTUAL0 &&
-		next == DDP_COMPONENT_RSZ0) ||
-		(cur == DDP_COMPONENT_OVL3_2L_VIRTUAL0 &&
-		next == DDP_COMPONENT_RSZ1)) {
-		*addr = MT6895_DISP_OVL1_2L_BLEND_MOUT_EN;
-		value = DISP_OVL1_2L_BLEND_MOUT_EN_TO_DISP_RSZ0_SEL_IN;
 	} else if ((cur == DDP_COMPONENT_OVL0_2L_NWCG_VIRTUAL0 &&
 		next == DDP_COMPONENT_RDMA1) ||
 		(cur == DDP_COMPONENT_OVL2_2L_NWCG_VIRTUAL0 &&
 		next == DDP_COMPONENT_RDMA3)) {
 		*addr = MT6895_DISP_OVL0_2L_NWCG_BLEND_MOUT_EN;
 		value = MT6895_DISP_OVL0_2L_NWCG_BLEND_MOUT_EN_TO_DISP_RDMA1_SEL_IN;
+	} else if ((cur == DDP_COMPONENT_OVL0_VIRTUAL0 &&
+		next == DDP_COMPONENT_MAIN_OVL_DISP_WDMA_VIRTUAL) ||
+		(cur == DDP_COMPONENT_OVL1_VIRTUAL0 &&
+		next == DDP_COMPONENT_MAIN_OVL_DISP1_WDMA_VIRTUAL)) {
+		*addr = MT6895_DISP_OVL0_BLEND_MOUT_EN;
+		value = MT6895_DISP_OVL0_BLEND_MOUT_EN_TO_DISP_MAIN_OVL_DISP_WDMA_SEL;
 	} else {
 		value = -1;
 	}
@@ -8386,16 +8526,23 @@ static int mtk_ddp_sel_in_MT6895(const struct mtk_mmsys_reg_data *data,
 		*addr = MT6895_DISP_DP_INTF0_SEL_IN;
 		value = MT6895_DISP_DP_INTF0_SEL_IN_FROM_DISP_RDMA1_SOUT_SEL;
 	/* for mt6895 rsz path */
-	} else if ((cur == DDP_COMPONENT_OVL1_2L_VIRTUAL0 &&
-		next == DDP_COMPONENT_RSZ0) || (cur == DDP_COMPONENT_OVL3_2L_VIRTUAL0 &&
-		next == DDP_COMPONENT_RSZ1)) {
-		*addr = MT6895_DISP_RSZ0_SEL_IN;
-		value = DISP_RSZ0_SEL_IN_FROM_DISP_OVL1_2L_BLEND_MOUT_EN;
 	} else if ((cur == DDP_COMPONENT_OVL0_2L_NWCG_VIRTUAL0 &&
 		next == DDP_COMPONENT_RDMA1) || (cur == DDP_COMPONENT_OVL2_2L_NWCG_VIRTUAL0 &&
 		next == DDP_COMPONENT_RDMA3)) {
 		*addr = MT6895_DISP_RDMA1_SEL_IN;
 		value = MT6895_DISP_RDMA1_SEL_IN_FROM_DISP_OVL0_2L_NWCG_BLEND_MOUT_EN;
+	} else if ((cur == DDP_COMPONENT_OVL0_VIRTUAL0 &&
+		next == DDP_COMPONENT_MAIN_OVL_DISP_WDMA_VIRTUAL) ||
+		(cur == DDP_COMPONENT_OVL1_VIRTUAL0 &&
+		next == DDP_COMPONENT_MAIN_OVL_DISP1_WDMA_VIRTUAL)) {
+		*addr = MT6895_DISP_MAIN_OVL_DISP_WDMA_SEL_IN;
+		value = MT6895_DISP_OVL0_BLEND_MOUT_TO_DISP_MAIN_OVL_DISP_WDMA_SEL_IN;
+	} else if ((cur == DDP_COMPONENT_MAIN_OVL_DISP_WDMA_VIRTUAL &&
+		next == DDP_COMPONENT_WDMA0) ||
+		(cur == DDP_COMPONENT_MAIN_OVL_DISP1_WDMA_VIRTUAL &&
+		next == DDP_COMPONENT_WDMA2)) {
+		*addr = MT6895_DISP_WDMA0_SEL_IN;
+		value = MT6895_DISP_WDMA0_SEL_IN_FROM_DISP_MAIN_OVL_DISP_WDMA_SEL_IN;
 	} else {
 		value = -1;
 	}
@@ -9177,10 +9324,6 @@ static int mtk_ddp_mout_en_MT6879(const struct mtk_mmsys_reg_data *data,
 		next == DDP_COMPONENT_MAIN_OVL_DISP_WDMA_VIRTUAL) {
 		*addr = MT6879_DISP_OVL0_BLEND_MOUT_EN;
 		value = MT6879_DISP_OVL0_MOUT_TO_DISP_MAIN_OVL_DISP_WDMA_SEL;
-	}  else if (cur == DDP_COMPONENT_OVL0_2L &&
-		next == DDP_COMPONENT_RSZ0) {
-		*addr = MT6879_DISP_OVL0_2L_BLEND_MOUT_EN;
-		value = MT6879_DISP_OVL0_2L_MOUT_TO_DISP_RSZ0_SEL;
 	} else if (cur == DDP_COMPONENT_RSZ0 &&
 		next == DDP_COMPONENT_OVL0) {
 		*addr = MT6879_DISP_RSZ0_MOUT_EN;
@@ -9720,6 +9863,13 @@ void mtk_ddp_add_comp_to_path(struct mtk_drm_crtc *mtk_crtc,
 		if (value >= 0)
 			writel_relaxed(value, config_regs + addr);
 
+		if (cur == DDP_COMPONENT_DSC0) {
+			if (next == DDP_COMPONENT_DLO_ASYNC1)
+				mtk_crtc->is_dsc_output_swap = true;
+			else
+				mtk_crtc->is_dsc_output_swap = false;
+		}
+
 		break;
 
 	case MMSYS_MT6895:
@@ -9994,6 +10144,12 @@ void mtk_ddp_add_comp_to_path_with_cmdq(struct mtk_drm_crtc *mtk_crtc,
 			cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
 				config_regs_pa
 				+ addr, value, ~0);
+		if (cur == DDP_COMPONENT_DSC0) {
+			if (next == DDP_COMPONENT_DLO_ASYNC1)
+				mtk_crtc->is_dsc_output_swap = true;
+			else
+				mtk_crtc->is_dsc_output_swap = false;
+		}
 
 		break;
 
@@ -11285,8 +11441,10 @@ static void mtk_ddp_ext_insert_dual_pipe(struct mtk_drm_crtc *mtk_crtc,
 void mtk_ddp_insert_dsc_prim_MT6983(struct mtk_drm_crtc *mtk_crtc,
 	struct cmdq_pkt *handle)
 {
+	struct mtk_panel_params *panel_ext;
 	unsigned int addr, value;
 
+	mtk_crtc->is_dsc_output_swap = false;
 	/* DISP_PQ0_SOUT -> DISP_DSC_WRAP0_L_SEL */
 	addr = MT6983_DISP_PQ0_SOUT_SEL;
 	value = DISP_PQ0_SOUT_SEL_TO_DISP_DSC_WRAP0_L_SEL_IN;
@@ -11323,6 +11481,31 @@ void mtk_ddp_insert_dsc_prim_MT6983(struct mtk_drm_crtc *mtk_crtc,
 	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
 		       mtk_crtc->config_regs_pa + addr, value, ~0);
 
+	panel_ext = mtk_drm_get_lcm_ext_params(&mtk_crtc->base);
+	/*DSC_WARP0-> DSI1*/
+	if (panel_ext && panel_ext->output_mode == MTK_PANEL_DUAL_PORT) {
+		/* DISP1_DLI_ASYNC1 to DISP_MAIN0_SEL */
+		addr = MT6983_DISP_MAIN0_SEL_IN;
+		value = DISP_MAIN0_SEL_IN_FROM_DISP_DLI_ASYNC1;
+		cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+			       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+		/* DISP_MAIN0_SEL to DSI */
+		addr = MT6983_DISP_MAIN0_SOUT_SEL;
+		value = DISP_MAIN0_SOUT_SEL_TO_DISP_DSI0_SEL_IN;
+		cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+			       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+		addr = MT6983_DISP_DSI0_SEL_IN;
+		value = DISP_DSI0_SEL_IN_FROM_DISP_MAIN0_SOUT_SEL;
+		cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+			       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+		mtk_disp_mutex_add_comp_with_cmdq(mtk_crtc, DDP_COMPONENT_DLO_ASYNC1,
+				mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base), handle, 0);
+		mtk_disp_mutex_add_comp_with_cmdq(mtk_crtc, DDP_COMPONENT_DLI_ASYNC5,
+				mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base), handle, 0);
+	}
 }
 
 void mtk_ddp_remove_dsc_prim_MT6983(struct mtk_drm_crtc *mtk_crtc,
@@ -11351,6 +11534,102 @@ void mtk_ddp_remove_dsc_prim_MT6983(struct mtk_drm_crtc *mtk_crtc,
 	value = 0;
 	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
 		       mtk_crtc->config_regs_pa + addr, value, ~0);
+}
+
+void mtk_ddp_insert_dsc_ext_MT6983(struct mtk_drm_crtc *mtk_crtc,
+	struct cmdq_pkt *handle)
+{
+	unsigned int addr, value;
+
+	/* DISP_RDMA1_SOUT -> DISP_RDMA1_POS_SEL */
+	addr = MT6983_DISP_RDMA1_SOUT_SEL;
+	value = DISP_RDMA1_SOUT_SEL_TO_DISP_RDMA1_POS_SEL_IN;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	addr = MT6983_DISP_RDMA1_POS_SEL_IN;
+	value = DISP_RDMA1_POS_SEL_IN_FROM_DISP_RDMA1_SOUT_SEL;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	/* DISP_TV0_SOUT -> DISP_DSC_WRAP0_L_SEL */
+	addr = MT6983_DISP_TV0_SOUT_SEL;
+	value = DISP_TV0_SOUT_SEL_TO_DISP_DSC_WRAP0_L_SEL_IN;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, value);
+
+	addr = MT6983_DISP_DSC_WRAP0_L_SEL_IN;
+	value = DISP_DSC_WRAP0_L_SEL_IN_FROM_DISP_TV0_SOUT_SEL;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	/* DISP_DSC_WRAP0_MOUT -> DISP_MAIN0_SEL */
+	addr = MT6983_DISP_DSC_WRAP0_MOUT_EN;
+	value = DISP_DSC_WRAP0_MOUT_EN_TO_DISP_MAIN0_SEL_IN;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, value);
+
+	addr = MT6983_DISP_MAIN0_SEL_IN;
+	value = DISP_MAIN0_SEL_IN_FROM_DISP_DSC_WRAP0_MOUT_EN;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	if (!mtk_crtc->is_dual_pipe)
+		return;
+
+	/* DLI_ASYNC2 to  DISP_DSC_WRAP0_R_SEL */
+	addr = MT6983_DISP_DLI2_SOUT_SEL;
+	value = DISP_DLI2_SOUT_SEL_TO_DISP_DSC_WRAP0_R_SEL_IN;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	addr = MT6983_DISP_DSC_WRAP0_R_SEL_IN;
+	value = DISP_DSC_WRAP0_R_SEL_IN_FROM_DISP_DLI2_SOUT_SEL;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+}
+
+void mtk_ddp_remove_dsc_ext_MT6983(struct mtk_drm_crtc *mtk_crtc,
+	struct cmdq_pkt *handle)
+{
+	unsigned int addr, value;
+
+	/* DISP_RDMA1_SOUT -> DISP_RDMA1_POS_SEL */
+	addr = MT6983_DISP_RDMA1_SOUT_SEL;
+	value = 0;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	addr = MT6983_DISP_RDMA1_POS_SEL_IN;
+	value = 0;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	/* DISP_TV0_SOUT -> DISP_DSC_WRAP0_L_SEL */
+	addr = MT6983_DISP_TV0_SOUT_SEL;
+	value = 0;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, value);
+
+	addr = MT6983_DISP_DSC_WRAP0_L_SEL_IN;
+	value = 0;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+		       mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	if (!mtk_crtc->is_dual_pipe)
+		return;
+
+	/* DLI_ASYNC2 to  DISP_DSC_WRAP0_R_SEL */
+	addr = MT6983_DISP_DLI2_SOUT_SEL;
+	value = 0;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+			   mtk_crtc->side_config_regs_pa + addr, value, ~0);
+
+	addr = MT6983_DISP_DSC_WRAP0_R_SEL_IN;
+	value = 0;
+	cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
+			   mtk_crtc->side_config_regs_pa + addr, value, ~0);
 }
 
 void mtk_ddp_insert_dsc_prim_MT6895(struct mtk_drm_crtc *mtk_crtc,
@@ -11553,13 +11832,17 @@ void mtk_ddp_dual_pipe_dump(struct mtk_drm_crtc *mtk_crtc)
 void mtk_ddp_connect_dual_pipe_path(struct mtk_drm_crtc *mtk_crtc,
 	struct mtk_disp_mutex *mutex)
 {
-	if (drm_crtc_index(&mtk_crtc->base) == 1) {
+	struct mtk_ddp_comp *output_comp;
+
+	output_comp = mtk_ddp_comp_request_output(mtk_crtc);
+	if (drm_crtc_index(&mtk_crtc->base) == 1 &&
+	    output_comp && mtk_ddp_comp_get_type(output_comp->id) == MTK_DP_INTF) {
 		//to do: dp in 6983 4k60 can use merge, only 8k30 must use dsc
 		if (drm_mode_vrefresh(&(&mtk_crtc->base)->state->adjusted_mode) == 60)
 			mtk_ddp_ext_dual_pipe_dsc(mtk_crtc, mutex);
 		else
 			mtk_ddp_ext_insert_dual_pipe(mtk_crtc, mutex);
-	} else if (drm_crtc_index(&mtk_crtc->base) == 0) {
+	} else {
 		unsigned int i, j;
 		struct mtk_ddp_comp *comp;
 		struct mtk_ddp_comp **ddp_comp;
@@ -11667,12 +11950,21 @@ void mtk_disp_mutex_put(struct mtk_disp_mutex *mutex)
 
 int mtk_disp_mutex_prepare(struct mtk_disp_mutex *mutex)
 {
+	int ret = 0;
 	struct mtk_ddp *ddp =
 		container_of(mutex, struct mtk_ddp, mutex[mutex->id]);
 
 	if (ddp->dispsys_num > 1)
-		clk_prepare_enable(ddp->side_clk);
-	return clk_prepare_enable(ddp->clk);
+		ret = clk_prepare_enable(ddp->side_clk);
+	if (ret < 0)
+		DDPPR_ERR("%s prepare_enable side clk fail\n", __func__);
+
+	ret = clk_prepare_enable(ddp->clk);
+
+	if (ret < 0)
+		DDPPR_ERR("%s prepare_enable clk fail\n", __func__);
+
+	return ret;
 }
 
 void mtk_disp_mutex_unprepare(struct mtk_disp_mutex *mutex)
@@ -11789,6 +12081,7 @@ void mtk_disp_mutex_add_comp_with_cmdq(struct mtk_drm_crtc *mtk_crtc,
 				       struct cmdq_pkt *handle,
 				       unsigned int mutex_id)
 {
+	struct mtk_panel_params *panel_ext = mtk_drm_get_lcm_ext_params(&mtk_crtc->base);
 	struct mtk_disp_mutex *mutex = NULL;
 	struct mtk_ddp *ddp = NULL;
 	unsigned int reg;
@@ -11848,6 +12141,14 @@ void mtk_disp_mutex_add_comp_with_cmdq(struct mtk_drm_crtc *mtk_crtc,
 								  mutex->id),
 				       ddp->data->mutex_mod[id],
 				       ddp->data->mutex_mod[id]);
+			if (panel_ext && panel_ext->output_mode == MTK_PANEL_DUAL_PORT &&
+			    id == DDP_COMPONENT_DSC0) {
+				cmdq_pkt_write(handle, mtk_crtc->gce_obj.base, regs_pa +
+					       DISP_REG_MUTEX_MOD(ddp->data, mutex->id),
+					       MT6983_MUTEX_MOD0_DISP_DSC1,
+					       MT6983_MUTEX_MOD0_DISP_DSC1);
+				DDPINFO("mutex_add_comp /w cmdq mutex%d add DSC1\n", mutex->id);
+			}
 		} else {
 			cmdq_pkt_write(handle, mtk_crtc->gce_obj.base,
 				       regs_pa +
@@ -12239,6 +12540,10 @@ static irqreturn_t mtk_disp_mutex_irq_handler(int irq, void *dev_id)
 			disp_gamma_on_start_of_frame();
 			irq_debug[8] = sched_clock();
 #endif
+
+#ifdef OPLUS_SILKY_ON_START_FRAME
+			disp_ccorr_on_start_of_frame();
+#endif //OPLUS_SILKY_ON_START_FRAME
 		}
 	}
 
@@ -12354,7 +12659,7 @@ void mutex_dump_reg_mt6895(struct mtk_disp_mutex *mutex)
 	int cnt = 0;
 
 REDUMP:
-	DDPDUMP("== DISP%d MUTEX REGS:0x%x ==\n", cnt, ddp->regs_pa);
+	DDPDUMP("== DISP%d MUTEX REGS:0x%llx ==\n", cnt, ddp->regs_pa);
 	DDPDUMP("0x%03x=0x%08x 0x%03x=0x%08x 0x%03x=0x%08x 0x%03x=0x%08x\n",
 		0x0, readl_relaxed(module_base + 0x0), 0x4,
 		readl_relaxed(module_base + 0x4), 0x8,
@@ -12615,7 +12920,7 @@ void mutex_dump_analysis_mt6895(struct mtk_disp_mutex *mutex)
 	unsigned int val;
 
 REDUMP:
-	DDPDUMP("== DISP%d Mutex Analysis:0x%x ==\n", cnt, ddp->regs_pa);
+	DDPDUMP("== DISP%d Mutex Analysis:0x%llx ==\n", cnt, ddp->regs_pa);
 	for (i = 0; i < 5; i++) {
 		unsigned int mod0, mod1;
 
@@ -12707,8 +13012,8 @@ void mutex_dump_analysis_mt6873(struct mtk_disp_mutex *mutex)
 			      mtk_ddp_get_mutex_sof_name(
 				      REG_FLD_VAL_GET(SOF_FLD_MUTEX0_EOF, val)),
 			      REG_FLD_VAL_GET(SOF_FLD_MUTEX0_SOF_WAIT, val));
-
-		p += len;
+		if (len >= 0)
+			p += len;
 		for (j = 0; j < 32; j++) {
 			unsigned int regval = readl_relaxed(
 				ddp->regs + DISP_REG_MUTEX_MOD(ddp->data, i));
@@ -12716,7 +13021,8 @@ void mutex_dump_analysis_mt6873(struct mtk_disp_mutex *mutex)
 			if ((regval & (1 << j))) {
 				len = sprintf(p, "%s,",
 					ddp_get_mutex_module0_name_mt6873(j));
-				p += len;
+				if (len >= 0)
+					p += len;
 			}
 		}
 		DDPDUMP("%s)\n", mutex_module);
@@ -12845,14 +13151,21 @@ void mutex_dump_analysis_mt6879(struct mtk_disp_mutex *mutex)
 				      REG_FLD_VAL_GET(SOF_FLD_MUTEX0_EOF, val)),
 			      REG_FLD_VAL_GET(SOF_FLD_MUTEX0_SOF_WAIT, val));
 
-		p += len;
+		if (len >= 0)
+			p += len;
 		mod0 = readl_relaxed(ddp->regs +
 			DISP_REG_MUTEX_MOD(ddp->data, i));
 		for (j = 0; j < 32; j++) {
 			if ((mod0 & (1 << j))) {
 				len = sprintf(p, "%s,",
 					ddp_get_mutex_module0_name_mt6879(j));
-				p += len;
+				if (len < 0) {
+					DDPPR_ERR("%s:%d sprintf fail %d\n",
+							__func__, __LINE__, len);
+					continue;
+				}
+				if (len >= 0)
+					p += len;
 			}
 		}
 
@@ -12862,7 +13175,8 @@ void mutex_dump_analysis_mt6879(struct mtk_disp_mutex *mutex)
 			if ((mod1 & (1 << j))) {
 				len = sprintf(p, "%s,",
 					ddp_get_mutex_module1_name_mt6879(j));
-				p += len;
+				if (len >= 0)
+					p += len;
 			}
 		}
 		DDPDUMP("%s)\n", mutex_module);
@@ -12899,7 +13213,10 @@ void mutex_dump_analysis_mt6855(struct mtk_disp_mutex *mutex)
 			      mtk_ddp_get_mutex_sof_name(
 				      REG_FLD_VAL_GET(SOF_FLD_MUTEX0_EOF, val)),
 			      REG_FLD_VAL_GET(SOF_FLD_MUTEX0_SOF_WAIT, val));
-
+		if (len < 0) {
+			DDPPR_ERR("%s:%d sprintf fail %d\n", __func__, __LINE__, len);
+			continue;
+		}
 		p += len;
 		mod0 = readl_relaxed(ddp->regs +
 			DISP_REG_MUTEX_MOD(ddp->data, i));
@@ -12907,6 +13224,11 @@ void mutex_dump_analysis_mt6855(struct mtk_disp_mutex *mutex)
 			if ((mod0 & (1 << j))) {
 				len = sprintf(p, "%s,",
 					ddp_get_mutex_module0_name_mt6855(j));
+				if (len < 0) {
+					DDPPR_ERR("%s:%d sprintf fail %d\n",
+							__func__, __LINE__, len);
+					continue;
+				}
 				p += len;
 			}
 		}
@@ -12917,6 +13239,11 @@ void mutex_dump_analysis_mt6855(struct mtk_disp_mutex *mutex)
 			if ((mod1 & (1 << j))) {
 				len = sprintf(p, "%s,",
 					ddp_get_mutex_module1_name_mt6855(j));
+				if (len < 0) {
+					DDPPR_ERR("%s:%d sprintf fail %d\n",
+							__func__, __LINE__, len);
+					continue;
+				}
 				p += len;
 			}
 		}
@@ -13122,7 +13449,8 @@ void mmsys_config_dump_reg_mt6873(void __iomem *config_regs)
  */
 void mmsys_config_dump_analysis_mt6885(void __iomem *config_regs)
 {
-	unsigned int idx = 0, bit = 0, len = 0;
+	unsigned int idx = 0, bit = 0;
+	int len = 0;
 	unsigned int reg = 0;
 	char clock_on[512] = {'\0'};
 	char *pos = NULL;
@@ -13237,7 +13565,8 @@ void mmsys_config_dump_analysis_mt6885(void __iomem *config_regs)
 
 void mmsys_config_dump_analysis_mt6983(void __iomem *config_regs)
 {
-	unsigned int idx = 0, bit = 0, len = 0;
+	unsigned int idx = 0, bit = 0;
+	int len = 0;
 	unsigned int reg = 0;
 	char clock_on[512] = {'\0'};
 	char *pos = NULL;
@@ -13384,7 +13713,8 @@ void mmsys_config_dump_analysis_mt6983(void __iomem *config_regs)
 
 void mmsys_config_dump_analysis_mt6895(void __iomem *config_regs)
 {
-	unsigned int idx = 0, bit = 0, len = 0;
+	unsigned int idx = 0, bit = 0;
+	int len = 0;
 	unsigned int reg = 0;
 	char clock_on[512] = {'\0'};
 	char *pos = NULL;
@@ -13857,7 +14187,8 @@ void mmsys_config_dump_analysis_mt6853(void __iomem *config_regs)
 
 void mmsys_config_dump_analysis_mt6833(void __iomem *config_regs)
 {
-	unsigned int i = 0, len = 0;
+	unsigned int i = 0;
+	int len = 0;
 	unsigned int reg = 0;
 	char clock_on[512] = {'\0'};
 	char *pos = NULL;
@@ -14381,6 +14712,9 @@ SKIP_SIDE_DISP:
 		DDPAEE("%s:%d, failed to request irq:%d ret:%d\n",
 				__func__, __LINE__,
 				irq, ret);
+		/*#ifdef OPLUS_BUG_STABILITY*/
+		mm_fb_display_kevent("DisplayDriverID@@504$$", MM_FB_KEY_RATELIMIT_1H, "mtk_ddp_probe failed to request irq:%d ret:%d", irq, ret);
+		/*#endif*/
 		return ret;
 	}
 

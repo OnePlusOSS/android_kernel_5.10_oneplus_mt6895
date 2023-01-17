@@ -119,7 +119,8 @@ static enum IMGSENSOR_RETURN gpio_set(
 	struct pinctrl_state  *ppinctrl_state;
 	struct GPIO           *pgpio = (struct GPIO *)pinstance;
 	enum   GPIO_STATE      gpio_state;
-
+	unsigned int pin_index = 0;
+	unsigned int sensor_idx_uint = 0;
 	/* PK_DBG("%s :debug pinctrl ENABLE, PinIdx %d, Val %d\n",
 	 *	__func__, pin, pin_state);
 	 */
@@ -127,12 +128,15 @@ static enum IMGSENSOR_RETURN gpio_set(
 	if (pin < IMGSENSOR_HW_PIN_PDN ||
 		pin > IMGSENSOR_HW_PIN_MIPI_SWITCH_SEL ||
 		pin_state < IMGSENSOR_HW_PIN_STATE_LEVEL_0 ||
-		pin_state > IMGSENSOR_HW_PIN_STATE_LEVEL_HIGH ||
-		sensor_idx < 0)
+		pin_state > IMGSENSOR_HW_PIN_STATE_LEVEL_HIGH)
 		return IMGSENSOR_RETURN_ERROR;
+
+	sensor_idx_uint = sensor_idx;
 
 	gpio_state = (pin_state > IMGSENSOR_HW_PIN_STATE_LEVEL_0)
 		? GPIO_STATE_H : GPIO_STATE_L;
+
+	pin_index = pin - IMGSENSOR_HW_PIN_PDN;
 
 	if (pin == IMGSENSOR_HW_PIN_MIPI_SWITCH_EN)
 		ppinctrl_state = pgpio->ppinctrl_state_switch[
@@ -142,8 +146,8 @@ static enum IMGSENSOR_RETURN gpio_set(
 			GPIO_CTRL_STATE_MIPI_SWITCH_SEL_H + gpio_state];
 	else
 		ppinctrl_state =
-			pgpio->ppinctrl_state_cam[sensor_idx][
-			((pin - IMGSENSOR_HW_PIN_PDN) << 1) + gpio_state];
+			pgpio->ppinctrl_state_cam[sensor_idx_uint][
+			(pin_index << 1) + gpio_state];
 
 	mutex_lock(pgpio->pgpio_mutex);
 

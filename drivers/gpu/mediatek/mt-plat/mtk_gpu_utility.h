@@ -78,6 +78,8 @@ bool mtk_timer_base_dvfs_margin(int i32MarginValue);
 bool mtk_get_timer_base_dvfs_margin(int *pi32MaginValue);
 bool mtk_dvfs_loading_mode(int i32LoadingMode);
 bool mtk_get_dvfs_loading_mode(unsigned int *pui32LoadingMode);
+bool mtk_dvfs_workload_mode(int i32WorkloadMode);
+bool mtk_get_dvfs_workload_mode(unsigned int *pui32WorkloadMode);
 bool mtk_set_fastdvfs_mode(unsigned int u32Mode);
 bool mtk_get_fastdvfs_mode(unsigned int *pui32Mode);
 bool mtk_set_gpu_idle(unsigned int val);
@@ -105,7 +107,7 @@ void mtk_notify_gpu_power_change(int power_on);
 
 bool mtk_notify_gpu_freq_change(u32 clk_idx, u32 gpufreq);
 
-void mtk_gpu_fence_debug_dump(int fd, int pid, int type);
+void mtk_gpu_fence_debug_dump(int fd, int pid, int type, int timeouts);
 #ifdef __cplusplus
 }
 #endif

@@ -47,7 +47,6 @@
 #define write_cmos_sensor_8(...) subdrv_i2c_wr_u8(__VA_ARGS__)
 #define imx519_table_write_cmos_sensor(...) subdrv_i2c_wr_regs_u8(__VA_ARGS__)
 
-#undef VENDOR_EDIT
 
 /***************Modify Following Strings for Debug**********************/
 #define PFX "IMX519_camera_sensor"
@@ -62,10 +61,6 @@
 #define I2C_BUFFER_LEN 765 /* trans# max is 255, each 3 bytes */
 #else
 #define I2C_BUFFER_LEN 3
-#endif
-
-#ifdef VENDOR_EDIT
-#define MODULE_ID_OFFSET 0x0000
 #endif
 
 /* 2-trio setting on capture mode */
@@ -3128,7 +3123,7 @@ static kal_int32 get_sensor_temperature(struct subdrv_ctx *ctx)
 
 	temperature = read_cmos_sensor_8(ctx, 0x013a);
 
-	if (temperature >= 0x0 && temperature <= 0x60)
+	if (temperature <= 0x60)
 		temperature_convert = temperature;
 	else if (temperature >= 0x61 && temperature <= 0x7F)
 		temperature_convert = 97;
@@ -3285,11 +3280,6 @@ static int feature_control(struct subdrv_ctx *ctx, MSDK_SENSOR_FEATURE_ENUM feat
 	case SENSOR_FEATURE_SET_NIGHTMODE:
 		 /* night_mode((BOOL) *feature_data); */
 		break;
-	#ifdef VENDOR_EDIT
-	case SENSOR_FEATURE_CHECK_MODULE_ID:
-		*feature_return_para_32 = imgsensor_info.module_id;
-		break;
-	#endif
 	case SENSOR_FEATURE_SET_GAIN:
 		set_gain(ctx, (UINT16) *feature_data);
 		break;

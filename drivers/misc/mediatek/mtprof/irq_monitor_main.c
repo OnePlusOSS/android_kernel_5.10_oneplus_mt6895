@@ -379,6 +379,9 @@ static void probe_irq_handler_exit(void *ignore,
 			/* skip mtk_syst_handler, let hrtimer handle it. */
 			irq_aee_state[irq] = 1;
 
+		if (!irq_name)
+			irq_name = "NULL";
+
 		if (!strcmp(irq_name, "IPI") && irq_to_ipi_type(irq) == 4) // IPI_TIMER
 			/* skip ipi timer handler, let hrtimer handle it. */
 			irq_aee_state[irq] = 1;
@@ -1001,6 +1004,8 @@ static ssize_t irq_mon_door_write(struct file *filp, const char *ubuf,
 {
 	char buf[16];
 
+	if (!count)
+		return count;
 	count = min(count, sizeof(buf) - 1);
 	if (copy_from_user(&buf, ubuf, count))
 		return -EFAULT;

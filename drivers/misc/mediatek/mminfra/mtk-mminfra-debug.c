@@ -5,6 +5,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
@@ -12,6 +13,8 @@
 #include <linux/pm_runtime.h>
 #include <linux/scmi_protocol.h>
 #include <linux/slab.h>
+#include <linux/sched/clock.h>
+#include <linux/timer.h>
 #include "cmdq-util.h"
 #include "mtk-smi-dbg.h"
 #include "tinysys-scmi.h"
@@ -19,6 +22,11 @@
 #include <mt-plat/aee.h>
 #endif
 #include <soc/mediatek/smi.h>
+
+#if IS_ENABLED(CONFIG_MTK_DEVAPC)
+#include <linux/soc/mediatek/devapc_public.h>
+#endif
+
 #define MMINFRA_MAX_CLK_NUM	(4)
 
 struct mminfra_dbg {
@@ -36,6 +44,9 @@ static struct clk *mminfra_clk[MMINFRA_MAX_CLK_NUM];
 static atomic_t clk_ref_cnt = ATOMIC_INIT(0);
 static struct device *dev;
 static struct mminfra_dbg *dbg;
+
+static bool check_smi_cg = true;
+static bool check_gce_cg = true;
 
 #define MMINFRA_BASE		0x1e800000
 
@@ -77,13 +88,26 @@ static bool mminfra_check_scmi_status(void)
 static void do_mminfra_bkrs(bool is_restore)
 {
 	int err;
+	u64 start_ts, start_osts, end_ts, end_osts;
 
 	if (mminfra_check_scmi_status()) {
+		start_ts = sched_clock();
+		start_osts = __arch_counter_get_cntvct();
+
 		err = scmi_tinysys_common_set(tinfo->ph, feature_id,
 				2, (is_restore)?0:1, 0, 0, 0);
-		if (err)
-			pr_notice("%s: call scmi_tinysys_common_set(%d) err=%d\n",
-				__func__, is_restore, err);
+
+		if (err) {
+			end_ts = sched_clock();
+			end_osts = __arch_counter_get_cntvct();
+			pr_notice("%s: call scmi(%d) err=%d osts:%llu ts:%llu\n",
+				__func__, is_restore, err, start_osts, start_ts);
+			if (err == -ETIMEDOUT) {
+				pr_notice("%s: call scmi(%d) timeout osts:%llu ts:%llu\n",
+					__func__, is_restore, end_osts, end_ts);
+				mdelay(3);
+			}
+		}
 	}
 }
 
@@ -143,8 +167,9 @@ static void mminfra_cg_check(bool on)
 
 	if (on) {
 		/* SMI CG still off */
-		if ((con0_val & (SMI_CG_BIT)) || (con0_val & GCEM_CG_BIT) ||
-			(con0_val & GCED_CG_BIT) || (con1_val & GCE26M_CG_BIT)) {
+		if ((check_smi_cg && (con0_val & (SMI_CG_BIT)))
+			|| (check_gce_cg && ((con0_val & GCEM_CG_BIT)
+			|| (con0_val & GCED_CG_BIT) || (con1_val & GCE26M_CG_BIT)))) {
 			pr_notice("%s cg still off, CG_CON0:0x%x CG_CON1:0x%x\n",
 						__func__, con0_val, con1_val);
 			mtk_smi_dbg_cg_status();
@@ -152,8 +177,9 @@ static void mminfra_cg_check(bool on)
 		}
 	} else {
 		/* SMI CG still on */
-		if (!(con0_val & (SMI_CG_BIT)) || !(con0_val & GCEM_CG_BIT)
-			|| !(con0_val & GCED_CG_BIT) || !(con1_val & GCE26M_CG_BIT)) {
+		if ((check_smi_cg && !(con0_val & (SMI_CG_BIT)))
+			|| (check_gce_cg && (!(con0_val & GCEM_CG_BIT)
+			|| !(con0_val & GCED_CG_BIT) || !(con1_val & GCE26M_CG_BIT)))) {
 			pr_notice("%s Scg still on, CG_CON0:0x%x CG_CON1:0x%x\n",
 						__func__, con0_val, con1_val);
 			mtk_smi_dbg_cg_status();
@@ -175,6 +201,7 @@ static int mtk_mminfra_pd_callback(struct notifier_block *nb,
 		mminfra_cg_check(true);
 		count = atomic_inc_return(&clk_ref_cnt);
 		cmdq_util_mminfra_cmd(0);
+		cmdq_util_mminfra_cmd(3); //mminfra rfifo init
 		do_mminfra_bkrs(true);
 		test_base = ioremap(0x1e800280, 4);
 		val = readl_relaxed(test_base);
@@ -185,7 +212,7 @@ static int mtk_mminfra_pd_callback(struct notifier_block *nb,
 			aee_kernel_warning("mminfra",
 				"HRE restore failed 0x1e800280=%x\n", val);
 #endif
-
+			BUG_ON(1);
 		}
 		iounmap(test_base);
 		pr_notice("%s: enable clk ref_cnt=%d\n", __func__, count);
@@ -290,7 +317,7 @@ MODULE_PARM_DESC(mminfra_ut, "mminfra ut");
 
 int mtk_mminfra_dbg_hang_detect(const char *user)
 {
-	s32 offset, len, ret;
+	s32 offset, ret, len = 0;
 	u32 val;
 	char buf[LINK_MAX + 1] = {0};
 
@@ -309,17 +336,27 @@ int mtk_mminfra_dbg_hang_detect(const char *user)
 		ret = snprintf(buf + len, LINK_MAX - len, " %#x=%#x,",
 			offset, val);
 		if (ret < 0 || ret >= LINK_MAX - len) {
-			snprintf(buf + len, LINK_MAX - len, "%c", '\0');
+			ret = snprintf(buf + len, LINK_MAX - len, "%c", '\0');
+			if (ret < 0) {
+				pr_notice("%s: snprintf failed:%d\n", __func__, ret);
+				continue;
+			}
 			dev_info(dev, "%s\n", buf);
 
 			len = 0;
 			memset(buf, '\0', sizeof(char) * ARRAY_SIZE(buf));
 			ret = snprintf(buf + len, LINK_MAX - len, " %#x=%#x,",
 				offset, val);
+			if (ret < 0) {
+				pr_notice("%s: snprintf failed:%d\n", __func__, ret);
+				continue;
+			}
 		}
 		len += ret;
 	}
-	snprintf(buf + len, LINK_MAX - len, "%c", '\0');
+	ret = snprintf(buf + len, LINK_MAX - len, "%c", '\0');
+	if (ret < 0)
+		pr_notice("%s: snprintf failed:%d\n", __func__, ret);
 	dev_info(dev, "%s\n", buf);
 
 	pm_runtime_put(dbg->comm_dev);
@@ -355,6 +392,18 @@ static irqreturn_t mminfra_irq_handler(int irq, void *data)
 
 	return IRQ_HANDLED;
 }
+
+#if IS_ENABLED(CONFIG_MTK_DEVAPC)
+static bool mminfra_devapc_power_cb(void)
+{
+	return is_mminfra_power_on();
+}
+
+static struct devapc_power_callbacks devapc_power_handle = {
+	.type = DEVAPC_TYPE_MMINFRA,
+	.query_power = mminfra_devapc_power_cb,
+};
+#endif
 
 static int mminfra_debug_probe(struct platform_device *pdev)
 {
@@ -420,9 +469,16 @@ static int mminfra_debug_probe(struct platform_device *pdev)
 			return ret;
 		}
 		cmdq_util_mminfra_cmd(0);
+		cmdq_util_mminfra_cmd(3); //mminfra rfifo init
 	}
 
 	dbg->mminfra_base = ioremap(MMINFRA_BASE, 0x8f4);
+
+	if (of_property_read_bool(node, "skip-smi-cg-check"))
+		check_smi_cg = false;
+
+	if (of_property_read_bool(node, "skip-gce-cg-check"))
+		check_gce_cg = false;
 
 	cmdq_get_mminfra_cb(is_mminfra_power_on);
 	cmdq_get_mminfra_gce_cg_cb(is_gce_cg_on);
@@ -452,6 +508,11 @@ static int mminfra_debug_probe(struct platform_device *pdev)
 			pr_notice("%s: init-clk-on enable clk\n", __func__);
 		}
 	}
+
+#if IS_ENABLED(CONFIG_MTK_DEVAPC)
+	register_devapc_power_callback(&devapc_power_handle);
+#endif
+
 	return ret;
 }
 

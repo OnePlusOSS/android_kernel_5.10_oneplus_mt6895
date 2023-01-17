@@ -21,6 +21,9 @@
 #include "sched_sys_common.h"
 #include "eas_plus.h"
 #include "eas_trace.h"
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+#include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
+#endif
 
 DEFINE_PER_CPU(struct task_rotate_work, task_rotate_works);
 bool big_task_rotation_enable = true;
@@ -195,6 +198,11 @@ void task_check_for_rotation(struct rq *src_rq)
 
 		if (rq->curr->policy != SCHED_NORMAL)
 			continue;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+		if (fbg_skip_migration(rq->curr, i, src_cpu))
+			continue;
+#endif
 
 		if (rq->nr_running > 1)
 			continue;

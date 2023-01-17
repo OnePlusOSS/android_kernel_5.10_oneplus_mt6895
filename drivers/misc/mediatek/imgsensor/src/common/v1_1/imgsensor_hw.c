@@ -19,18 +19,39 @@ char * const imgsensor_hw_pin_names[] = {
 	"rst",
 	"vcama",
 	"vcama1",
+	"vcamaf",
 	"vcamd",
 	"vcamio",
 	"mipi_switch_en",
 	"mipi_switch_sel",
 	"mclk"
 };
-
+char * const imgsensor_hw_pin_state_names[] = {
+	"pin_state_Low",
+	"pin_out_1v",
+	"pin_out_1.05v",
+	"pin_out_1.1v",
+	"pin_out_1.15v",
+	"pin_out_1.2v",
+	"pin_out_1.21v",
+	"pin_out_1.22v",
+	"pin_out_1.5v",
+	"pin_out_1.8v",
+	"pin_out_2.2v",
+	"pin_out_2.5v",
+	"pin_out_2.8v",
+	"pin_out_2.9v",
+	"pin_state_High"
+};
 /*the index is consistent with enum IMGSENSOR_HW_ID*/
 char * const imgsensor_hw_id_names[] = {
 	"mclk",
 	"regulator",
-	"gpio"
+	"gpio",
+	"wl2868c"
+	#ifdef SUPPORT_WL2868
+	,"wl2868"
+	#endif
 };
 
 enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
@@ -66,7 +87,6 @@ enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 			{
 				if (IS_MT6877(phw->g_platform_id) ||
 					IS_MT6833(phw->g_platform_id) ||
-					IS_MT6789(phw->g_platform_id) ||
 					IS_MT6781(phw->g_platform_id) ||
 					IS_MT6779(phw->g_platform_id))
 					pcust_pwr_cfg->i2c_dev = IMGSENSOR_I2C_DEV_1;
@@ -253,10 +273,12 @@ static enum IMGSENSOR_RETURN imgsensor_hw_power_sequence(
 
 					if (__ratelimit(&ratelimit))
 						PK_DBG(
-						"sensor_idx %d, ppwr_info->pin %d, ppwr_info->pin_state_on %d, delay %u",
+						"sensor_idx %d, ppwr_info->pin %d(%s), ppwr_info->pin_state_on %d(%s), delay %u",
 						sensor_idx,
 						ppwr_info->pin,
+						imgsensor_hw_pin_names[ppwr_info->pin],
 						ppwr_info->pin_state_on,
+						imgsensor_hw_pin_state_names[ppwr_info->pin_state_on],
 						ppwr_info->pin_on_delay);
 
 					if (pdev->set != NULL)
@@ -286,10 +308,12 @@ static enum IMGSENSOR_RETURN imgsensor_hw_power_sequence(
 
 					if (__ratelimit(&ratelimit))
 						PK_DBG(
-						"sensor_idx %d, ppwr_info->pin %d, ppwr_info->pin_state_off %d, delay %u",
+						"sensor_idx %d, ppwr_info->pin %d(%s), ppwr_info->pin_state_off %d(%s), delay %u",
 						sensor_idx,
 						ppwr_info->pin,
+						imgsensor_hw_pin_names[ppwr_info->pin],
 						ppwr_info->pin_state_off,
+						imgsensor_hw_pin_state_names[ppwr_info->pin_state_off],
 						ppwr_info->pin_on_delay);
 
 					if (pdev->set != NULL)

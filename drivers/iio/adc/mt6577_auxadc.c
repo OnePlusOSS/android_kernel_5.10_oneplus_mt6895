@@ -549,9 +549,17 @@ static int mt6577_auxadc_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* BSP.CHG.basic, 2022/07/26, Add for charger */
+static const struct dev_pm_ops mt6577_auxadc_pm_ops = {
+ 	 SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(mt6577_auxadc_suspend,
+ 					 mt6577_auxadc_resume)
+};
+#else
 static SIMPLE_DEV_PM_OPS(mt6577_auxadc_pm_ops,
 			 mt6577_auxadc_suspend,
 			 mt6577_auxadc_resume);
+#endif
 
 static const struct of_device_id mt6577_auxadc_of_match[] = {
 	{ .compatible = "mediatek,mt2701-auxadc", .data = &mt8173_compat},

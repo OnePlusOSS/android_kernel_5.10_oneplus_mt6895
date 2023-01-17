@@ -47,6 +47,8 @@
 #include "mtk_pbm.h"
 #endif
 
+unsigned int ap_plat_info;
+
 struct ccci_md_regulator {
 	struct regulator *reg_ref;
 	unsigned char *reg_name;
@@ -117,9 +119,6 @@ static int md_cd_io_remap_md_side_register(struct ccci_modem *md)
 {
 	struct md_pll_reg *md_reg;
 	struct md_sys1_info *md_info = (struct md_sys1_info *)md->private_data;
-
-	md_info->md_boot_slave_En =
-	 ioremap_wc(md->hw_info->md_boot_slave_En, 0x4);
 	md_info->md_rgu_base =
 	 ioremap_wc(md->hw_info->md_rgu_base, 0x300);
 
@@ -200,6 +199,8 @@ static void md_cd_get_md_bootup_status(
 		__func__, res.a0, res.a1, res.a2);
 }
 
+static atomic_t reg_dump_ongoing;
+
 static void md_cd_dump_debug_register(struct ccci_modem *md)
 {
 	/* MD no need dump because of bus hang happened - open for debug */
@@ -231,10 +232,16 @@ static void md_cd_dump_debug_register(struct ccci_modem *md)
 		return;
 	}
 
+	if (atomic_cmpxchg(&reg_dump_ongoing, 0, 1) == 1) {
+		CCCI_NORMAL_LOG(-1, TAG, "[%s] one dump already on-going\n", __func__);
+		return;
+	}
+
 	md_cd_lock_modem_clock_src(1);
 	md_dump_reg(md->index);
 	md_cd_lock_modem_clock_src(0);
 
+	atomic_set(&reg_dump_ongoing, 0);
 }
 
 static void md_cd_check_emi_state(struct ccci_modem *md, int polling)
@@ -279,7 +286,7 @@ static void md1_pmic_setting_init(struct platform_device *plat_dev)
 					md_reg_table[idx].reg_name, ret);
 
 			CCCI_BOOTUP_LOG(-1, TAG,
-				"get regulator(%s=%ld %d) successfully\n",
+				"get regulator(%s=%ld %lu) successfully\n",
 				md_reg_table[idx].reg_name,
 				md_reg_table[idx].reg_vol0, md_reg_table[idx].reg_vol1);
 		}
@@ -355,8 +362,16 @@ static void flight_mode_set_by_atf(struct ccci_modem *md,
 
 static int md_cd_topclkgen_off(struct ccci_modem *md)
 {
-	unsigned int reg_value;
-	int ret;
+	unsigned int reg_value = 0;
+	int ret = 0;
+
+	if (md_cd_plat_val_ptr.power_flow_config & (1 << SKIP_TOPCLK_BIT)) {
+		CCCI_BOOTUP_LOG(md->index, TAG,
+			"[POWER OFF] bypass %s\n", __func__);
+		CCCI_NORMAL_LOG(md->index, TAG,
+			"[POWER OFF] bypass %s\n", __func__);
+		return 0;
+	}
 
 	CCCI_BOOTUP_LOG(md->index, TAG, "[POWER OFF]%s start\n", __func__);
 	CCCI_NORMAL_LOG(md->index, TAG, "[POWER OFF]%s start\n", __func__);
@@ -401,7 +416,7 @@ int md1_revert_sequencer_setting(struct ccci_modem *md)
 	int count = 0;
 
 	CCCI_NORMAL_LOG(md->index, TAG,
-		"[POWER OFF] %s start\n", __func__);
+		"[POWER OFF] %s start exp5\n", __func__);
 
 	if (!(md_cd_plat_val_ptr.power_flow_config & (1 << REVERT_SEQUENCER_BIT))) {
 		CCCI_BOOTUP_LOG(md->index, TAG,
@@ -443,9 +458,7 @@ int md1_revert_sequencer_setting(struct ccci_modem *md)
 	CCCI_NORMAL_LOG(md->index, TAG,
 		"[POWER OFF] wait sequencer done\n");
 
-	/* revert mux of sequencer to AOC1.0 */
 	ccci_write32(reg, 0x208, 0x5000D);
-
 	CCCI_NORMAL_LOG(md->index, TAG,
 		"[POWER OFF] %s end\n", __func__);
 
@@ -628,8 +641,9 @@ static int md_cd_power_off(struct ccci_modem *md, unsigned int timeout)
 	flight_mode_set_by_atf(md, true);
 
 	/* enable sequencer setting to AOC2.5 for gen98 */
-	if (md_cd_plat_val_ptr.md_gen >= 6298) {
+	if ((md_cd_plat_val_ptr.md_gen >= 6298) && (ccci_get_hs2_done_status())) {
 		ret = md1_enable_sequencer_setting(md);
+		reset_modem_hs2_status();
 		if (ret)
 			return ret;
 	}
@@ -709,6 +723,16 @@ static int md_cd_topclkgen_on(struct ccci_modem *md)
 	unsigned int reg_value = 0;
 	int ret;
 
+	if (md_cd_plat_val_ptr.power_flow_config & (1 << SKIP_TOPCLK_BIT)) {
+		CCCI_BOOTUP_LOG(md->index, TAG,
+			"[POWER ON] bypass %s\n", __func__);
+		CCCI_NORMAL_LOG(md->index, TAG,
+			"[POWER ON] bypass %s\n", __func__);
+		return 0;
+	}
+
+	CCCI_BOOTUP_LOG(md->index, TAG,
+		"[POWER ON]%s start\n", __func__);
 	CCCI_NORMAL_LOG(md->index, TAG,
 		"[POWER ON]%s start\n", __func__);
 
@@ -808,8 +832,8 @@ SRC_CLK_O1_DONE:
 
 static int md_cd_srcclkena_setting(struct ccci_modem *md)
 {
-	unsigned int reg_value;
-	int ret;
+	unsigned int reg_value = 0;
+	int ret = 0;
 
 	if (!(md_cd_plat_val_ptr.power_flow_config & (1 << SRCCLKENA_SETTING_BIT))) {
 		CCCI_BOOTUP_LOG(md->index, TAG,
@@ -1113,6 +1137,12 @@ static int md_cd_get_modem_hw_info(struct platform_device *dev_ptr,
 			__func__);
 		return -1;
 	}
+
+	ret = of_property_read_u32(dev_ptr->dev.of_node,
+		"mediatek,ap_plat_info", &ap_plat_info);
+	CCCI_NORMAL_LOG(-1, TAG, "ap_plat_info : %u\n", ap_plat_info);
+
+
 	CCCI_DEBUG_LOG(dev_cfg->index, TAG,
 		"modem hw info get idx:%d\n", dev_cfg->index);
 	if ((dev_cfg->index != MD_SYS1) ||
@@ -1160,7 +1190,6 @@ static int md_cd_get_modem_hw_info(struct platform_device *dev_ptr,
 
 	hw_info->sram_size = CCIF_SRAM_SIZE;
 	hw_info->md_rgu_base = MD_RGU_BASE;
-	hw_info->md_boot_slave_En = MD_BOOT_VECTOR_EN;
 	ret = of_property_read_u32(dev_ptr->dev.of_node,
 		"mediatek,md_generation", &md_cd_plat_val_ptr.md_gen);
 	if (ret < 0) {

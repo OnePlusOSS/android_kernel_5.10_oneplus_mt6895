@@ -115,7 +115,6 @@ struct md_sys1_info {
 
 		void __iomem *md_boot_slave_Vector;
 		void __iomem *md_boot_slave_Key;
-		void __iomem *md_boot_slave_En;
 };
 
 struct md_sys3_info {
@@ -176,21 +175,21 @@ int ccci_md_register(struct ccci_modem *modem);
 
 static inline struct ccci_modem *ccci_md_get_modem_by_id(int md_id)
 {
-	if (md_id >= MAX_MD_NUM)
+	if ((md_id < 0) || (md_id >= MAX_MD_NUM))
 		return NULL;
 	return modem_sys[md_id];
 }
 
 static inline struct device *ccci_md_get_dev_by_id(int md_id)
 {
-	if (md_id >= MAX_MD_NUM)
+	if ((md_id < 0) || (md_id >= MAX_MD_NUM))
 		return NULL;
 	return &modem_sys[md_id]->plat_dev->dev;
 }
 
 static inline void *ccci_md_get_hw_info(int md_id)
 {
-	if (md_id >= MAX_MD_NUM)
+	if ((md_id < 0) || (md_id >= MAX_MD_NUM))
 		return NULL;
 	return modem_sys[md_id]->hw_info;
 }

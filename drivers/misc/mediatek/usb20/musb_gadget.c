@@ -15,6 +15,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/kfifo.h>
+#include <linux/usb/composite.h>
 
 #if IS_ENABLED(CONFIG_USBIF_COMPLIANCE)
 #include <linux/kthread.h>
@@ -35,6 +36,75 @@
 #endif
 
 #include "musb_trace.h"
+
+#include "u_fs.h"
+
+/* workaround for f_fs use after free issue */
+struct ffs_ep {
+	struct usb_ep *ep;
+	struct usb_request *req;
+	struct usb_endpoint_descriptor	*descs[3];
+	u8 num;
+	int status;
+};
+
+struct ffs_function {
+	struct usb_configuration *conf;
+	struct usb_gadget *gadget;
+	struct ffs_data *ffs;
+	struct ffs_ep *eps;
+	u8 eps_revmap[16];
+	short *interfaces_nums;
+	struct usb_function function;
+};
+
+static struct usb_function *musb_ep_to_func(struct musb_ep *mep)
+{
+	struct usb_ep *ep = &mep->end_point;
+	struct usb_composite_dev *cdev;
+	struct usb_function *f = NULL;
+	int addr;
+
+	cdev = get_gadget_data(&mep->musb->g);
+	if (!cdev || !cdev->config)
+		return f;
+
+	if (!mep->current_epnum)
+		return f;
+
+	addr = ((ep->address & 0x80) >> 3)
+			| (ep->address & 0x0f);
+
+	list_for_each_entry(f, &cdev->config->functions, list) {
+		if (test_bit(addr, f->endpoints))
+			break;
+	}
+
+	return f;
+}
+
+static bool musb_ffs_state_valid(struct musb_ep *mep)
+{
+	struct usb_function *f;
+	struct ffs_function *func;
+
+	f = musb_ep_to_func(mep);
+
+	if (!f || strcmp("Function FS Gadget", f->name))
+		return true;
+
+	func = container_of(f, struct ffs_function, function);
+	if (!func->ffs)
+		return false;
+
+	if (!func->ffs->epfiles || func->ffs->state != FFS_ACTIVE) {
+		dev_info(mep->musb->controller, "%s ffs->state!=active\n", __func__);
+		return false;
+	}
+
+	return true;
+}
+/* workaround for f_fs use after free issue */
 
 #define FIFO_START_ADDR 512
 
@@ -1352,6 +1422,14 @@ static int musb_gadget_enable
 	/* enable the interrupts for the endpoint, set the endpoint
 	 * packet size (or fail), set the mode, clear the fifo
 	 */
+
+	/* workaround for f_fs use after free issue */
+	if (!musb_ffs_state_valid(musb_ep)) {
+		DBG(0, "f_fs is invalid, do not enable ep!\n");
+		status = -EINVAL;
+		goto fail;
+	}
+
 	musb_ep_select(mbase, epnum);
 	if (usb_endpoint_dir_in(desc)) {
 
@@ -1488,6 +1566,7 @@ static int musb_gadget_enable
 
 fail:
 	spin_unlock_irqrestore(&musb->lock, flags);
+
 	return status;
 }
 
@@ -2323,6 +2402,17 @@ static int musb_gadget_start
 		(struct usb_gadget *g, struct usb_gadget_driver *driver);
 static int musb_gadget_stop(struct usb_gadget *g);
 
+static void musb_gadget_async_callbacks(struct usb_gadget *g, bool enable)
+{
+	struct musb *musb = gadget_to_musb(g);
+	unsigned long flags;
+
+	spin_lock_irqsave(&musb->lock, flags);
+	musb->async_callbacks = enable;
+	spin_unlock_irqrestore(&musb->lock, flags);
+}
+
+
 static const struct usb_gadget_ops musb_gadget_operations = {
 	.get_frame = musb_gadget_get_frame,
 	.wakeup = musb_gadget_wakeup,
@@ -2332,6 +2422,7 @@ static const struct usb_gadget_ops musb_gadget_operations = {
 	.pullup = musb_gadget_pullup,
 	.udc_start = musb_gadget_start,
 	.udc_stop = musb_gadget_stop,
+	.udc_async_callbacks = musb_gadget_async_callbacks,
 };
 
 /* ----------------------------------------------------------------------- */
@@ -2452,6 +2543,7 @@ int musb_gadget_setup(struct musb *musb)
 	musb_g_init_endpoints(musb);
 
 	musb->is_active = 0;
+	musb->g.irq = musb->nIrq;
 	musb_platform_try_idle(musb, 0);
 
 	/* Fix: gadget device dma ops is null,so add musb controller dma ops */
@@ -2664,7 +2756,8 @@ void musb_g_resume(struct musb *musb)
 	case OTG_STATE_B_WAIT_ACON:
 	case OTG_STATE_B_PERIPHERAL:
 		musb->is_active = 1;
-		if (musb->gadget_driver && musb->gadget_driver->resume) {
+		if (musb->async_callbacks && musb->gadget_driver &&
+				musb->gadget_driver->resume) {
 			spin_unlock(&musb->lock);
 			musb->gadget_driver->resume(&musb->g);
 			spin_lock(&musb->lock);
@@ -2691,7 +2784,8 @@ void musb_g_suspend(struct musb *musb)
 		break;
 	case OTG_STATE_B_PERIPHERAL:
 		musb->is_suspended = 1;
-		if (musb->gadget_driver && musb->gadget_driver->suspend) {
+		if (musb->async_callbacks && musb->gadget_driver &&
+				musb->gadget_driver->suspend) {
 			spin_unlock(&musb->lock);
 			musb->gadget_driver->suspend(&musb->g);
 			spin_lock(&musb->lock);
@@ -2728,7 +2822,8 @@ void musb_g_disconnect(struct musb *musb)
 	(void)musb_gadget_vbus_draw(&musb->g, 0);
 
 	musb->g.speed = USB_SPEED_UNKNOWN;
-	if (musb->gadget_driver && musb->gadget_driver->disconnect) {
+	if (musb->async_callbacks && musb->gadget_driver &&
+			musb->gadget_driver->disconnect) {
 		spin_unlock(&musb->lock);
 		musb->gadget_driver->disconnect(&musb->g);
 		spin_lock(&musb->lock);

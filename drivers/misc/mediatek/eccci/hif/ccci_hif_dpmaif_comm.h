@@ -37,6 +37,7 @@ struct ccci_dpmaif_platform_ops {
 
 
 extern unsigned int g_dpmaif_ver;
+extern unsigned int g_chip_info;
 extern struct ccci_dpmaif_platform_ops g_plt_ops;
 
 int ccci_dpmaif_init_clk(struct device *dev,
@@ -44,9 +45,12 @@ int ccci_dpmaif_init_clk(struct device *dev,
 void ccci_dpmaif_set_clk(unsigned int on,
 		struct dpmaif_clk_node *clk);
 
+extern int ccci_dpmaif_hif_init_v1(struct platform_device *pdev);
 extern int ccci_dpmaif_hif_init_v2(struct platform_device *pdev);
 extern int ccci_dpmaif_hif_init_v3(struct platform_device *pdev);
 
+extern int ccci_dpmaif_suspend_noirq_v1(struct device *dev);
+extern int ccci_dpmaif_resume_noirq_v1(struct device *dev);
 extern int ccci_dpmaif_suspend_noirq_v2(struct device *dev);
 extern int ccci_dpmaif_resume_noirq_v2(struct device *dev);
 extern int ccci_dpmaif_suspend_noirq_v3(struct device *dev);

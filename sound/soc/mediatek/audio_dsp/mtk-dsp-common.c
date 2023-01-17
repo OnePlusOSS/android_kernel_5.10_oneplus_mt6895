@@ -18,6 +18,10 @@
 #include "mtk-base-dsp.h"
 #include "mtk-dsp-common.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_AUDIODSP_SUPPORT)
 #include <adsp_helper.h>
 #endif
@@ -26,6 +30,7 @@
 #include "mtk-sp-spk-amp.h"
 
 static int adsp_standby_flag;
+static struct wait_queue_head waitq;
 
 /* don't use this directly if not necessary */
 static struct mtk_base_dsp *local_base_dsp;
@@ -158,6 +163,13 @@ int mtk_scp_ipi_send(int task_scene, int data_type, int ack_type,
 		(char *)payload);
 	if (send_result)
 		pr_info("%s(),scp_ipi send fail\n", __func__);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (send_result) {
+		ratelimited_fb("payload@@scp_ipi send fail,ret=%d,task_scene=%d,msg_id=%d", \
+				send_result, get_dspdaiid_by_dspscene(task_scene), msg_id);
+	}
+#endif
 
 	return send_result;
 }
@@ -359,8 +371,11 @@ int afe_pcm_ipi_to_dsp(int command, struct snd_pcm_substream *substream,
 		return -1;
 
 	if (get_task_attr(task_id, ADSP_TASK_ATTR_RUNTIME) <= 0 ||
-	    get_task_attr(task_id, ADSP_TASK_ATTR_DEFAULT) <= 0)
+	    get_task_attr(task_id, ADSP_TASK_ATTR_DEFAULT) <= 0) {
+		pr_info("%s(), task runtime enable: %d\n", __func__,
+				get_task_attr(task_id, ADSP_TASK_ATTR_RUNTIME));
 		return -1;
+	}
 
 	task_name = get_str_by_dsp_dai_id(task_id);
 
@@ -453,6 +468,16 @@ int mtk_dsp_deregister_feature(int id)
 	return adsp_deregister_feature(id);
 }
 
+int wait_dsp_ready(void)
+{
+	/* should not call this in atomic or interrupt level */
+	if (!wait_event_timeout(waitq, adsp_standby_flag == 0,
+				msecs_to_jiffies(200)))
+		return -EBUSY;
+
+	return 0;
+}
+
 #if IS_ENABLED(CONFIG_MTK_AUDIODSP_SUPPORT)
 static int mtk_audio_dsp_event_receive(
 	struct notifier_block *this,
@@ -466,6 +491,7 @@ static int mtk_audio_dsp_event_receive(
 	case ADSP_EVENT_READY:
 		mtk_reinit_adsp();
 		adsp_standby_flag = 0;
+		wake_up(&waitq);
 		break;
 	default:
 		pr_info("event %lu err", event);
@@ -484,19 +510,16 @@ int mtk_audio_register_notify(void)
 #if IS_ENABLED(CONFIG_MTK_AUDIODSP_SUPPORT)
 	adsp_register_notify(&mtk_audio_dsp_notifier);
 #endif
+	init_waitqueue_head(&waitq);
 	return 0;
 }
 
-int mtk_spk_send_ipi_buf_to_dsp(void *data_buffer, uint32_t data_size)
+int mtk_get_ipi_buf_scene_adsp(void)
 {
-	int result = -1;
-	struct ipi_msg_t ipi_msg;
-	int task_scene;
+	int task_scene = -1;
 
 	if (adsp_standby_flag)
-		return result;
-
-	memset((void *)&ipi_msg, 0, sizeof(struct ipi_msg_t));
+		return task_scene;
 
 	if (get_task_attr(AUDIO_TASK_CALL_FINAL_ID,
 			  ADSP_TASK_ATTR_RUNTIME) > 0)
@@ -507,49 +530,9 @@ int mtk_spk_send_ipi_buf_to_dsp(void *data_buffer, uint32_t data_size)
 	else {
 		pr_info("%s(), callfinal and playback are not enable\n",
 			__func__);
-		return result;
 	}
 
-	result = audio_send_ipi_buf_to_dsp(&ipi_msg, task_scene,
-					   AUDIO_DSP_TASK_AURISYS_SET_BUF,
-					   mtk_spk_get_type(),
-					   data_buffer, data_size);
-
-	return result;
+	return task_scene;
 }
-EXPORT_SYMBOL(mtk_spk_send_ipi_buf_to_dsp);
-
-int mtk_spk_recv_ipi_buf_from_dsp(int8_t *buffer,
-				  int16_t size,
-				  uint32_t *buf_len)
-{
-	int result = -1;
-	struct ipi_msg_t ipi_msg;
-	int task_scene;
-
-	if (adsp_standby_flag)
-		return result;
-
-	memset((void *)&ipi_msg, 0, sizeof(struct ipi_msg_t));
-
-	if (get_task_attr(AUDIO_TASK_CALL_FINAL_ID,
-			  ADSP_TASK_ATTR_RUNTIME) > 0)
-		task_scene = TASK_SCENE_CALL_FINAL;
-	else if (get_task_attr(AUDIO_TASK_PLAYBACK_ID,
-			       ADSP_TASK_ATTR_RUNTIME) > 0)
-		task_scene = TASK_SCENE_AUDPLAYBACK;
-	else {
-		pr_info("%s(), callfinal and playback are not enable\n",
-			__func__);
-		return result;
-	}
-
-	result = audio_recv_ipi_buf_from_dsp(&ipi_msg,
-					     task_scene,
-					     AUDIO_DSP_TASK_AURISYS_GET_BUF,
-					     mtk_spk_get_type(),
-					     buffer, size, buf_len);
-	return result;
-}
-EXPORT_SYMBOL(mtk_spk_recv_ipi_buf_from_dsp);
+EXPORT_SYMBOL(mtk_get_ipi_buf_scene_adsp);
 

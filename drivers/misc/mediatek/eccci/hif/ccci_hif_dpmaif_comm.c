@@ -40,6 +40,7 @@
 #define TAG "dpmaif"
 
 unsigned int g_dpmaif_ver;
+unsigned int g_chip_info;
 struct ccci_dpmaif_platform_ops g_plt_ops;
 
 
@@ -108,6 +109,10 @@ void ccci_dpmaif_set_clk(unsigned int on,
 
 static int ccci_hif_dpmaif_probe(struct platform_device *pdev)
 {
+	of_property_read_u32(pdev->dev.of_node,
+		"mediatek,chip_info", &g_chip_info);
+	CCCI_NORMAL_LOG(-1, TAG, "g_chip_info: %u\n", g_chip_info);
+
 	if (of_property_read_u32(pdev->dev.of_node,
 			"mediatek,dpmaif_ver", &g_dpmaif_ver))
 		g_dpmaif_ver = 2;
@@ -118,6 +123,8 @@ static int ccci_hif_dpmaif_probe(struct platform_device *pdev)
 		return ccci_dpmaif_hif_init_v3(pdev);
 	else if (g_dpmaif_ver == 2)
 		return ccci_dpmaif_hif_init_v2(pdev);
+	else if (g_dpmaif_ver == 1)
+		return ccci_dpmaif_hif_init_v1(pdev);
 	else {
 		CCCI_ERROR_LOG(-1, TAG,
 			"[%s] error: g_dpmaif_ver(%d) is invalid.\n",
@@ -132,6 +139,8 @@ static int dpmaif_suspend_noirq(struct device *dev)
 		return ccci_dpmaif_suspend_noirq_v3(dev);
 	else if (g_dpmaif_ver == 2)
 		return ccci_dpmaif_suspend_noirq_v2(dev);
+	else if (g_dpmaif_ver == 1)
+		return ccci_dpmaif_suspend_noirq_v1(dev);
 	else {
 		CCCI_ERROR_LOG(-1, TAG,
 			"[%s] error: g_dpmaif_ver(%u) is invalid.\n",
@@ -146,6 +155,8 @@ static int dpmaif_resume_noirq(struct device *dev)
 		return ccci_dpmaif_resume_noirq_v3(dev);
 	else if (g_dpmaif_ver == 2)
 		return ccci_dpmaif_resume_noirq_v2(dev);
+	else if (g_dpmaif_ver == 1)
+		return ccci_dpmaif_resume_noirq_v1(dev);
 	else {
 		CCCI_ERROR_LOG(-1, TAG,
 			"[%s] error: g_dpmaif_ver(%u) is invalid.\n",

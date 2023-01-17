@@ -441,6 +441,10 @@ struct swpm_rec_data {
 //extern int ca_force_stop_set_in_kernel(int val);
 #endif
 
+#if IS_ENABLED(CONFIG_MEDIATEK_CPUFREQ_DEBUG_LITE)
+extern int get_devinfo(int i);
+#endif
+
 extern struct power_rail_data swpm_power_rail[NR_POWER_RAIL];
 extern spinlock_t swpm_snap_spinlock;
 extern struct mem_swpm_index mem_idx_snap;

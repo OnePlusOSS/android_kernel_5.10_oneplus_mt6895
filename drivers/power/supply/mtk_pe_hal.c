@@ -102,7 +102,7 @@ int pe_hal_init_hardware(struct chg_alg_device *alg)
 
 static int get_pmic_vbus(int *vchr)
 {
-	union power_supply_propval prop;
+	union power_supply_propval prop = {0};
 	static struct power_supply *chg_psy;
 	int ret;
 
@@ -169,6 +169,7 @@ int pe_hal_get_ibat(struct chg_alg_device *alg)
 	} else {
 		ret = power_supply_get_property(bat_psy,
 			POWER_SUPPLY_PROP_CURRENT_NOW, &prop);
+		pr_debug("for cov:%d\n", ret);
 		ret = prop.intval;
 	}
 
@@ -190,7 +191,7 @@ int pe_hal_get_charging_current(struct chg_alg_device *alg,
 		charger_dev_get_charging_current(hal->chg1_dev, ua);
 	else if (chgidx == CHG2 && hal->chg2_dev != NULL)
 		charger_dev_get_charging_current(hal->chg2_dev, ua);
-	pe_dbg("%s idx:%d %d\n", __func__, chgidx, ua);
+	pe_dbg("%s idx:%d %lu\n", __func__, chgidx, (unsigned long)ua);
 
 	return 0;
 }
@@ -430,7 +431,7 @@ int pe_hal_get_log_level(struct chg_alg_device *alg)
 		return -1;
 	} else {
 		info = (struct mtk_charger *)power_supply_get_drvdata(chg_psy);
-		if (IS_ERR_OR_NULL(info)) {
+		if (info == NULL) {
 			pe_err("%s info is NULL\n", __func__);
 			return -1;
 		}

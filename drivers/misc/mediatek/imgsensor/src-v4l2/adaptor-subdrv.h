@@ -106,6 +106,11 @@ struct subdrv_ctx {
 	u32 is_read_preload_eeprom;
 	u32 is_read_four_cell;
 	bool is_streaming;
+	u32 sof_cnt;
+	u32 ref_sof_cnt;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	bool is_esd_enable;
+#endif
 };
 
 struct subdrv_ops {
@@ -133,6 +138,9 @@ struct subdrv_ops {
 			struct mtk_mbus_frame_desc *fd);
 	int (*get_temp)(struct subdrv_ctx *ctx, int *temp);
 	int (*vsync_notify)(struct subdrv_ctx *ctx, unsigned int sof_cnt);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	int (*update_sof_cnt)(struct subdrv_ctx *ctx, unsigned int sof_cnt);
+#endif
 	int (*get_csi_param)(struct subdrv_ctx *ctx,
 		enum SENSOR_SCENARIO_ID_ENUM scenario_id,
 		struct mtk_csi_param *csi_param);
@@ -161,6 +169,22 @@ struct subdrv_entry {
 		__ret = __ctx->subdrv->ops->o(&ctx->subctx, ##args); \
 	__ret; \
 })
+
+#define gc02m1_subdrv_i2c_rd_u8_u8(subctx, reg) \
+({ \
+	u8 __val = 0xff; \
+	gc02m1_adaptor_i2c_rd_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, &__val); \
+	__val; \
+})
+
+#define gc02m1_subdrv_i2c_wr_u8_u8(subctx, reg, val) \
+	gc02m1_adaptor_i2c_wr_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, val)
+
+#define gc02m1_subdrv_i2c_wr_regs_u8(subctx, list, len) \
+	gc02m1_adaptor_i2c_wr_regs_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, list, len)
 
 #define subdrv_i2c_rd_u8(subctx, reg) \
 ({ \
@@ -212,5 +236,21 @@ struct subdrv_entry {
 	(_shutter) : \
 	(((_shutter) > (_fine_integ)) ? (((_shutter) - (_fine_integ)) / 1000) : 0) \
 )
+
+#define subdrv_i2c_rd_u8_u8(subctx, reg) \
+({ \
+	u8 __val = 0xff; \
+	adaptor_i2c_rd_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, &__val); \
+	__val; \
+})
+
+#define subdrv_i2c_wr_u8_u8(subctx, reg, val) \
+	adaptor_i2c_wr_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, val)
+
+#define subdrv_i2c_wr_regs_u8_u8(subctx, list, len) \
+	adaptor_i2c_wr_regs_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, list, len)
 
 #endif

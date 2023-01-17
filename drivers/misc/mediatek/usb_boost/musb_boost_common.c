@@ -17,6 +17,8 @@
 #include <linux/timekeeping.h>
 #include <linux/usb/composite.h>
 #include <trace/hooks/sound.h>
+#include <linux/pm_wakeup.h>
+
 #include "usb_boost.h"
 
 #if IS_ENABLED(CONFIG_USB_MTK_HDRC)
@@ -102,6 +104,7 @@ static int trigger_cnt_disabled;
 static int enabled;
 static int inited;
 static struct class *usb_boost_class;
+static struct wakeup_source *usb_boost_ws;
 static int cpu_freq_dft_para[_ATTR_PARA_RW_MAXID] = {1, 3, 300, 0};
 static int cpu_core_dft_para[_ATTR_PARA_RW_MAXID] = {1, 3, 300, 0};
 static int dram_vcore_dft_para[_ATTR_PARA_RW_MAXID] = {1, 3, 300, 0};
@@ -795,16 +798,34 @@ static void musb_g_giveback_boost(void *unused, struct musb_request *musb_req)
 	}
 }
 
-static void musb_host_urb_giveback_boost(void *unused, struct urb *urb)
+static int update_time_audio(void)
+{
+	ktime_get_ts64(&audio_boost_inst.tv_ref_time);
+	return 1;
+}
+
+void musb_host_urb_giveback_dbg(void *unused, struct urb *urb)
 {
 	switch (usb_endpoint_type(&urb->ep->desc)) {
 	case USB_ENDPOINT_XFER_BULK:
-		if (urb->actual_length >= 8192)
+		if (urb->actual_length >= 8192) {
+			__pm_wakeup_event(usb_boost_ws, 10000);
 			usb_boost();
+		}
 		break;
-	default:
+	case USB_ENDPOINT_XFER_ISOC:
+		update_time_audio();
 		break;
 	}
+}
+
+static void vh_sound_usb_support_cpu_suspend(void *unused,
+	struct usb_device *udev, int direction, bool *is_support)
+{
+	USB_BOOST_DBG("%s enter\n", __func__);
+
+	update_time_audio();
+	audio_boost_inst.request_func(0);
 }
 
 static int musb_trace_init(void)
@@ -815,13 +836,10 @@ static int musb_trace_init(void)
 		boost_ep_disable, NULL));
 	WARN_ON(register_trace_musb_g_giveback(
 		musb_g_giveback_boost, NULL));
-	return 0;
-}
-
-static int musb_host_trace_init(void)
-{
+	WARN_ON(register_trace_android_vh_sound_usb_support_cpu_suspend(
+		vh_sound_usb_support_cpu_suspend, NULL));
 	WARN_ON(register_trace_musb_host_urb_giveback(
-		musb_host_urb_giveback_boost, NULL));
+		musb_host_urb_giveback_dbg, NULL));
 	return 0;
 }
 #endif
@@ -853,6 +871,8 @@ int usb_boost_init(void)
 	INIT_WORK(&audio_boost_inst.work, audio_boost_work);
 	/* default off */
 	audio_boost_inst.request_func = __request_empty;
+	/* wakelock */
+	usb_boost_ws = wakeup_source_register(NULL, "usb_boost");
 
 	create_sys_fs();
 	default_setting();
@@ -860,7 +880,6 @@ int usb_boost_init(void)
 
 #if IS_ENABLED(CONFIG_USB_MTK_HDRC)
 	musb_trace_init();
-	musb_host_trace_init();
 #endif
 
 	return 0;

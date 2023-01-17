@@ -256,6 +256,7 @@ struct scp_dvfs_hw {
 	int cur_dbg_core;
 	u32 core_nums;
 	unsigned int secure_access_scp;
+	bool bypass_pmic_rg_access;
 };
 
 extern int scp_pll_ctrl_set(unsigned int pll_ctrl_flag, unsigned int pll_sel);
@@ -264,7 +265,7 @@ extern int scp_resource_req(unsigned int req);
 extern uint32_t scp_get_freq(void);
 extern void scp_init_vcore_request(void);
 extern void wait_scp_dvfs_init_done(void);
-extern void sync_ulposc_cali_data_to_scp(void);
+extern bool sync_ulposc_cali_data_to_scp(void);
 extern int __init scp_dvfs_init(void);
 extern void scp_dvfs_exit(void);
 extern int scp_dvfs_feature_enable(void);

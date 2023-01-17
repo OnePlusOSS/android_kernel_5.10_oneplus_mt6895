@@ -21,6 +21,7 @@
 static u32 cnted_share_mem[SHARE_MEM_SIZE];
 static u32 rfhw_sel;
 static int mt_mdpm_debug;
+static int md_gen;
 
 static struct md_power_status mdpm_power_sta;
 
@@ -39,6 +40,16 @@ static struct tx_power *mdpm_tx_pwr;
 static struct mdpm_scenario *mdpm_scen;
 static int *scen_priority;
 
+enum mdpm_platform {
+	MT6873_MDPM_DATA,
+	MT6893_MDPM_DATA,
+	MT6983_MDPM_DATA,
+	MT6879_MDPM_DATA,
+	MT6895_MDPM_DATA,
+	MT6855_MDPM_DATA,
+	MT6789_MDPM_DATA
+};
+
 void init_md_section_level(enum pbm_kicker kicker, u32 *share_mem)
 {
 	if (!mdpm_tx_pwr || !mdpm_scen || !scen_priority) {
@@ -53,6 +64,9 @@ void init_md_section_level(enum pbm_kicker kicker, u32 *share_mem)
 #ifdef DBM_RESERVE_OFFSET
 	share_mem += DBM_RESERVE_OFFSET;
 #endif
+	if ((md_gen == 6295) || (md_gen == 6293))
+		share_mem -= DBM_GEN95_OFFSET;
+
 	dbm_share_mem = share_mem;
 	if (kicker == KR_MD1) {
 		init_md1_section_level(dbm_share_mem);
@@ -274,8 +288,7 @@ static int get_shm_idx(enum tx_power_table tx_dbm, int sec_shift, bool get_dbm)
 
 	idx = sec_shift / 32;
 
-	if (idx >= DBM_TABLE_SIZE || idx < 0 || tx_dbm >= TX_DBM_NUM
-		|| tx_dbm < 0) {
+	if (idx >= DBM_TABLE_SIZE || idx < 0 || tx_dbm >= TX_DBM_NUM) {
 		pr_notice("[%s] ERROR, exceed index %d %d %d\n",
 			__func__, idx, sec_shift, tx_dbm);
 			WARN_ON_ONCE(1);
@@ -310,7 +323,7 @@ static int get_shm_idx(enum tx_power_table tx_dbm, int sec_shift, bool get_dbm)
 static int mdpm_shm_write(u32 *share_mem, enum share_mem_mapping mem_idx,
 	u32 value, u32 mask, u32 shift)
 {
-	if (mem_idx < 0 || mem_idx >= SHARE_MEM_SIZE)
+	if (mem_idx >= SHARE_MEM_SIZE)
 		return -EINVAL;
 
 	share_mem[mem_idx] = (share_mem[mem_idx] & (~(mask << shift)))
@@ -322,7 +335,7 @@ static int mdpm_shm_write(u32 *share_mem, enum share_mem_mapping mem_idx,
 static int mdpm_shm_read(u32 *share_mem, enum share_mem_mapping mem_idx,
 	u32 *value, u32 mask, u32 shift)
 {
-	if (mem_idx < 0 || mem_idx >= SHARE_MEM_SIZE)
+	if (mem_idx >= SHARE_MEM_SIZE)
 		return -EINVAL;
 
 	*value = (share_mem[mem_idx] >> shift) & mask;
@@ -374,7 +387,7 @@ static u32 get_rfhw(u32 *share_mem)
 	if (rfhw_check == RF_HW_VALID) {
 		mdpm_shm_read(share_mem, M_RF_HW, &rfhw_version,
 				RF_HW_VERSION_MASK, RF_HW_VERSION_SHIFT);
-		if (rfhw_version >= 0 && rfhw_version < RF_HW_NUM) {
+		if (rfhw_version < RF_HW_NUM) {
 			rfhw_updated = 1;
 			return rfhw_version;
 		} else if (1)
@@ -509,7 +522,7 @@ enum md_scenario get_md1_scenario(u32 share_reg,
 int get_md1_scenario_power(enum md_scenario scenario,
 	enum mdpm_power_type power_type, struct md_power_status *mdpm_pwr_sta)
 {
-	int s_power = 0;
+	int s_power = 0, ret;
 
 	switch (power_type) {
 	case MAX_POWER:
@@ -523,8 +536,11 @@ int get_md1_scenario_power(enum md_scenario scenario,
 		break;
 	}
 	mdpm_pwr_sta->scenario_id = scenario;
-	snprintf(mdpm_pwr_sta->scenario_name, sizeof(mdpm_pwr_sta->scenario_name),
+	ret = snprintf(mdpm_pwr_sta->scenario_name, sizeof(mdpm_pwr_sta->scenario_name),
 			"%s", mdpm_scen[scenario].scenario_name);
+	if (ret < 0)
+		pr_info_ratelimited("%s:%d: copy scenario_name fail %d\n", __func__, __LINE__, ret);
+
 	mdpm_pwr_sta->scanario_power = s_power;
 	mdpm_pwr_sta->power_type = power_type;
 
@@ -541,8 +557,7 @@ static int get_md1_tx_power_by_table(u32 *dbm_mem, u32 *old_dbm_mem,
 	int section, index, offset, i;
 	bool cmp = true;
 
-	if (dbm_type >= TX_DBM_NUM || dbm_type < 0 ||
-		power_type >= POWER_TYPE_NUM || power_type < 0) {
+	if (dbm_type >= TX_DBM_NUM || power_type >= POWER_TYPE_NUM) {
 		pr_notice("error argument dbm_type=%d power_type=%d\n",
 			dbm_type, power_type);
 		return 0;
@@ -632,8 +647,7 @@ static int get_md1_tx_power_by_rat(u32 *dbm_mem, u32 *old_dbm_mem,
 	int power;
 	struct tx_power *tx_pwr = NULL;
 
-	if (rat > RAT_NUM || rat <= 0 ||
-		power_type >= POWER_TYPE_NUM || power_type < 0) {
+	if (rat > RAT_NUM || rat <= 0 || power_type >= POWER_TYPE_NUM) {
 		pr_notice("error argument rat_type=%d power_type=%d\n", rat,
 			power_type);
 		return 0;
@@ -709,7 +723,7 @@ int get_md1_tx_power(enum md_scenario scenario, u32 *share_mem,
 	enum mdpm_power_type power_type,
 	struct md_power_status *mdpm_pwr_sta)
 {
-	int i, rf_ret, tx_power, tx_power_max, usedBytes;
+	int i, rf_ret, tx_power, tx_power_max, usedBytes = 0;
 	enum tx_rat_type rat;
 	struct md_power_status mdpm_power_s_tmp;
 	char log_buffer[128];
@@ -791,6 +805,7 @@ static int mdpm_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mdpm_data *mdpm_data;
+	struct device_node *node = dev->of_node;
 
 	mdpm_data = (struct mdpm_data *) of_device_get_match_data(dev);
 
@@ -807,19 +822,14 @@ static int mdpm_probe(struct platform_device *pdev)
 	mdpm_scen = mdpm_data->scenario_power_t;
 	scen_priority = mdpm_data->prority_t;
 
+	if (of_property_read_u32(node,
+		"mediatek,md_generation", &md_gen) != 0)
+		md_gen = 0;
+
 	mt_mdpm_create_procfs();
 
 	return 0;
 }
-
-enum mdpm_platform {
-	MT6873_MDPM_DATA,
-	MT6893_MDPM_DATA,
-	MT6983_MDPM_DATA,
-	MT6879_MDPM_DATA,
-	MT6895_MDPM_DATA,
-	MT6855_MDPM_DATA
-};
 
 static struct mdpm_data mt6873_mdpm_data = {
 	.platform = MT6873_MDPM_DATA,
@@ -863,6 +873,13 @@ static struct mdpm_data mt6855_mdpm_data = {
 	.prority_t = (void *)&mt6855_scen_priority
 };
 
+static struct mdpm_data mt6789_mdpm_data = {
+	.platform = MT6789_MDPM_DATA,
+	.scenario_power_t = mt6789_mdpm_scen,
+	.tx_power_t = mt6789_mdpm_tx_pwr,
+	.prority_t = (void *)&mt6789_scen_priority
+};
+
 static const struct of_device_id mdpm_of_match[] = {
 	{
 		.compatible = "mediatek,mt6873-mdpm",
@@ -887,6 +904,10 @@ static const struct of_device_id mdpm_of_match[] = {
 	{
 		.compatible = "mediatek,mt6855-mdpm",
 		.data = (void *)&mt6855_mdpm_data,
+	},
+	{
+		.compatible = "mediatek,mt6789-mdpm",
+		.data = (void *)&mt6789_mdpm_data,
 	},
 	{
 	},

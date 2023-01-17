@@ -11,6 +11,12 @@
 #if IS_ENABLED(CONFIG_MTK_THERMAL_INTERFACE)
 #include <thermal_interface.h>
 #endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING)
+#include <linux/cpufreq_bouncing.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+#include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
+#endif
 
 MODULE_LICENSE("GPL");
 
@@ -305,7 +311,7 @@ unsigned long mtk_em_cpu_energy(struct em_perf_domain *pd,
 	 *                  scale_cpu
 	 */
 
-	dyn_pwr = (ps->cost * 1000 * sum_util / scale_cpu);
+	dyn_pwr = (ps->cost * sum_util / scale_cpu);
 	energy = dyn_pwr + static_pwr;
 
 	trace_sched_em_cpu_energy(opp, freq, ps->cost, scale_cpu, dyn_pwr, static_pwr);
@@ -480,8 +486,18 @@ void check_for_migration(struct task_struct *p)
 	int new_cpu = -1, better_idle_cpu = -1;
 	int cpu = task_cpu(p);
 	struct rq *rq = cpu_rq(cpu);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	bool need_up_migrate = false;
 
+	if (fbg_need_up_migration(p, rq))
+		need_up_migrate = true;
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	if (rq->misfit_task_load || need_up_migrate) {
+#else
 	if (rq->misfit_task_load) {
+#endif
 		struct em_perf_domain *pd;
 		struct cpufreq_policy *policy;
 		int opp_curr = 0, thre = 0, thre_idx = 0;
@@ -544,6 +560,14 @@ void check_for_migration(struct task_struct *p)
 
 void hook_scheduler_tick(void *data, struct rq *rq)
 {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING)
+	int this_cpu = cpu_of(rq);
+	struct cpufreq_policy *pol = cpufreq_cpu_get_raw(this_cpu);
+
+	if (pol)
+		cb_update(pol, ktime_get_ns());
+#endif
+
 	if (rq->curr->policy == SCHED_NORMAL)
 		check_for_migration(rq->curr);
 }
@@ -616,6 +640,10 @@ static inline bool rt_task_fits_capacity(struct task_struct *p, int cpu)
 static inline bool should_honor_rt_sync(struct rq *rq, struct task_struct *p,
 					bool sync)
 {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	fbg_skip_rt_sync(rq, p, &sync);
+#endif
+
 	/*
 	 * If the waker is CFS, then an RT sync wakeup would preempt the waker
 	 * and force it to run for a likely small time after the RT wakee is
@@ -668,7 +696,11 @@ void mtk_select_task_rq_rt(void *data, struct task_struct *p, int source_cpu,
 
 	for_each_cpu_and(cpu, p->cpus_ptr,
 			cpu_active_mask) {
-		if (idle_cpu(cpu) && rt_task_fits_capacity(p, cpu)) {
+		if (idle_cpu(cpu) && rt_task_fits_capacity(p, cpu)
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+				&& fbg_rt_task_fits_capacity(p, cpu)
+#endif
+				) {
 			*target_cpu = cpu;
 			select_reason = LB_RT_IDLE;
 			break;
@@ -678,7 +710,11 @@ void mtk_select_task_rq_rt(void *data, struct task_struct *p, int source_cpu,
 		if (curr && (curr->policy == SCHED_NORMAL)
 				&& (curr->prio > lowest_prio)
 				&& (!task_may_not_preempt(curr, cpu))
-				&& (rt_task_fits_capacity(p, cpu))) {
+				&& (rt_task_fits_capacity(p, cpu))
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+				&& (fbg_rt_task_fits_capacity(p, cpu))
+#endif
+				) {
 			lowest_prio = curr->prio;
 			lowest_cpu = cpu;
 		}

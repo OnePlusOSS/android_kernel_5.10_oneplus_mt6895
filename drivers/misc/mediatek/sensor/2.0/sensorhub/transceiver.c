@@ -149,7 +149,12 @@ static bool transceiver_wakeup_check(uint8_t action, uint8_t sensor_type)
 			sensor_type == SENSOR_TYPE_MOTION_DETECT ||
 			sensor_type == SENSOR_TYPE_IN_POCKET ||
 			sensor_type == SENSOR_TYPE_ANSWER_CALL ||
-			sensor_type == SENSOR_TYPE_FLAT))
+			sensor_type == SENSOR_TYPE_FLAT ||
+//#ifdef OPLUS_SENSOR_FEATURE add for oplus virtual sensor
+                        sensor_type == SENSOR_TYPE_LUX_AOD ||
+                        sensor_type == SENSOR_TYPE_PICKUP_DETECT ||
+                        sensor_type == SENSOR_TYPE_FP_DISPLAY))
+//#endif
 		return true;
 
 	return false;
@@ -296,6 +301,7 @@ static int transceiver_translate(struct transceiver_device *dev,
 		case SENSOR_TYPE_ACCELEROMETER:
 		case SENSOR_TYPE_MAGNETIC_FIELD:
 		case SENSOR_TYPE_GYROSCOPE:
+		case SENSOR_TYPE_PROXIMITY:
 			dst->word[0] = src->value[0];
 			dst->word[1] = src->value[1];
 			dst->word[2] = src->value[2];
@@ -332,7 +338,6 @@ static int transceiver_translate(struct transceiver_device *dev,
 			break;
 		case SENSOR_TYPE_LIGHT:
 		case SENSOR_TYPE_PRESSURE:
-		case SENSOR_TYPE_PROXIMITY:
 		case SENSOR_TYPE_STEP_COUNTER:
 			dst->word[0] = src->value[0];
 			break;
@@ -518,14 +523,16 @@ static int transceiver_comm_with(int sensor_type, int cmd,
 {
 	int ret = 0;
 	struct sensor_comm_ctrl *ctrl = NULL;
+	uint32_t ctrl_size = 0;
 
-	ctrl = kzalloc(sizeof(*ctrl) + length, GFP_KERNEL);
+	ctrl_size = ipi_comm_size(sizeof(*ctrl) + length);
+	ctrl = kzalloc(ctrl_size, GFP_KERNEL);
 	ctrl->sensor_type = sensor_type;
 	ctrl->command = cmd;
 	ctrl->length = length;
 	if (length)
 		memcpy(ctrl->data, data, length);
-	ret = sensor_comm_ctrl_send(ctrl, sizeof(*ctrl) + ctrl->length);
+	ret = sensor_comm_ctrl_send(ctrl, ctrl_size);
 	kfree(ctrl);
 	return ret;
 }
@@ -540,21 +547,22 @@ static int transceiver_enable(struct hf_device *hf_dev,
 	state = &dev->state[sensor_type];
 	mutex_lock(&dev->enable_lock);
 	if (en) {
-		scp_register_sensor(SENS_FEATURE_ID, sensor_type);
+		//fix kernel panic for feature id not match sensor id, add later
+		//scp_register_sensor(SENS_FEATURE_ID, sensor_type);
 		ret = transceiver_comm_with(sensor_type,
 			SENS_COMM_CTRL_ENABLE_CMD,
 			&state->batch, sizeof(state->batch));
 		if (ret >= 0)
 			state->enable = true;
-		else
-			scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
+		//else
+		//	scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
 	} else {
 		ret = transceiver_comm_with(sensor_type,
 			SENS_COMM_CTRL_DISABLE_CMD, NULL, 0);
 		state->batch.delay = S64_MAX;
 		state->batch.latency = S64_MAX;
 		state->enable = false;
-		scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
+		//scp_deregister_sensor(SENS_FEATURE_ID, sensor_type);
 	}
 	mutex_unlock(&dev->enable_lock);
 	return ret;

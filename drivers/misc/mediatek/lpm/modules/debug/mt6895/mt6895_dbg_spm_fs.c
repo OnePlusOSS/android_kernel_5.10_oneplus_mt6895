@@ -18,6 +18,8 @@
 #include <mt6895_pwr_ctrl.h>
 #include <lpm_dbg_fs_common.h>
 #include <lpm_spm_comm.h>
+#include <mt6895_spm_reg.h>
+#include <mt-plat/mtk_ccci_common.h>
 
 /* Determine for node route */
 #define MT_LP_RQ_NODE	"/proc/mtk_lpm/spm/spm_resource_req"
@@ -49,6 +51,8 @@
 		sz -= l; \
 	} while (0)
 
+
+#define plat_mmio_read(offset)	__raw_readl(lpm_spm_base + offset)
 
 static char *mt6895_pwr_ctrl_str[PW_MAX_COUNT] = {
 	[PW_PCM_FLAGS] = "pcm_flags",
@@ -268,6 +272,7 @@ static char *mt6895_pwr_ctrl_str[PW_MAX_COUNT] = {
 	[PW_REG_EXT_WAKEUP_EVENT_MASK] = "reg_ext_wakeup_event_mask",
 };
 
+
 /**************************************
  * xxx_ctrl_show Function
  **************************************/
@@ -483,9 +488,106 @@ static ssize_t mt6895_spm_res_rq_write(char *FromUserBuf, size_t sz, void *priv)
 	return -EINVAL;
 }
 
+void __attribute__ ((weak))
+__iomem *get_smem_start_addr(int md_id, enum SMEM_USER_ID user_id,
+	int *size_o)
+{
+		pr_info("%s not ready\n", __func__);
+			return 0;
+}
+
+
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+#define MD_GUARD_NUMBER 0x536C702E
+#define GET_RECORD_CNT1(n) ((n >> 32) & 0xFFFFFFFF)
+#define GET_RECORD_CNT2(n) (n & 0xFFFFFFFF)
+#define GET_GUARD_L(n) (n & 0xFFFFFFFF)
+#define GET_GUARD_H(n) ((n >> 32) & 0xFFFFFFFF)
+static struct md_sleep_status md_data;
+
+static int is_md_sleep_info_valid(struct md_sleep_status *md_data)
+{
+	u32 guard_l = GET_GUARD_L(md_data->guard_sleep_cnt1);
+	u32 guard_h = GET_GUARD_H(md_data->guard_sleep_cnt2);
+	u32 cnt1 = GET_RECORD_CNT1(md_data->guard_sleep_cnt1);
+	u32 cnt2 = GET_RECORD_CNT2(md_data->guard_sleep_cnt2);
+
+	if ((guard_l != MD_GUARD_NUMBER) || (guard_h != MD_GUARD_NUMBER))
+		return 0;
+
+	if (cnt1 != cnt2)
+		return 0;
+
+	return 1;
+}
+
+#endif
+
+#define MD_SLEEP_INFO_SMEM_OFFEST (0)
+ssize_t mt6895_spm_system_stats_read(char *ToUserBuf, size_t sz, void *priv)
+{
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+	u32 len = 0;
+	u32 *share_mem = NULL;
+	struct md_sleep_status tmp_md_data;
+	int ret;
+	u64 of_find;
+	struct device_node *mddriver = NULL;
+
+	mddriver = of_find_compatible_node(NULL, NULL, "mediatek,mddriver");
+	if (!mddriver) {
+		pr_info("mddriver not found in DTS\n");
+		return 0;
+	}
+
+	ret =  of_property_read_u64(mddriver, "md_low_power_addr", &of_find);
+	if (ret) {
+		pr_info("address not found in DTS");
+		return 0;
+	}
+
+	share_mem = (u32 *)ioremap_wc(of_find, 0x200);
+
+	if (share_mem == NULL) {
+		pr_info("[name:spm&][%s:%d] - No MD share mem\n", __func__, __LINE__);
+		return 0;
+	} else {
+		share_mem = share_mem + MD_SLEEP_INFO_SMEM_OFFEST;
+		memset(&tmp_md_data, 0, sizeof(struct md_sleep_status));
+		memcpy(&tmp_md_data, share_mem, sizeof(struct md_sleep_status));
+	}
+
+	if (is_md_sleep_info_valid(&tmp_md_data))
+		md_data = tmp_md_data;
+	else
+		memset(&md_data, 0, sizeof(struct md_sleep_status));
+
+	len = snprintf(ToUserBuf, sz,
+	       "26M:%lld:%lld.%03lld\nAP:%lld:%lld.%03lld\nMD:%lld:%lld.%03lld\n",
+	       spm_26M_off_count,
+	       PCM_TICK_TO_SEC(spm_26M_off_duration),
+	       PCM_TICK_TO_SEC((spm_26M_off_duration % PCM_32K_TICKS_PER_SEC) * 1000),
+	       ap_pd_count,
+	       PCM_TICK_TO_SEC(ap_slp_duration),
+	       PCM_TICK_TO_SEC((ap_slp_duration % PCM_32K_TICKS_PER_SEC) * 1000),
+	       md_data.sleep_cnt,
+	       PCM_TICK_TO_SEC(md_data.sleep_time),
+	       PCM_TICK_TO_SEC((md_data.sleep_time % PCM_32K_TICKS_PER_SEC) * 1000));
+	if (share_mem != NULL) {
+		iounmap(share_mem);
+	}
+	return (len > sz) ? sz : len;
+#else
+	return 0;
+#endif
+}
+
 static const struct mtk_lp_sysfs_op mt6895_spm_res_rq_fops = {
 	.fs_read = mt6895_spm_res_rq_read,
 	.fs_write = mt6895_spm_res_rq_write,
+};
+static const struct mtk_lp_sysfs_op mt6895_spm_system_stats_fops = {
+	.fs_read = mt6895_spm_system_stats_read,
 };
 
 int lpm_spm_fs_init(void)
@@ -495,6 +597,8 @@ int lpm_spm_fs_init(void)
 	mtk_spm_sysfs_root_entry_create();
 	mtk_spm_sysfs_entry_node_add("spm_resource_req", 0444
 			, &mt6895_spm_res_rq_fops, NULL);
+	mtk_spm_sysfs_entry_node_add("system_stats", 0444
+			, &mt6895_spm_system_stats_fops, NULL);
 
 	r = mtk_lp_sysfs_entry_func_create(mt6895_spm_root.name,
 					   mt6895_spm_root.mode, NULL,

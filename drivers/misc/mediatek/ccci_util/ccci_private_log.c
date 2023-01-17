@@ -273,6 +273,7 @@ static const struct proc_ops ccci_log_fops = {
 #define CCCI_REPEAT_BUF			(4096 * 32)
 #define CCCI_HISTORY_BUF		(4096 * 128)
 #define CCCI_REG_DUMP_BUF		(4096 * 128 * 2)
+#define CCCI_DPMA_DRB_BUF		(1024 * 16 * 16)
 #define CCCI_DUMP_MD_INIT_BUF		(1024 * 16)
 #define CCCI_KE_DUMP_BUF		(1024 * 32)
 #define CCCI_DPMAIF_DUMP_BUF		(1024 * 256 * 8)
@@ -310,6 +311,7 @@ static struct ccci_dump_buffer repeat_ctlb[2];
 static struct ccci_dump_buffer reg_dump_ctlb[2];
 static struct ccci_dump_buffer history_ctlb[2];
 static struct ccci_dump_buffer ke_dump_ctlb[2];
+static struct ccci_dump_buffer drb_dump_ctlb[2];
 static struct ccci_dump_buffer md_init_buf[2];
 static struct ccci_dump_buffer dpmaif_dump_buf[2];
 
@@ -360,6 +362,8 @@ static struct buffer_node node_array[2][CCCI_DUMP_MAX+1] = {
 		CCCI_DUMP_ATTR_RING, CCCI_DUMP_HISTORY},
 		{&ke_dump_ctlb[0], CCCI_KE_DUMP_BUF,
 		CCCI_DUMP_ATTR_RING, CCCI_DUMP_REGISTER},
+		{&drb_dump_ctlb[0], CCCI_DPMA_DRB_BUF,
+		CCCI_DUMP_ATTR_RING, CCCI_DUMP_DPMA_DRB},
 		{&md_init_buf[0], CCCI_DUMP_MD_INIT_BUF,
 		CCCI_DUMP_ATTR_RING, CCCI_DUMP_MD_INIT},
 		{&dpmaif_dump_buf[0], CCCI_DPMAIF_DUMP_BUF,
@@ -380,6 +384,8 @@ static struct buffer_node node_array[2][CCCI_DUMP_MAX+1] = {
 		CCCI_DUMP_ATTR_RING, CCCI_DUMP_HISTORY},
 		{&ke_dump_ctlb[1], 1*1024,
 		CCCI_DUMP_ATTR_RING, CCCI_DUMP_REGISTER},
+		{&drb_dump_ctlb[1], 64,
+		CCCI_DUMP_ATTR_RING, CCCI_DUMP_DPMA_DRB},
 		{&md_init_buf[1], 64,
 		CCCI_DUMP_ATTR_RING, CCCI_DUMP_MD_INIT},
 		{&dpmaif_dump_buf[1], MD3_CCCI_DPMAIF_DUMP_BUF,
@@ -406,7 +412,7 @@ static ssize_t ccci_dump_fops_write(struct file *file,
 	dump_flag = CCCI_DUMP_TIME_FLAG | CCCI_DUMP_ANDROID_TIME_FLAG;
 	res = ccci_dump_write(0, CCCI_DUMP_MD_INIT, dump_flag, "%s\n", infor_buf);
 	if (unlikely(res < 0)) {
-		pr_info("[ccci0/util]ccci dump write fail, size=%d, info:%s, res:%d\n",
+		pr_info("[ccci0/util]ccci dump write fail, size=%zu, info:%s, res:%d\n",
 		       size, infor_buf, res);
 	}
 	return size;
@@ -435,10 +441,10 @@ int ccci_dump_write(int md_id, int buf_type,
 		return -1;
 	if (unlikely(md_id < 0))
 		md_id = 0;
-	if (unlikely(buf_type >= CCCI_DUMP_MAX))
+	if (unlikely((buf_type >= CCCI_DUMP_MAX) || (buf_type < 0)))
 		return -2;
 	buf_id = buff_bind_md_id[md_id];
-	if (buf_id == -1)
+	if ((buf_id < 0) || (buf_id >= ARRAY_SIZE(node_array)))
 		return -3;
 	if (unlikely(node_array[buf_id][buf_type].index != buf_type))
 		return -4;
@@ -471,9 +477,9 @@ int ccci_dump_write(int md_id, int buf_type,
 		rem_nsec = do_div(ts_nsec, 1000000000);
 
 		if (flag & CCCI_DUMP_ANDROID_TIME_FLAG) {
-                	ktime_get_real_ts64(&save_time);
-                	save_time.tv_sec -= sys_tz.tz_minuteswest * 60;
-                	rtc_time64_to_tm(save_time.tv_sec, &android_time);
+			ktime_get_real_ts64(&save_time);
+			save_time.tv_sec -= (time64_t)sys_tz.tz_minuteswest * 60;
+			rtc_time64_to_tm(save_time.tv_sec, &android_time);
 
 			write_len = scnprintf(temp_log, CCCI_LOG_MAX_WRITE,
 					     "[%d-%02d-%02d %02d:%02d:%02d.%03d]",
@@ -598,6 +604,9 @@ static void format_separate_str(char str[], int type)
 		break;
 	case CCCI_DUMP_REGISTER:
 		sep_str = "[0]REGISTER LOG REGION";
+		break;
+	case CCCI_DUMP_DPMA_DRB:
+		sep_str = "[0]DPMAIF DRB REGION";
 		break;
 	case CCCI_DUMP_MD_INIT:
 		sep_str = "[0]CCCI MD INIT REGION";
@@ -1131,7 +1140,7 @@ int ccci_event_log(const char *fmt, ...)
 	tv_android.tv_nsec = tv.tv_nsec;
 
 	rtc_time64_to_tm(tv.tv_sec, &tm);
-	tv_android.tv_sec -= sys_tz.tz_minuteswest * 60;
+	tv_android.tv_sec -= (time64_t)sys_tz.tz_minuteswest * 60;
 	rtc_time64_to_tm(tv_android.tv_sec, &tm_android);
 
 	write_len = scnprintf(temp_log, CCCI_LOG_MAX_WRITE,

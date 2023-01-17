@@ -52,6 +52,7 @@ enum HRT_DISP_TYPE {
 	HRT_PRIMARY = 0,
 	HRT_SECONDARY,
 	HRT_THIRD,
+	HRT_FOURTH,
 	HRT_DISP_TYPE_NUM,
 };
 
@@ -118,6 +119,7 @@ struct hrt_sort_entry {
 	struct drm_mtk_layer_config *layer_info;
 	int key;
 	int overlap_w;
+	int idx;
 };
 
 struct layering_rule_info_t {

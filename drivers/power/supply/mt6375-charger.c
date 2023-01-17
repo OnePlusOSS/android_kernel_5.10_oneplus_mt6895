@@ -25,7 +25,27 @@
 #include "charger_class.h"
 #include "mtk_charger.h"
 
-static bool dbg_log_en;
+#include <linux/time.h>
+#include <linux/jiffies.h>
+#include <linux/sched/clock.h>
+
+#include <tcpm.h>
+#include <tcpci.h>
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#include <soc/oplus/system/oplus_project.h>
+#endif
+#define OPLUS_HVDCP_DISABLE_INTERVAL round_jiffies_relative(msecs_to_jiffies(15000))
+#define OPLUS_HVDCP_DETECT_TO_DETACH_TIME 90
+
+#define HVDCP_EXIT_NORMAL	0
+#define HVDCP_EXIT_ABNORMAL	1
+
+#define POWER_SUPPLY_TYPE_USB_HVDCP 13
+#define POWER_SUPPLY_TYPE_USB_HVDCP_3 14
+
+static bool dbg_log_en = true;
+struct mt6375_chg_data *oplus_ddata;
+bool is_mtksvooc_project = false;
 module_param(dbg_log_en, bool, 0644);
 #define mt_dbg(dev, fmt, ...) \
 	do { \
@@ -34,6 +54,10 @@ module_param(dbg_log_en, bool, 0644);
 	} while (0)
 #define PHY_MODE_BC11_SET 1
 #define PHY_MODE_BC11_CLR 2
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define MT6375_BC12_RETRY_CNT	(3)
+#endif
 
 #define M_TO_U(val)	((val) * 1000)
 #define U_TO_M(val)	((val) / 1000)
@@ -56,6 +80,9 @@ module_param(dbg_log_en, bool, 0644);
 #define MT6375_REG_CHG_PUMPX	0x12B
 #define MT6375_REG_CHG_AICC1	0x12C
 #define MT6375_REG_CHG_AICC2	0x12D
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define MT6375_REG_THR_REGU1	0x12E
+#endif
 #define MT6375_REG_OTG_LBP	0x130
 #define MT6375_REG_OTG_V	0x131
 #define MT6375_REG_OTG_C	0x132
@@ -69,12 +96,18 @@ module_param(dbg_log_en, bool, 0644);
 #define MT6375_REG_DPDM_CTRL1	0x153
 #define MT6375_REG_DPDM_CTRL2	0x154
 #define MT6375_REG_DPDM_CTRL4	0x156
+#define MT6375_REG_CHRD_CTRL2	0x161
 #define MT6375_REG_VBAT_MON_RPT	0x19C
 #define MT6375_REG_BATEND_CODE	0x19E
 #define MT6375_REG_ADC_CONFG1	0x1A4
 #define MT6375_REG_ADC_ZCV_RPT	0x1CA
 #define MT6375_REG_CHG_STAT0	0x1E0
 #define MT6375_REG_CHG_STAT1	0x1E1
+#define MT6375_REG_CHRDET_STAT	0x1E4
+
+#define MT6375_HVDCP_TRIGGER	0x1E3
+#define MT6375_HVDCP_SETTING_CTRL1	0x155
+#define MT6375_HVDCP_SETTING_CTRL2	0x157
 
 #define MT6375_MSK_BATFET_DIS	0x40
 #define MT6375_MSK_BLEED_DIS_EN	BIT(7)
@@ -90,7 +123,32 @@ module_param(dbg_log_en, bool, 0644);
 #define ADC_TO_VBAT_RAW(vbat)	((vbat) * 1000 / ADC_VBAT_SCALE)
 #define ADC_FROM_VBAT_RAW(raw)	((raw) * ADC_VBAT_SCALE / 1000)
 
+#define NORMAL_CHARGING_CURR_UA	500000
+#define FAST_CHARGING_CURR_UA	1500000
 #define RECHG_THRESHOLD		100
+
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+extern bool oplus_tcpc_direct_charge_en( bool enable);
+/*#endif OPLUS_FEATURE_CHG_BASIC */
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* add for 6375 charge track */
+#define VBUS_ON 1
+#define VBUS_OFF 0
+static void (*oplus_mt6375_record_qc_type_pfunc)(void);
+void oplus_mt6375_record_qc_type(void (*type)(void))
+{
+	oplus_mt6375_record_qc_type_pfunc = type;
+}
+EXPORT_SYMBOL(oplus_mt6375_record_qc_type);
+
+static int (*oplus_mt6375_wired_charging_break_pfunc)(int vbus_on);
+void oplus_mt6375_wired_charging_break(int (*vbus_status)(int vbus_on))
+{
+	oplus_mt6375_wired_charging_break_pfunc = vbus_status;
+}
+EXPORT_SYMBOL(oplus_mt6375_wired_charging_break);
+#endif
 
 enum mt6375_chg_reg_field {
 	/* MT6375_REG_CORE_CTRL2 */
@@ -98,7 +156,7 @@ enum mt6375_chg_reg_field {
 	/* MT6375_REG_CHG_BATPRO */
 	F_BATINT, F_BATPROTECT_EN,
 	/* MT6375_REG_CHG_TOP1 */
-	F_CHG_EN, F_BUCK_EN, F_HZ, F_BATFET_DISDLY, F_BATFET_DIS, F_PP_PG_FLAG,
+	F_CHG_EN, F_BUCK_EN, F_HZ, F_QON_RST_EN, F_BATFET_DISDLY, F_BATFET_DIS, F_PP_PG_FLAG,
 	/* MT6375_REG_CHG_TOP2 */
 	F_VBUS_OV,
 	/* MT6375_REG_CHG_AICR */
@@ -121,6 +179,10 @@ enum mt6375_chg_reg_field {
 	F_PE20_CODE, F_PE10_INC, F_PE_SEL, F_PE_EN,
 	/* MT6375_REG_CHG_AICC1 */
 	F_AICC_VTH, F_AICC_EN,
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/* MT6375_REG_THR_REGU1 */
+	F_DIG_THREG_EN,
+#endif
 	/* MT6375_REG_CHG_AICC2 */
 	F_AICC_RPT, F_AICC_ONESHOT,
 	/* MT6375_REG_OTG_LBP */
@@ -143,12 +205,20 @@ enum mt6375_chg_reg_field {
 	F_DP_LDO_VSEL, F_DP_LDO_EN,
 	/* MT6375_REG_DPDM_CTRL4 */
 	F_DP_PULL_RSEL, F_DP_PULL_REN,
+	/* MT6375_REG_CHRD_CTRL2 */
+#ifndef OPLUS_FEATURE_CHG_BASIC
+	F_CHRD_UV_VREF,
+#else
+	F_CHRD_UV_VREF, F_CHRD_OV_VREF,
+#endif
 	/* MT6375_REG_ADC_CONFG1 */
 	F_VBAT_MON_EN,
 	/* MT6375_REG_CHG_STAT0 */
 	F_ST_PWR_RDY,
 	/* MT6375_REG_CHG_STAT1 */
 	F_ST_MIVR,
+	/* MT6375_REG_CHRDET_STAT */
+	F_CHRDET_EXT,
 	F_MAX,
 };
 
@@ -188,6 +258,17 @@ enum mt6375_adc_chan {
 	ADC_CHAN_USBDP,
 	ADC_CHAN_USBDM,
 	ADC_CHAN_MAX,
+};
+
+/* map with mtk_chg_type_det.c */
+enum attach_type {
+	ATTACH_TYPE_NONE,
+	ATTACH_TYPE_PWR_RDY,
+	ATTACH_TYPE_TYPEC,
+	ATTACH_TYPE_PD,
+	ATTACH_TYPE_PD_SDP,
+	ATTACH_TYPE_PD_DCP,
+	ATTACH_TYPE_PD_NONSTD,
 };
 
 enum mt6375_attach_trigger {
@@ -235,6 +316,18 @@ struct mt6375_chg_data {
 	u32 cv;
 	atomic_t eoc_cnt;
 	atomic_t tchg;
+
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+	struct delayed_work hvdcp_work;
+	struct delayed_work hvdcp_result_check_work;
+	int hvdcp_type;
+	unsigned long long hvdcp_detect_time;
+	unsigned long long hvdcp_detach_time;
+	bool hvdcp_cfg_9v_done;
+	int hvdcp_exit_stat;
+	bool oplus_hvdcp_detect;
+	bool oplus_get_hvdcp_bc12_result;
+#endif
 	int vbat0_flag;
 };
 
@@ -261,6 +354,10 @@ struct mt6375_chg_platform_data {
 	bool wdt_en;
 	bool te_en;
 	bool usb_killer_detect;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
+	bool usb_no_use_chrdet;
+#endif
 };
 
 struct mt6375_chg_range {
@@ -316,6 +413,12 @@ static const u32 mt6375_chg_dpdm_ldo_vsel[] = {
 	600, 650, 700, 750, 1800, 2800, 3300,
 };
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static const u32 mt6375_chg_chrd_ov[] = {
+        6000, 6500, 7000, 7500, 8500, 9500, 10500, 11500, 12500, 14500
+};
+#endif
+
 #define MT6375_CHG_RANGE(_min, _max, _step, _offset, _ru) \
 { \
 	.min = _min, \
@@ -348,6 +451,10 @@ static const struct mt6375_chg_range mt6375_chg_ranges[F_MAX] = {
 	[F_IRCMP_R] = MT6375_CHG_RANGE(0, 116900, 16700, 0, false),
 	[F_DCDT_SEL] = MT6375_CHG_RANGE(0, 600, 300, 0, false),
 	[F_DP_LDO_VSEL] = MT6375_CHG_RANGE_T(mt6375_chg_dpdm_ldo_vsel, false),
+	[F_CHRD_UV_VREF] = MT6375_CHG_RANGE(2600, 3700, 100, 0, false),
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	[F_CHRD_OV_VREF] = MT6375_CHG_RANGE_T(mt6375_chg_chrd_ov, false),
+#endif
 };
 
 #define MT6375_CHG_FIELD_RANGE(_fd, _reg, _lsb, _msb, _range) \
@@ -367,6 +474,7 @@ static const struct mt6375_chg_field mt6375_chg_fields[F_MAX] = {
 	MT6375_CHG_FIELD(F_CHG_EN, MT6375_REG_CHG_TOP1, 0, 0),
 	MT6375_CHG_FIELD(F_BUCK_EN, MT6375_REG_CHG_TOP1, 1, 1),
 	MT6375_CHG_FIELD(F_HZ, MT6375_REG_CHG_TOP1, 3, 3),
+	MT6375_CHG_FIELD(F_QON_RST_EN, MT6375_REG_CHG_TOP1, 4, 4),
 	MT6375_CHG_FIELD(F_BATFET_DISDLY, MT6375_REG_CHG_TOP1, 5, 5),
 	MT6375_CHG_FIELD(F_BATFET_DIS, MT6375_REG_CHG_TOP1, 6, 6),
 	MT6375_CHG_FIELD(F_PP_PG_FLAG, MT6375_REG_CHG_TOP1, 7, 7),
@@ -392,6 +500,9 @@ static const struct mt6375_chg_field mt6375_chg_fields[F_MAX] = {
 	MT6375_CHG_FIELD(F_PE_EN, MT6375_REG_CHG_PUMPX, 7, 7),
 	MT6375_CHG_FIELD(F_AICC_VTH, MT6375_REG_CHG_AICC1, 0, 6),
 	MT6375_CHG_FIELD(F_AICC_EN, MT6375_REG_CHG_AICC1, 7, 7),
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	MT6375_CHG_FIELD(F_DIG_THREG_EN, MT6375_REG_THR_REGU1, 6, 6),
+#endif
 	MT6375_CHG_FIELD(F_AICC_RPT, MT6375_REG_CHG_AICC2, 0, 6),
 	MT6375_CHG_FIELD(F_AICC_ONESHOT, MT6375_REG_CHG_AICC2, 7, 7),
 	MT6375_CHG_FIELD(F_OTG_CC, MT6375_REG_OTG_C, 0, 2),
@@ -411,11 +522,27 @@ static const struct mt6375_chg_field mt6375_chg_fields[F_MAX] = {
 	MT6375_CHG_FIELD(F_DP_LDO_EN, MT6375_REG_DPDM_CTRL2, 7, 7),
 	MT6375_CHG_FIELD(F_DP_PULL_RSEL, MT6375_REG_DPDM_CTRL4, 6, 6),
 	MT6375_CHG_FIELD(F_DP_PULL_REN, MT6375_REG_DPDM_CTRL4, 7, 7),
+	MT6375_CHG_FIELD(F_CHRD_UV_VREF, MT6375_REG_CHRD_CTRL2, 4, 7),
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	MT6375_CHG_FIELD(F_CHRD_OV_VREF, MT6375_REG_CHRD_CTRL2, 0, 3),
+#endif
 	MT6375_CHG_FIELD(F_VBAT_MON_EN, MT6375_REG_ADC_CONFG1, 5, 5),
 	MT6375_CHG_FIELD(F_ST_PWR_RDY, MT6375_REG_CHG_STAT0, 0, 0),
 	MT6375_CHG_FIELD(F_ST_MIVR, MT6375_REG_CHG_STAT1, 7, 7),
+	MT6375_CHG_FIELD(F_CHRDET_EXT, MT6375_REG_CHRDET_STAT, 2, 2),
 };
 
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+int mt6375_get_hvdcp_status(struct mt6375_chg_data *ddata, int val);
+int mt6375_set_hvdcp_detect_enable(struct mt6375_chg_data *ddata);
+int mt6375_set_hvdcp_detect_disable(struct mt6375_chg_data *ddata);
+int mt6375_set_hvdcp_to_5v(void);
+int mt6375_set_hvdcp_to_9v(void);
+int mt6375_reset_hvdcp_reg(struct mt6375_chg_data *ddata);
+void oplus_set_hvdcp_flag_clear(void);
+#endif
+
+static int mt6375_chg_enable_bc12(struct mt6375_chg_data *ddata, bool en);
 static inline int mt6375_chg_field_set(struct mt6375_chg_data *ddata,
 				       enum mt6375_chg_reg_field fd, u32 val);
 static int mt6375_enable_hm(struct mt6375_chg_data *ddata, bool en)
@@ -783,21 +910,38 @@ out:
 	return ret;
 }
 
-static int to_psy_status(u32 stat)
+static int mt6375_get_chg_status(struct mt6375_chg_data *ddata)
 {
+	int ret = 0, attach;
+	u32 stat;
+	bool chg_en = false;
+
+	attach = atomic_read(&ddata->attach);
+	if (!attach)
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+
+	ret = mt6375_chg_is_enabled(ddata, &chg_en);
+	if (ret < 0)
+		return ret;
+	ret = mt6375_chg_field_get(ddata, F_IC_STAT, &stat);
+	if (ret < 0)
+		return ret;
 	switch (stat) {
 	case CHG_STAT_OTG:
 		return POWER_SUPPLY_STATUS_DISCHARGING;
+	case CHG_STAT_SLEEP:
+	case CHG_STAT_VBUS_RDY:
 	case CHG_STAT_TRICKLE:
 	case CHG_STAT_PRE:
 	case CHG_STAT_FAST:
 	case CHG_STAT_EOC:
 	case CHG_STAT_BKGND:
-		return POWER_SUPPLY_STATUS_CHARGING;
+		if (chg_en)
+			return POWER_SUPPLY_STATUS_CHARGING;
+		else
+			return POWER_SUPPLY_STATUS_NOT_CHARGING;
 	case CHG_STAT_DONE:
 		return POWER_SUPPLY_STATUS_FULL;
-	case CHG_STAT_SLEEP:
-	case CHG_STAT_VBUS_RDY:
 	case CHG_STAT_FAULT:
 		return POWER_SUPPLY_STATUS_NOT_CHARGING;
 	default:
@@ -807,9 +951,13 @@ static int to_psy_status(u32 stat)
 
 static void mt6375_chg_attach_pre_process(struct mt6375_chg_data *ddata,
 					  enum mt6375_attach_trigger trig,
-					  bool attach)
+					  int attach)
 {
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+	int ret;
+#endif
 	struct mt6375_chg_platform_data *pdata = dev_get_platdata(ddata->dev);
+	bool bc12_dn;
 
 	mt_dbg(ddata->dev, "trig=%s,attach=%d\n",
 	       mt6375_attach_trig_names[trig], attach);
@@ -819,7 +967,47 @@ static void mt6375_chg_attach_pre_process(struct mt6375_chg_data *ddata,
 		       mt6375_attach_trig_names[trig]);
 		return;
 	}
-	atomic_set(&ddata->attach, attach);
+
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+	ret = mt6375_reset_hvdcp_reg(ddata);
+	if (ret < 0)
+		mt_dbg(ddata->dev, "%s: fail to write hvdcp_device_type\n", __func__);
+	
+	if (!attach) {
+		cancel_delayed_work_sync(&ddata->hvdcp_work);
+		cancel_delayed_work_sync(&ddata->hvdcp_result_check_work);
+		ddata->hvdcp_type = POWER_SUPPLY_TYPE_UNKNOWN;
+		if (true == is_mtksvooc_project) {
+			printk(KERN_ERR "!!! %s: the hvdcp_detach_time:%lu %lu %d %d\n",
+				__func__, ddata->hvdcp_detach_time, ddata->hvdcp_detect_time,
+				OPLUS_HVDCP_DETECT_TO_DETACH_TIME, ddata->hvdcp_cfg_9v_done);
+			if (ddata->hvdcp_cfg_9v_done &&
+					(ddata->hvdcp_detach_time - ddata->hvdcp_detect_time
+					<= OPLUS_HVDCP_DETECT_TO_DETACH_TIME)) {
+				ddata->hvdcp_exit_stat = HVDCP_EXIT_ABNORMAL;
+
+			} else {
+				ddata->hvdcp_exit_stat = HVDCP_EXIT_NORMAL;
+			}
+			ddata->hvdcp_detect_time = 0;
+			ddata->hvdcp_detach_time = 0;
+			ddata->hvdcp_cfg_9v_done = false;
+		}
+	}
+#endif
+
+	mutex_lock(&ddata->attach_lock);
+	if (attach == ATTACH_TYPE_NONE)
+		ddata->bc12_dn = false;
+
+	bc12_dn = ddata->bc12_dn;
+	if (!bc12_dn)
+		atomic_set(&ddata->attach, attach);
+	mutex_unlock(&ddata->attach_lock);
+
+	if (attach > ATTACH_TYPE_PD && bc12_dn)
+		return;
+
 	if (!queue_work(ddata->wq, &ddata->bc12_work))
 		dev_notice(ddata->dev, "%s bc12 work already queued\n", __func__);
 }
@@ -839,7 +1027,7 @@ static void mt6375_chg_pwr_rdy_process(struct mt6375_chg_data *ddata)
 		dev_err(ddata->dev, "failed to set bleed discharge = %d\n",
 			!ddata->pwr_rdy);
 	mt6375_chg_attach_pre_process(ddata, ATTACH_TRIG_PWR_RDY,
-				      ddata->pwr_rdy);
+				val ? ATTACH_TYPE_PWR_RDY : ATTACH_TYPE_NONE);
 }
 
 static int mt6375_chg_set_usbsw(struct mt6375_chg_data *ddata,
@@ -862,6 +1050,83 @@ static int mt6375_chg_set_usbsw(struct mt6375_chg_data *ddata,
 	return ret;
 }
 
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+int mt6375_get_hvdcp_type(void)
+{
+	if (!oplus_ddata) {
+		printk(KERN_ERR "%s NULL\n", __func__);
+		return POWER_SUPPLY_TYPE_USB_DCP;
+    }
+
+	return oplus_ddata->hvdcp_type;
+}
+EXPORT_SYMBOL(mt6375_get_hvdcp_type);
+
+int mt6375_enable_hvdcp_detect(void)
+{
+	int ret = 0;
+
+	if (!oplus_ddata) {
+			printk(KERN_ERR "%s oplusmpci NULL\n", __func__);
+			return -1;
+	}
+
+	dev_err(oplus_ddata->dev, "%s\n", __func__);
+
+	oplus_ddata->oplus_hvdcp_detect = true;
+
+	printk("%s: enable hvdcp detect is_mtksvooc_project = %d %d\n",
+			__func__, is_mtksvooc_project, oplus_ddata->hvdcp_exit_stat);
+
+	if (true == is_mtksvooc_project) {
+		if (HVDCP_EXIT_NORMAL == oplus_ddata->hvdcp_exit_stat){
+			regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL1, 0xff, 0x00);
+			goto enable_hvdcp;
+		} else {
+			//disable hvdcp
+			printk("%s: HVDCP_EXIT_ABNORMAL not enable hvdcp \n", __func__);
+			return -1;
+		}
+	}
+
+enable_hvdcp:
+	//retry bc1.2
+	mt6375_chg_enable_bc12(oplus_ddata, false);
+	mt6375_chg_enable_bc12(oplus_ddata, true);
+
+	msleep(1000);
+
+	if (oplus_ddata->oplus_get_hvdcp_bc12_result == true) {
+		printk("%s HVDCP retry bc12 get result is DCP!\n", __func__);
+		ret = mt6375_reset_hvdcp_reg(oplus_ddata);
+		if (ret < 0)
+			printk("cannot reset all the hvdcp reg!\n");
+		ret = mt6375_set_hvdcp_detect_enable(oplus_ddata);
+		if (ret < 0)
+			printk("%s: fail to enable hvdcp detect\n", __func__);
+		/*mt6375_chg_set_usbsw(oplus_ddata, USBSW_CHG);*/
+		schedule_delayed_work(&oplus_ddata->hvdcp_result_check_work, msecs_to_jiffies(1000));
+		printk(" %s: start hvdcp_result_check_work\n", __func__);
+	} else {
+		printk("%s HVDCP retry bc12 get result is not DCP!\n");
+	}
+
+	oplus_ddata->oplus_get_hvdcp_bc12_result = false;
+	return 0;
+}
+EXPORT_SYMBOL(mt6375_enable_hvdcp_detect);
+
+void oplus_set_hvdcp_flag_clear(void)
+{
+	if (oplus_ddata == NULL)
+		return;
+
+	oplus_ddata->oplus_get_hvdcp_bc12_result = false;
+	oplus_ddata->oplus_hvdcp_detect = false;
+}
+EXPORT_SYMBOL(oplus_set_hvdcp_flag_clear);
+#endif
+
 static bool is_usb_rdy(struct device *dev)
 {
 	bool ready = true;
@@ -878,7 +1143,7 @@ static bool is_usb_rdy(struct device *dev)
 
 static int mt6375_chg_enable_bc12(struct mt6375_chg_data *ddata, bool en)
 {
-	int i, ret;
+	int i, ret, attach;
 	static const int max_wait_cnt = 250;
 
 	mt_dbg(ddata->dev, "en=%d\n", en);
@@ -888,16 +1153,26 @@ static int mt6375_chg_enable_bc12(struct mt6375_chg_data *ddata, bool en)
 		for (i = 0; i < max_wait_cnt; i++) {
 			if (is_usb_rdy(ddata->dev))
 				break;
-			if (!atomic_read(&ddata->attach))
-				return 0;
-			msleep(100);
+			attach = atomic_read(&ddata->attach);
+			if (attach == ATTACH_TYPE_TYPEC)
+				msleep(100);
+			else {
+				dev_notice(ddata->dev, "%s: change attach:%d, disable bc12\n",
+					   __func__, attach);
+				en = false;
+				break;
+			}
 		}
 		if (i == max_wait_cnt)
 			dev_notice(ddata->dev, "CDP timeout\n", __func__);
 		else
 			dev_info(ddata->dev, "CDP free\n", __func__);
 	}
-	ret = mt6375_chg_set_usbsw(ddata, en ? USBSW_CHG : USBSW_USB);
+	if (ddata->psy_desc.type == POWER_SUPPLY_TYPE_USB_DCP &&
+		ddata->psy_usb_type == POWER_SUPPLY_USB_TYPE_DCP)
+		ret = mt6375_chg_set_usbsw(ddata, USBSW_CHG);
+	else
+		ret = mt6375_chg_set_usbsw(ddata, en ? USBSW_CHG : USBSW_USB);
 	if (ret)
 		return ret;
 	return mt6375_chg_field_set(ddata, F_BC12_EN, en);
@@ -905,85 +1180,215 @@ static int mt6375_chg_enable_bc12(struct mt6375_chg_data *ddata, bool en)
 
 static void mt6375_chg_bc12_work_func(struct work_struct *work)
 {
-	int ret;
-	u32 val;
-	bool bc12_ctrl = true, bc12_en = false, rpt_psy = true;
 	struct mt6375_chg_data *ddata = container_of(work,
 						     struct mt6375_chg_data,
 						     bc12_work);
 	struct mt6375_chg_platform_data *pdata = dev_get_platdata(ddata->dev);
-	bool attach;
+	bool bc12_ctrl = true, bc12_en = false, rpt_psy = true;
+	int ret, attach;
+	u32 val = 0;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	static int bc12_retry = 0;
+#endif
 
 	mutex_lock(&ddata->attach_lock);
 	attach = atomic_read(&ddata->attach);
 	mt_dbg(ddata->dev, "attach=%d\n", attach);
-	if (attach) {
-		if (pdata->boot_mode == 5) {
-			/* skip bc12 to speed up ADVMETA_BOOT */
-			dev_notice(ddata->dev, "force SDP in meta mode\n");
-			ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
-			ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_SDP;
-			ddata->bc12_dn = false;
-			goto out;
-		}
+
+	if (attach > ATTACH_TYPE_NONE && pdata->boot_mode == 5) {
+		/* skip bc12 to speed up ADVMETA_BOOT */
+		dev_notice(ddata->dev, "force SDP in meta mode\n");
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_SDP;
+		goto out;
+	}
+
+	switch (attach) {
+	case ATTACH_TYPE_NONE:
+		bc12_retry = 0;
+		oplus_ddata->oplus_hvdcp_detect = false;
+		oplus_ddata->oplus_get_hvdcp_bc12_result = false;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* add for detach type value*/
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
+#else
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
+#endif
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* add for not attached power_supply inform */
+		power_supply_changed(ddata->psy);
+#endif
+		goto out;
+	case ATTACH_TYPE_TYPEC:
 		if (!ddata->bc12_dn) {
 			bc12_en = true;
 			rpt_psy = false;
 			goto out;
 		}
-		ddata->bc12_dn = false;
 		ret = mt6375_chg_field_get(ddata, F_PORT_STAT, &val);
 		if (ret < 0) {
 			dev_err(ddata->dev, "failed to get port stat\n");
 			rpt_psy = false;
 			goto out;
 		}
-		switch (val) {
-		case PORT_STAT_NOINFO:
-			bc12_ctrl = false;
-			rpt_psy = false;
-			dev_warn(ddata->dev, "%s no info\n", __func__);
-			goto out;
-		case PORT_STAT_APPLE_5W:
-		case PORT_STAT_APPLE_10W:
-		case PORT_STAT_APPLE_12W:
-		case PORT_STAT_SAMSUNG:
-		case PORT_STAT_DCP:
-			ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
-			ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_DCP;
+		break;
+	case ATTACH_TYPE_PD_SDP:
+		val = PORT_STAT_SDP;
+		break;
+	case ATTACH_TYPE_PD_DCP:
+		/* not to enable bc12 */
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_DCP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* add for DCP power_supply inform */
+		power_supply_changed(ddata->psy);
+#endif
+		goto out;
+	case ATTACH_TYPE_PD_NONSTD:
+		val = PORT_STAT_UNKNOWN_TA;
+		break;
+	default:
+		dev_info(ddata->dev,
+			 "%s: using tradtional bc12 flow!\n", __func__);
+		break;
+	}
+
+	switch (val) {
+	case PORT_STAT_NOINFO:
+		bc12_ctrl = false;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		bc12_retry = 0;
+#endif
+		rpt_psy = false;
+		dev_warn(ddata->dev, "%s no info\n", __func__);
+		goto out;
+	case PORT_STAT_APPLE_5W:
+	case PORT_STAT_APPLE_10W:
+	case PORT_STAT_APPLE_12W:
+	case PORT_STAT_SAMSUNG:
+	case PORT_STAT_DCP:
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_DCP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		bc12_retry = 0;
+		if (oplus_ddata->oplus_hvdcp_detect == true) {
+			oplus_ddata->oplus_get_hvdcp_bc12_result = true;
 			bc12_en = true;
-			break;
-		case PORT_STAT_SDP:
-			ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
-			ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_SDP;
-			break;
-		case PORT_STAT_CDP:
-			ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB_CDP;
-			ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_CDP;
-			break;
-		case PORT_STAT_UNKNOWN_TA:
-			ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
-			ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_DCP;
-			break;
-		default:
-			bc12_ctrl = false;
-			rpt_psy = false;
-			dev_err(ddata->dev, "Unknown port stat %d\n", val);
-			goto out;
 		}
-		mt_dbg(ddata->dev, "port stat = %s\n",
-		       mt6375_port_stat_names[val]);
-	} else {
-		ddata->bc12_dn = false;
+#endif
+
+		if (oplus_ddata->oplus_hvdcp_detect == false) {
+			regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL1, 0xff, 0x80);
+		}
+
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+		printk("%s: enable hvdcp detect is_mtksvooc_project = %d\n", __func__, is_mtksvooc_project);
+		if (true == is_mtksvooc_project) {
+			ret = mt6375_reset_hvdcp_reg(ddata);
+			if (ret < 0)
+				printk("cannot reset all the hvdcp reg!\n");
+			printk("vooc dpdm drop gnd\n");
+		} else {
+			ret = mt6375_reset_hvdcp_reg(ddata);
+			if (ret < 0)
+				printk("cannot reset all the hvdcp reg!\n");
+			ret = mt6375_set_hvdcp_detect_enable(ddata);
+			if (ret < 0)
+				printk("%s: fail to enable hvdcp detect\n", __func__);
+			schedule_delayed_work(&ddata->hvdcp_result_check_work, msecs_to_jiffies(3000));
+		}
+#endif
+		break;
+	case PORT_STAT_SDP:
 		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
-		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_SDP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic 2022/9/23 add for OTG online,skip BC12 retry to prevent USB interference*/
+		if (attach == ATTACH_TYPE_PD_SDP) {
+			break;
+		} else {
+/*BSP.CHG.Basic 2021/08/30 add for bc1.2 retry*/
+			bc12_retry++;
+		}
+#endif
+		break;
+	case PORT_STAT_CDP:
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB_CDP;
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_CDP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		bc12_retry++;
+#endif
+		break;
+	case PORT_STAT_UNKNOWN_TA:
+#ifndef OPLUS_FEATURE_CHG_BASIC
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB;
+#else
+		ddata->psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
+#endif
+		ddata->psy_usb_type = POWER_SUPPLY_USB_TYPE_DCP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		bc12_retry++;
+#endif
+		break;
+	default:
+		bc12_ctrl = false;
+		rpt_psy = false;
+		dev_err(ddata->dev, "Unknown port stat %d\n", val);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		bc12_retry = 0;
+#endif
+		goto out;
+	}
+	mt_dbg(ddata->dev, "port stat = %s\n",
+		       mt6375_port_stat_names[val]);
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (oplus_ddata->oplus_hvdcp_detect == true)
+		bc12_retry = 0;
+#endif
+
+	if (bc12_retry && bc12_retry < MT6375_BC12_RETRY_CNT) {
+		dev_info(ddata->dev, "bc 12 retry, bc12_retry = %d\n", bc12_retry);
+		bc12_en = true;
+		mutex_unlock(&ddata->attach_lock);
+		mt6375_chg_enable_bc12(ddata, false);
+		goto retry_bc12;
+	} else if (bc12_retry == 0){
+		dev_info(ddata->dev, "report power supply changed, bc12_retry = %d\n", bc12_retry);
+		if (oplus_ddata->oplus_hvdcp_detect == false)
+			power_supply_changed(ddata->psy);
 	}
 out:
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+	if (!atomic_read(&ddata->attach)) {
+		cancel_delayed_work_sync(&ddata->hvdcp_work);
+		cancel_delayed_work_sync(&ddata->hvdcp_result_check_work);
+		ddata->hvdcp_type = POWER_SUPPLY_TYPE_UNKNOWN;
+
+		ret = mt6375_reset_hvdcp_reg(ddata);
+		if (ret < 0)
+			printk("%s: fail to write dpdm_ctrl\n", __func__);
+	}
+#endif
 	mutex_unlock(&ddata->attach_lock);
+retry_bc12:
 	if (bc12_ctrl && (mt6375_chg_enable_bc12(ddata, bc12_en) < 0))
 		dev_err(ddata->dev, "failed to set bc12 = %d\n", bc12_en);
-	if (rpt_psy)
-		power_supply_changed(ddata->psy);
+	if (rpt_psy) {
+		if (bc12_retry == 1 &&  oplus_ddata->oplus_hvdcp_detect == false
+							&& ddata->psy_desc.type != POWER_SUPPLY_TYPE_USB_CDP
+							&& ddata->psy_desc.type != POWER_SUPPLY_TYPE_USB)
+			power_supply_changed(ddata->psy);
+		/*Add for SDP report*/
+		if (bc12_retry == 3 &&  oplus_ddata->oplus_hvdcp_detect == false
+							&& ddata->psy_desc.type == POWER_SUPPLY_TYPE_USB)
+			power_supply_changed(ddata->psy);
+		/*Add for CDP report*/
+		if (bc12_retry == 3 && oplus_ddata->oplus_hvdcp_detect == false
+							&& ddata->psy_desc.type == POWER_SUPPLY_TYPE_USB_CDP)
+			power_supply_changed(ddata->psy);
+	}
 }
 
 static enum power_supply_usb_type mt6375_chg_psy_usb_types[] = {
@@ -1002,6 +1407,8 @@ static enum power_supply_property mt6375_chg_psy_properties[] = {
 	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
 	POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT,
 	POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT,
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	POWER_SUPPLY_PROP_TYPE,
 	POWER_SUPPLY_PROP_USB_TYPE,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
@@ -1013,6 +1420,9 @@ static int mt6375_chg_property_is_writeable(struct power_supply *psy,
 					    enum power_supply_property psp)
 {
 	switch (psp) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	case POWER_SUPPLY_PROP_TYPE:
+	case POWER_SUPPLY_PROP_USB_TYPE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
@@ -1032,10 +1442,10 @@ static int mt6375_chg_get_property(struct power_supply *psy,
 				   enum power_supply_property psp,
 				   union power_supply_propval *val)
 {
-	int ret = 0;
-	u32 _val;
-	u16 data;
 	struct mt6375_chg_data *ddata = power_supply_get_drvdata(psy);
+	int ret = 0;
+	u16 data;
+	u32 _val = 0;
 
 	mt_dbg(ddata->dev, "psp=%d\n", psp);
 	switch (psp) {
@@ -1046,10 +1456,10 @@ static int mt6375_chg_get_property(struct power_supply *psy,
 		val->intval = atomic_read(&ddata->attach);
 		break;
 	case POWER_SUPPLY_PROP_STATUS:
-		ret = mt6375_chg_field_get(ddata, F_IC_STAT, &_val);
+		ret = mt6375_get_chg_status(ddata);
 		if (ret < 0)
-			break;
-		val->intval = to_psy_status(_val);
+			return ret;
+		val->intval = ret;
 		break;
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 		mutex_lock(&ddata->pe_lock);
@@ -1081,7 +1491,9 @@ static int mt6375_chg_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		if (ddata->psy_desc.type == POWER_SUPPLY_TYPE_USB)
-			val->intval = 500000;
+			val->intval = NORMAL_CHARGING_CURR_UA;
+		else if (ddata->psy_desc.type == POWER_SUPPLY_TYPE_USB_DCP)
+			val->intval = FAST_CHARGING_CURR_UA;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		if (ddata->psy_desc.type == POWER_SUPPLY_TYPE_USB)
@@ -1134,6 +1546,16 @@ static int mt6375_chg_set_property(struct power_supply *psy,
 
 	mt_dbg(ddata->dev, "psp=%d\n", psp);
 	switch (psp) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	case POWER_SUPPLY_PROP_TYPE:
+		ddata->psy_desc.type = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_USB_TYPE:
+		ddata->psy_usb_type = val->intval;
+		break;
+	case POWER_SUPPLY_PROP_POWER_NOW:
+		atomic_set(&ddata->attach, val->intval);
+		break;
 	case POWER_SUPPLY_PROP_ONLINE:
 		mt6375_chg_attach_pre_process(ddata, ATTACH_TRIG_TYPEC,
 					      val->intval);
@@ -1473,6 +1895,7 @@ static int mt6375_enable_buck(struct charger_device *chgdev, bool en)
 	struct mt6375_chg_data *ddata = charger_get_data(chgdev);
 
 	mt_dbg(ddata->dev, "en=%d\n", en);
+
 	return mt6375_chg_field_set(ddata, F_BUCK_EN, en);
 }
 
@@ -1752,12 +2175,35 @@ out:
 	return ret;
 }
 
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+static int mt6375_enable_bc12(struct charger_device *chgdev, bool en)
+{
+        int ret;
+        struct mt6375_chg_data *ddata = charger_get_data(chgdev);
+
+	if (NULL == ddata) {
+		return -EINVAL;
+	}
+
+        mt_dbg(ddata->dev,"mt6375_enable_bc12 : en = %d\n", en);
+
+	/*enable the bc12, not wait the usb ready.*/
+	ret = mt6375_chg_field_set(ddata, F_BC12_EN, en);
+	if (ret < 0) {
+		dev_err(ddata->dev, "failed to set bc12\n");
+		return ret;
+	}
+	return ret;
+}
+/*#endif*/
+
 static int mt6375_enable_chg_type_det(struct charger_device *chgdev, bool en)
 {
 	struct mt6375_chg_data *ddata = charger_get_data(chgdev);
+	int attach = en ? ATTACH_TYPE_TYPEC : ATTACH_TYPE_NONE;
 
 	mt_dbg(ddata->dev, "en=%d\n", en);
-	mt6375_chg_attach_pre_process(ddata, ATTACH_TRIG_TYPEC, en);
+	mt6375_chg_attach_pre_process(ddata, ATTACH_TRIG_TYPEC, attach);
 	return 0;
 }
 
@@ -2069,6 +2515,11 @@ static const struct charger_ops mt6375_chg_ops = {
 	.event = mt6375_do_event,
 	/* 6pin battery */
 	.enable_6pin_battery_charging = mt6375_enable_6pin_battery_charging,
+
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	/*enable BC12*/
+	.enable_bc12 = mt6375_enable_bc12,
+/*#endif*/
 };
 
 static irqreturn_t mt6375_fl_wdt_handler(int irq, void *data)
@@ -2100,6 +2551,164 @@ static irqreturn_t mt6375_fl_detach_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+int mt6375_get_hvdcp_status(struct mt6375_chg_data *ddata, int val)
+{
+	if (!ddata) {
+		return -EINVAL;
+	} else {
+		regmap_read(ddata->rmap, MT6375_HVDCP_TRIGGER, &val);
+		return val;
+	}
+}
+
+int mt6375_set_hvdcp_detect_enable(struct mt6375_chg_data *ddata)
+{
+	if (!ddata) {
+		return -EINVAL;
+	} else {
+		regmap_update_bits(ddata->rmap, MT6375_REG_BC12_STAT, 0x20, 0x20);
+		return 0;
+	}
+}
+
+int mt6375_set_hvdcp_detect_disable(struct mt6375_chg_data *ddata)
+{
+	if (!ddata) {
+		return -EINVAL;
+	} else {
+		regmap_update_bits(ddata->rmap, MT6375_HVDCP_TRIGGER, 0x40, 0x00);
+		return 0;
+	}
+}
+
+int mt6375_set_hvdcp_to_5v(void)
+{
+	if (!oplus_ddata) {
+		return -EINVAL;
+	} else {
+		regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL2, 0xff, 0x80);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_HVDCP_SETTING_CTRL1, 0xff, 0x02);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL4, 0xff, 0x0c);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_HVDCP_SETTING_CTRL2, 0xff, 0x00);
+		return 0;
+	}
+}
+EXPORT_SYMBOL(mt6375_set_hvdcp_to_5v);
+
+int mt6375_set_hvdcp_to_9v(void)
+{
+	if (!oplus_ddata) {
+		return -EINVAL;
+	} else {
+		regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL1, 0xff, 0xA3);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL2, 0xff, 0xe8);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_HVDCP_SETTING_CTRL1, 0xff, 0x00);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_REG_DPDM_CTRL4, 0xff, 0xc0);
+		regmap_update_bits(oplus_ddata->rmap, MT6375_HVDCP_SETTING_CTRL2, 0xff, 0xc0);
+		return 0;
+	}
+}
+EXPORT_SYMBOL(mt6375_set_hvdcp_to_9v);
+
+int mt6375_reset_hvdcp_reg(struct mt6375_chg_data *ddata)
+{
+	if (!ddata) {
+		return -EINVAL;
+	} else {
+		regmap_update_bits(ddata->rmap, MT6375_REG_DPDM_CTRL1, 0xff, 0x00);
+		regmap_update_bits(ddata->rmap, MT6375_REG_DPDM_CTRL2, 0xff, 0x00);
+		regmap_update_bits(ddata->rmap, MT6375_HVDCP_SETTING_CTRL1, 0xff, 0x00);
+		regmap_update_bits(ddata->rmap, MT6375_REG_DPDM_CTRL4, 0xff, 0x00);
+		regmap_update_bits(ddata->rmap, MT6375_HVDCP_SETTING_CTRL2, 0xff, 0x00);
+		return 0;
+	}
+}
+
+static void mt6375_hvdcp_result_check_work(struct work_struct *work)
+{
+	int ret = 0;
+	int val = 0;
+	struct mt6375_chg_data *ddata = container_of(work, struct mt6375_chg_data, hvdcp_result_check_work.work);
+
+	mt_dbg(ddata->dev, "%s\n", __func__);
+
+	ret = mt6375_get_hvdcp_status(ddata, val);
+	if (ret < 0) {
+		printk("%s: fail to read device_type\n", __func__);
+	}
+
+	printk("%s: device type: %d\n", __func__, ret);
+
+	if (ret & BIT(6)) {
+		printk("%s: hvdcp detect\n", __func__);
+		ddata->hvdcp_type = POWER_SUPPLY_TYPE_USB_HVDCP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if(oplus_mt6375_record_qc_type_pfunc) {
+			oplus_mt6375_record_qc_type_pfunc();
+			printk("%s: hvdcp detect record qc type\n", __func__);
+		}
+#endif
+		power_supply_changed(ddata->psy);
+		ret = mt6375_set_hvdcp_to_5v();
+		if (ret < 0)
+			printk("%s: fail to write dpdm_ctrl\n", __func__);
+	} else {
+		ddata->hvdcp_type = POWER_SUPPLY_TYPE_USB_DCP;
+		power_supply_changed(ddata->psy);
+		printk("%s: hvdcp not detect\n", __func__);
+	}
+
+	ddata->oplus_hvdcp_detect = false;
+}
+
+void oplus_notify_hvdcp_detect_stat(void)
+{
+	struct mt6375_chg_data *ddata = oplus_ddata;
+
+	if (ddata && true == is_mtksvooc_project) {
+		ddata->hvdcp_cfg_9v_done = true;
+		ddata->hvdcp_detect_time = cpu_clock(smp_processor_id()) / 1000000;
+		printk(KERN_ERR "oplus_notify_hvdcp_detect_stat hvdcp2 detect: %d, the detect time: %lu\n",
+				ddata->hvdcp_cfg_9v_done, ddata->hvdcp_detect_time);
+	}
+}
+EXPORT_SYMBOL(oplus_notify_hvdcp_detect_stat);
+
+static void mt6375_hvdcp_work(struct work_struct *work)
+{
+	int ret = 0;
+	int val = 0;
+	struct mt6375_chg_data *ddata = container_of(work, struct mt6375_chg_data, hvdcp_work.work);
+
+	mt_dbg(ddata->dev, "%s\n", __func__);
+
+	ret = mt6375_get_hvdcp_status(ddata, val);
+	if (ret < 0) {
+		printk("%s: fail to read device_type\n", __func__);
+	}
+
+	printk("%s: device type: %d\n", __func__, ret);
+
+	if (val & BIT(6)) {
+		printk("%s: hvdcp detect\n", __func__);
+		ddata->hvdcp_type = POWER_SUPPLY_TYPE_USB_HVDCP;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (oplus_mt6375_record_qc_type_pfunc) {
+			oplus_mt6375_record_qc_type_pfunc();
+			printk("%s: hvdcp detect record_qc_type\n", __func__);
+		}
+#endif
+		ret = mt6375_set_hvdcp_to_5v();
+		if (ret < 0)
+			printk("%s: fail to write dpdm_ctrl\n", __func__);
+	} else {
+		ddata->hvdcp_type = POWER_SUPPLY_TYPE_USB_DCP;
+		printk("%s: hvdcp not detect\n", __func__);
+	}
+}
+#endif
+
 static irqreturn_t mt6375_fl_vbus_ov_handler(int irq, void *data)
 {
 	struct mt6375_chg_data *ddata = data;
@@ -2121,13 +2730,60 @@ static irqreturn_t mt6375_fl_chg_tout_handler(int irq, void *data)
 static irqreturn_t mt6375_fl_bc12_dn_handler(int irq, void *data)
 {
 	struct mt6375_chg_data *ddata = data;
+	int attach;
 
 	mt_dbg(ddata->dev, "++\n");
 	mutex_lock(&ddata->attach_lock);
 	ddata->bc12_dn = true;
+	attach = atomic_read(&ddata->attach);
 	mutex_unlock(&ddata->attach_lock);
-	if (!queue_work(ddata->wq, &ddata->bc12_work))
+
+	if (attach < ATTACH_TYPE_PD && !queue_work(ddata->wq, &ddata->bc12_work))
 		dev_notice(ddata->dev, "%s bc12 work already queued\n", __func__);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t mt6375_int_chrdet_ext_handler(int irq, void *data)
+{
+	struct mt6375_chg_data *ddata = data;
+	int ret;
+	u32 val;
+
+	struct tcpc_device *tcpc = tcpc_dev_get_by_name("type_c_port0");
+	if (tcpc == NULL) {
+		pr_info("%s: get type_c_port0 fail\n", __func__);
+		return IRQ_HANDLED;
+	}
+
+	mt_dbg(ddata->dev, "++\n");
+	ret = mt6375_chg_field_get(data, F_CHRDET_EXT, &val);
+	if (ret < 0)
+		return ret;
+	if (!val) {
+		mt_dbg(ddata->dev, "chrdet dettach\n");
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (oplus_mt6375_wired_charging_break_pfunc) {
+		oplus_mt6375_wired_charging_break_pfunc(VBUS_OFF);
+		dev_err(ddata->dev, "mt6375 vbus OFF\n");
+	}
+#endif
+		/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		oplus_tcpc_direct_charge_en(false);
+		/*#endif OPLUS_FEATURE_CHG_BASIC */
+		tcpci_notify_chrdet_state(tcpc, false);
+		if (ddata->hvdcp_cfg_9v_done == true) {
+			ddata->hvdcp_detach_time = cpu_clock(smp_processor_id()) / 1000000;
+		}
+	} else {
+		mt_dbg(ddata->dev, "chrdet attach\n");
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (oplus_mt6375_wired_charging_break_pfunc) {
+		oplus_mt6375_wired_charging_break_pfunc(VBUS_ON);
+		dev_err(ddata->dev, "mt6375 vbus on\n");
+	}
+#endif
+		tcpci_notify_chrdet_state(tcpc, true);
+	}
 	return IRQ_HANDLED;
 }
 
@@ -2273,7 +2929,12 @@ static int mt6375_chg_get_pdata(struct device *dev)
 						   &mt6375_chg_dtprops[i]);
 		pdata->usb_killer_detect =
 			device_property_read_bool(dev, "usb_killer_detect");
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
+		pdata->usb_no_use_chrdet =
+			device_property_read_bool(dev, "usb_no_use_chrdet");
+		pr_info("pdata->usb_no_use_chrdet = %d  \n",pdata->usb_no_use_chrdet);
+#endif
 		/* mediatek chgdev name */
 		if (of_property_read_string(np, "chg_name", &pdata->chg_name))
 			dev_notice(dev, "failed to get chg_name\n");
@@ -2327,6 +2988,18 @@ static int mt6375_chg_init_setting(struct mt6375_chg_data *ddata)
 	struct mt6375_chg_platform_data *pdata = dev_get_platdata(ddata->dev);
 
 	mt_dbg(ddata->dev, "%s\n", __func__);
+	ret = mt6375_chg_field_set(ddata, F_CHRD_UV_VREF, 2600);
+	if (ret < 0) {
+		dev_err(ddata->dev, "failed to set chrdet uv level\n");
+		return ret;
+	}
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	ret = mt6375_chg_field_set(ddata, F_CHRD_OV_VREF, 14500);
+	if (ret < 0) {
+		dev_err(ddata->dev, "failed to set chrdet ov level\n");
+		return ret;
+	}
+#endif
 	ret = mt6375_chg_field_set(ddata, F_AICC_ONESHOT, 1);
 	if (ret < 0) {
 		dev_err(ddata->dev, "failed to set aicc oneshot\n");
@@ -2360,6 +3033,12 @@ static int mt6375_chg_init_setting(struct mt6375_chg_data *ddata)
 		return ret;
 	}
 
+	ret = mt6375_chg_field_set(ddata, F_QON_RST_EN, 0);
+	if (ret < 0) {
+		dev_err(ddata->dev, "failed to disable qon_rst\n");
+		return ret;
+	}
+
 	/*
 	 * disable wdt to save 1mA power consumption
 	 * it will be turned back on later
@@ -2370,7 +3049,15 @@ static int mt6375_chg_init_setting(struct mt6375_chg_data *ddata)
 		dev_err(ddata->dev, "failed to disable WDT\n");
 		return ret;
 	}
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (get_eng_version() == HIGH_TEMP_AGING) {
+		ret = mt6375_chg_field_set(ddata, F_DIG_THREG_EN, 0);
+		if (ret < 0) {
+			dev_err(ddata->dev, "failed to disable thermal dig en\n");
+			return ret;
+		}
+	}
+#endif
 	/* if get failed, just ignore it */
 	ret = mt6375_chg_field_get(ddata, F_PP_PG_FLAG, &val);
 	if (ret >= 0 && val)
@@ -2445,13 +3132,43 @@ static int mt6375_chg_init_chgdev(struct mt6375_chg_data *ddata)
 	.hdlr = mt6375_##_name##_handler, \
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
+struct mt6375_chg_irq {
+	char *name;
+	irq_handler_t hdlr;
+};
+#endif
+
 static int mt6375_chg_init_irq(struct mt6375_chg_data *ddata)
 {
 	int i, ret;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
+	struct mt6375_chg_platform_data *pdata = dev_get_platdata(ddata->dev);
+
+	const struct mt6375_chg_irq mt6375_chg_irqs[] = {
+#else
 	const struct {
 		char *name;
 		irq_handler_t hdlr;
 	} mt6375_chg_irqs[] = {
+#endif
+		MT6375_CHG_IRQ(fl_wdt),
+		MT6375_CHG_IRQ(fl_pwr_rdy),
+		MT6375_CHG_IRQ(fl_vbus_ov),
+		MT6375_CHG_IRQ(fl_chg_tout),
+		MT6375_CHG_IRQ(fl_detach),
+		MT6375_CHG_IRQ(fl_bc12_dn),
+		MT6375_CHG_IRQ(int_chrdet_ext),
+		MT6375_CHG_IRQ(fl_pe_done),
+		MT6375_CHG_IRQ(fl_aicc_done),
+		MT6375_CHG_IRQ(fl_batpro_done),
+		MT6375_CHG_IRQ(adc_vbat_mon_ov),
+	};
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
+	const struct mt6375_chg_irq mt6375_chg_irqs_no_chrdet_ext[] = {
 		MT6375_CHG_IRQ(fl_wdt),
 		MT6375_CHG_IRQ(fl_pwr_rdy),
 		MT6375_CHG_IRQ(fl_vbus_ov),
@@ -2463,26 +3180,54 @@ static int mt6375_chg_init_irq(struct mt6375_chg_data *ddata)
 		MT6375_CHG_IRQ(fl_batpro_done),
 		MT6375_CHG_IRQ(adc_vbat_mon_ov),
 	};
-
+#endif
 	mt_dbg(ddata->dev, "%s\n", __func__);
-	for (i = 0; i < ARRAY_SIZE(mt6375_chg_irqs); i++) {
-		ret = platform_get_irq_byname(to_platform_device(ddata->dev),
-					      mt6375_chg_irqs[i].name);
-		if (ret < 0) {
-			dev_err(ddata->dev, "failed to get irq %s\n",
-				mt6375_chg_irqs[i].name);
-			return ret;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
+	if(pdata->usb_no_use_chrdet)
+	{
+		for (i = 0; i < ARRAY_SIZE(mt6375_chg_irqs_no_chrdet_ext); i++) {
+			ret = platform_get_irq_byname(to_platform_device(ddata->dev),
+						      mt6375_chg_irqs_no_chrdet_ext[i].name);
+			if (ret < 0) {
+				dev_err(ddata->dev, "failed to get irq %s\n",
+					mt6375_chg_irqs_no_chrdet_ext[i].name);
+				return ret;
+			}
+			ret = devm_request_threaded_irq(ddata->dev, ret, NULL,
+							mt6375_chg_irqs_no_chrdet_ext[i].hdlr,
+							IRQF_ONESHOT,
+							dev_name(ddata->dev), ddata);
+			if (ret < 0) {
+				dev_err(ddata->dev, "failed to request irq %s\n",
+					mt6375_chg_irqs_no_chrdet_ext[i].name);
+				return ret;
+			}
 		}
-		ret = devm_request_threaded_irq(ddata->dev, ret, NULL,
-						mt6375_chg_irqs[i].hdlr,
-						IRQF_ONESHOT,
-						dev_name(ddata->dev), ddata);
-		if (ret < 0) {
-			dev_err(ddata->dev, "failed to request irq %s\n",
-				mt6375_chg_irqs[i].name);
-			return ret;
+	} else {
+#endif
+		for (i = 0; i < ARRAY_SIZE(mt6375_chg_irqs); i++) {
+			ret = platform_get_irq_byname(to_platform_device(ddata->dev),
+							  mt6375_chg_irqs[i].name);
+			if (ret < 0) {
+				dev_err(ddata->dev, "failed to get irq %s\n",
+					mt6375_chg_irqs[i].name);
+				return ret;
+			}
+			ret = devm_request_threaded_irq(ddata->dev, ret, NULL,
+							mt6375_chg_irqs[i].hdlr,
+							IRQF_ONESHOT,
+							dev_name(ddata->dev), ddata);
+			if (ret < 0) {
+				dev_err(ddata->dev, "failed to request irq %s\n",
+					mt6375_chg_irqs[i].name);
+				return ret;
+			}
 		}
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic,2022/05/26,Add for lisa pps charging*/
 	}
+#endif
 	return 0;
 }
 
@@ -2511,6 +3256,40 @@ static int mt6375_set_shipping_mode(struct mt6375_chg_data *ddata)
 	return regmap_update_bits(ddata->rmap, MT6375_REG_CHG_TOP1,
 				  MT6375_MSK_BATFET_DIS, 0xFF);
 }
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic, 2022/02/19, modify for charge*/
+int oplus_chg_set_shipping_mode(void) {
+	if (NULL == oplus_ddata) {
+		return -1;
+	}
+
+	return mt6375_set_shipping_mode(oplus_ddata);
+}
+EXPORT_SYMBOL(oplus_chg_set_shipping_mode);
+
+/*BSP.CHG.Basic, 2022/07/11, modify for get chrdet status*/
+bool mt6375_int_chrdet_attach(void)
+{
+	struct mt6375_chg_data *ddata = oplus_ddata;
+	int ret;
+	u32 val;
+
+	if (NULL == oplus_ddata) {
+		return -EINVAL;
+	}
+
+	ret = mt6375_chg_field_get(oplus_ddata, F_CHRDET_EXT, &val);
+	if (!val) {
+		mt_dbg(ddata->dev, "int chrdet dettach, val = %d\n", val);
+		return false;
+	} else {
+		mt_dbg(ddata->dev, "int chrdet attach, val = %d\n", val);
+		return true;
+	}
+}
+EXPORT_SYMBOL(mt6375_int_chrdet_attach);
+#endif
 
 static ssize_t shipping_mode_store(struct device *dev,
 				   struct device_attribute *attr,
@@ -2566,6 +3345,9 @@ static int mt6375_chg_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	oplus_ddata = ddata;
+	is_mtksvooc_project = true;
+
 	ddata->dev = dev;
 	init_completion(&ddata->pe_done);
 	init_completion(&ddata->aicc_done);
@@ -2582,6 +3364,17 @@ static int mt6375_chg_probe(struct platform_device *pdev)
 		goto out;
 	}
 	INIT_WORK(&ddata->bc12_work, mt6375_chg_bc12_work_func);
+#ifdef CONFIG_OPLUS_HVDCP_SUPPORT
+	INIT_DELAYED_WORK(&ddata->hvdcp_work, mt6375_hvdcp_work);
+	INIT_DELAYED_WORK(&ddata->hvdcp_result_check_work, mt6375_hvdcp_result_check_work);
+	ddata->hvdcp_detect_time = 0;
+	ddata->hvdcp_detach_time = 0;
+	ddata->hvdcp_cfg_9v_done = false;
+	ddata->hvdcp_exit_stat = HVDCP_EXIT_NORMAL;
+	ddata->hvdcp_type = POWER_SUPPLY_TYPE_UNKNOWN;
+	ddata->oplus_get_hvdcp_bc12_result = false;
+	ddata->oplus_hvdcp_detect = false;
+#endif
 	platform_set_drvdata(pdev, ddata);
 
 	ret = device_create_file(dev, &dev_attr_shipping_mode);
@@ -2607,6 +3400,10 @@ static int mt6375_chg_probe(struct platform_device *pdev)
 		dev_err(dev, "failed to init power supply\n");
 		goto out_attr;
 	}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	ddata->psy_desc.type = POWER_SUPPLY_TYPE_UNKNOWN;
+#endif
 
 	ret = mt6375_chg_init_regulator(ddata);
 	if (ret < 0) {

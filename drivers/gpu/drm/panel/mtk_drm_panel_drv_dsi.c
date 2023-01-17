@@ -6,7 +6,7 @@
 #include "mtk_drm_panel_drv.h"
 
 #ifdef CONFIG_MTK_ROUND_CORNER_SUPPORT
-#include "../mediatek/mtk_corner_pattern/mtk_data_hw_roundedpattern.h"
+#include "../mediatek/mediatek_v2/mtk_corner_pattern/mtk_data_hw_roundedpattern.h"
 #endif
 
 #define MAX_PANEL_OPERATION_NAME (256)
@@ -133,6 +133,11 @@ int mtk_panel_register_dsi_customization_callback(
 	}
 
 	target_cust = &ctx_dsi->panel_resource->cust;
+	if (IS_ERR_OR_NULL(target_cust)) {
+		DDPPR_ERR("%s: panel resource cust is null\n", __func__);
+		return -EINVAL;
+	}
+
 	if (atomic_read(&target_cust->cust_enabled) != 0) {
 		DDPPR_ERR("%s %d: cust callback has already been registered\n",
 			__func__, __LINE__);
@@ -227,10 +232,8 @@ static int mtk_drm_panel_do_prepare(struct mtk_panel_context *ctx_dsi)
 
 	/*deallocate input data*/
 	mtk_lcm_destroy_input(input.data);
-	input.data = NULL;
 fail1:
 	mtk_lcm_destroy_input(input.condition);
-	input.condition = NULL;
 fail2:
 	mtk_lcm_destroy_input_packet(&input);
 	return ret;
@@ -979,7 +982,7 @@ static struct mtk_lcm_mode_dsi *mtk_drm_panel_get_mode_by_id(
 static struct mtk_lcm_mode_dsi *mtk_lcm_find_1st_max_fps_mode(unsigned int level)
 {
 	struct mtk_lcm_mode_dsi *mode_node;
-	struct mtk_lcm_mode_dsi *max_node;
+	struct mtk_lcm_mode_dsi *max_node = NULL;
 	unsigned int max_fps = (unsigned int)-1;
 	struct mtk_lcm_params_dsi *params =
 			&ctx_dsi->panel_resource->params.dsi_params;

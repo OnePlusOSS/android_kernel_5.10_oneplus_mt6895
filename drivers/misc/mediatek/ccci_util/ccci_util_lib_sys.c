@@ -267,11 +267,11 @@ CCCI_ATTR(ft_info, 0444, &ccci_ft_inf_show, NULL);
 static ssize_t kcfg_setting_show(char *buf)
 {
 	unsigned int curr = 0;
-	unsigned int actual_write;
-	char md_en[MAX_MD_NUM];
+	int actual_write = 0;
+	char md_en[MAX_MD_NUM] = {0};
 	unsigned int md_num = 0;
-	int i;
-	char c_en;
+	int i = 0;
+	char c_en = 0;
 
 	for (i = 0; i < MAX_MD_NUM; i++) {
 		if (get_modem_is_enabled(MD_SYS1 + i)) {
@@ -370,6 +370,16 @@ static ssize_t kcfg_setting_store(const char *buf, size_t count)
 
 CCCI_ATTR(kcfg_setting, 0444, &kcfg_setting_show, &kcfg_setting_store);
 
+static ssize_t ccci_pin_cfg_store(const char *buf, size_t count)
+{
+	unsigned int pin_val;
+
+	pin_val = buf[0] - '0';
+	inject_pin_status_event(pin_val, "RF_cable");
+	return count;
+}
+
+CCCI_ATTR(pincfg, 0220, NULL, &ccci_pin_cfg_store);
 /* Sys -- Add to group */
 static struct attribute *ccci_default_attrs[] = {
 	&ccci_attr_boot.attr,
@@ -382,6 +392,7 @@ static struct attribute *ccci_default_attrs[] = {
 	&ccci_attr_md_chn.attr,
 	&ccci_attr_ft_info.attr,
 	&ccci_attr_md1_postfix.attr,
+	&ccci_attr_pincfg.attr,
 	NULL
 };
 
@@ -394,8 +405,13 @@ static struct kobj_type ccci_ktype = {
 int ccci_sysfs_add_modem(int md_id, void *kobj, void *ktype,
 	get_status_func_t get_sta_func, boot_md_func_t boot_func)
 {
-	int ret;
+	int ret = 0;
 	static int md_add_flag;
+
+	if (md_id < 0 || md_id >= MAX_MD_NUM) {
+		CCCI_UTIL_INF_MSG("invalid md_id = %d\n", md_id);
+		return -CCCI_ERR_SYSFS_NOT_READY;
+	}
 
 	md_add_flag = 0;
 	if (!ccci_sys_info) {

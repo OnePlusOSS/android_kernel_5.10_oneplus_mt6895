@@ -27,6 +27,7 @@ enum addon_scenario {
 	ONE_SCALING,
 	TWO_SCALING,
 	WDMA_WRITE_BACK,
+	WDMA_WRITE_BACK_OVL,
 	GAME_PQ,
 	VP_PQ,
 	TRIPLE_DISP,
@@ -44,8 +45,10 @@ enum addon_module {
 	DISP_RSZ_v5,
 	DISP_RSZ_v6,
 	DISP_WDMA0,
+	DISP_WDMA0_v2,
 	DISP_WDMA1,
 	DISP_WDMA2,
+	DISP_WDMA2_v2,
 	MML_RSZ,
 	MML_RSZ_v2,
 	DMDP_PQ_WITH_RDMA,
@@ -128,6 +131,7 @@ struct mtk_addon_mml_config {
 	struct mml_task *task;		/* [OUT] task and config for mml */
 	struct mtk_rect mml_src_roi[DISP_PIPE_NUM];	/* [OUT] src roi for OVL */
 	struct mtk_rect mml_dst_roi[DISP_PIPE_NUM];	/* [OUT] dst roi for OVL */
+	bool is_entering;				/* [OUT] state of entering or leaving */
 };
 
 union mtk_addon_config {

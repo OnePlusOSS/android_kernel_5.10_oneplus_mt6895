@@ -215,6 +215,12 @@ enum mtk_dec_param {
 	MTK_DEC_PARAM_OPERATING_RATE = (1 << 9)
 };
 
+enum venc_lock {
+	VENC_LOCK_NONE,
+	VENC_LOCK_NORMAL,
+	VENC_LOCK_SEC
+};
+
 struct mtk_dec_params {
 	unsigned int    decode_mode;
 	unsigned int    frame_size_width;
@@ -401,6 +407,11 @@ struct metadata_info {
 	struct meta_describe metadata_dsc[MTK_MAX_METADATA_NUM];
 };
 
+struct vdec_set_frame_work_struct {
+	struct work_struct work;
+	struct mtk_vcodec_ctx *ctx;
+};
+
 /**
  * struct mtk_vcodec_ctx - Context (instance) private data.
  *
@@ -474,7 +485,6 @@ struct mtk_vcodec_ctx {
 
 	bool is_flushing;
 	unsigned int eos_type;
-	void *dec_eos_vb;
 	u64 early_eos_ts;
 
 	int int_cond[MTK_VDEC_HW_NUM];
@@ -493,6 +503,9 @@ struct mtk_vcodec_ctx {
 	unsigned char *ipi_blocked;
 	enum vdec_input_driven_mode input_driven;
 
+	struct workqueue_struct *vdec_set_frame_wq;
+	struct vdec_set_frame_work_struct vdec_set_frame_work;
+
 	/* for user lock HW case release check */
 	struct mutex hw_status;
 	int hw_locked[MTK_VDEC_HW_NUM];
@@ -505,6 +518,7 @@ struct mtk_vcodec_ctx {
 	enum v4l2_quantization quantization;
 	enum v4l2_xfer_func xfer_func;
 
+	int init_cnt;
 	int decoded_frame_cnt;
 	struct mutex buf_lock;
 	struct mutex worker_lock;
@@ -671,6 +685,10 @@ struct mtk_vcodec_dev {
 	struct list_head prop_param_list;
 	struct mutex log_param_mutex;
 	struct mutex prop_param_mutex;
+	enum venc_lock enc_hw_locked[MTK_VENC_HW_NUM];
+
+	unsigned int svp_mtee;
+	unsigned int unique_domain;
 };
 
 static inline struct mtk_vcodec_ctx *fh_to_ctx(struct v4l2_fh *fh)

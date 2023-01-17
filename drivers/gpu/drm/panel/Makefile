@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/
 
 obj-$(CONFIG_DRM_PANEL_ARM_VERSATILE) += panel-arm-versatile.o
 obj-$(CONFIG_DRM_PANEL_ASUS_Z00T_TM5P5_NT35596) += panel-asus-z00t-tm5p5-n35596.o
@@ -49,6 +49,9 @@ obj-$(CONFIG_DRM_PANEL_SHARP_LS043T1LE01) += panel-sharp-ls043t1le01.o
 obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7701) += panel-sitronix-st7701.o
 obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7703) += panel-sitronix-st7703.o
 obj-$(CONFIG_DRM_PANEL_SITRONIX_ST7789V) += panel-sitronix-st7789v.o
+obj-$(CONFIG_DRM_PANEL_OPLUS2269C_SAMSUNG_AMS643AG01_1080P_DSI_CMD) += oplus2269C_samsung_ams643ag01_1080p_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS22281_SAMSUNG_AMS643AG01_1080P_DSI_CMD) += oplus22281_samsung_ams643ag01_1080p_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS22281_SAMSUNG_AMS643AG01_1080P_DSI_VDO) += oplus22281_samsung_ams643ag01_1080p_dsi_vdo.o
 obj-$(CONFIG_DRM_PANEL_SONY_ACX424AKP) += panel-sony-acx424akp.o
 obj-$(CONFIG_DRM_PANEL_SONY_ACX565AKM) += panel-sony-acx565akm.o
 obj-$(CONFIG_DRM_PANEL_TPO_TD028TTEC1) += panel-tpo-td028ttec1.o
@@ -57,10 +60,16 @@ obj-$(CONFIG_DRM_PANEL_TPO_TPG110) += panel-tpo-tpg110.o
 obj-$(CONFIG_DRM_PANEL_TRULY_NT35597_WQXGA) += panel-truly-nt35597.o
 obj-$(CONFIG_DRM_PANEL_VISIONOX_RM69299) += panel-visionox-rm69299.o
 obj-$(CONFIG_DRM_PANEL_XINPENG_XPP055C272) += panel-xinpeng-xpp055c272.o
+ifneq ($(wildcard $(srctree)/$(src)/k6983v1_64_ref),)
+obj-$(CONFIG_DRM_PANEL_K6983V1_64_REF_FHD_CMD) += k6983v1_64_ref/panel-k6983v1-64-ref-fhd-cmd.o
+obj-$(CONFIG_DRM_PANEL_K6983V1_64_REF_WQHD_CMD) += k6983v1_64_ref/panel-k6983v1-64-ref-wqhd-cmd.o
+endif
+
 obj-$(CONFIG_DRM_PANEL_SAMSUNG_ANA6705_CMD) += panel-samsung-ana6705-cmd.o
 obj-$(CONFIG_DRM_PANEL_SAMSUNG_ANA6705_CMD_FHDP) += panel-samsung-ana6705-cmd-fhdp.o
 obj-$(CONFIG_DRM_PANEL_HX_NT37701_DPHY_CMD) += panel-hx-nt37701-dphy-cmd.o
 obj-$(CONFIG_DRM_PANEL_HX_NT37701_DPHY_CMD_120HZ) += panel-hx-nt37701-dphy-cmd-120hz.o
+obj-$(CONFIG_DRM_PANEL_TIANMA_NT37701A_DPHY_CMD_144HZ) += panel-tianma-nt37701a-dphy-cmd-144hz.o
 obj-$(CONFIG_DRM_PANEL_TRULY_TD4330_VDO) += panel-truly-td4330-vdo.o
 obj-$(CONFIG_DRM_PANEL_TRULY_TD4330_CMD) += panel-truly-td4330-cmd.o
 obj-$(CONFIG_DRM_PANEL_SAMSUNG_OP_CMD) += panel-samsung-op-cmd.o
@@ -74,6 +83,7 @@ obj-$(CONFIG_DRM_PANEL_SC_NT36672C_VDO_120HZ) += panel-sc-nt36672c-vdo-120hz.o
 obj-$(CONFIG_DRM_PANEL_TIANMA_R66451_CMD_120HZ) += panel-tianma-r66451-cmd-120hz.o
 obj-$(CONFIG_DRM_PANEL_TIANMA_R66451_CMD_120HZ_WA) += panel-tianma-r66451-cmd-120hz-wa.o
 obj-$(CONFIG_DRM_PANEL_TIANMA_NT36672E_VDO_120HZ_HFP) += panel-tianma-nt36672e-vdo-120hz-hfp.o
+obj-$(CONFIG_DRM_PANEL_OPLUS20171_BOE_NT37701_1080P_DSI_CMD) += oplus20171_boe_nt37701_1080p_dsi_cmd.o
 obj-$(CONFIG_DRM_PANEL_ALPHA_JDI_NT36672E_CPHY_VDO) += panel-alpha-jdi-nt36672e-cphy-vdo.o
 obj-$(CONFIG_DRM_PANEL_ALPHA_JDI_NT36672E_VDO_120HZ) += panel-alpha-jdi-nt36672e-vdo-120hz.o
 obj-$(CONFIG_DRM_PANEL_ALPHA_JDI_NT36672E_VDO_144HZ) += panel-alpha-jdi-nt36672e-vdo-144hz.o
@@ -81,10 +91,40 @@ obj-$(CONFIG_DRM_PANEL_ALPHA_JDI_NT36672E_VDO_60HZ) += panel-alpha-jdi-nt36672e-
 obj-$(CONFIG_DRM_PANEL_ALPHA_JDI_NT36672E_VDO_120HZ_HFP) += panel-alpha-jdi-nt36672e-vdo-120hz-hfp.o
 obj-$(CONFIG_DRM_PANEL_ALPHA_JDI_NT36672E_VDO_144HZ_HFP) += panel-alpha-jdi-nt36672e-vdo-144hz-hfp.o
 obj-$(CONFIG_DRM_PANEL_TRULY_NT35595_CMD) += panel-truly-nt35595-cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21007_SAMSUNG_AMB670YF01_QHD_DSI_CMD) += oplus21007_samsung_amb670yf01_qhd_dsi_cmd.o
 obj-$(CONFIG_DRM_PANEL_SAMSUNG_S68FC01_VDO_AOD) += panel-samsung-s68fc01-vdo-aod.o
 obj-$(CONFIG_DRM_PANEL_ALPHA_SAMSUNG_S6E3HAE_CMD_120HZ) += panel-alpha-samsung-s6e3hae-wqhd-dphy-cmd-120hz.o
+obj-$(CONFIG_DRM_PANEL_ALPHA_SAMSUNG_S6E3HAE_CMD_120HZ) += panel-alpha-samsung-s6e3hae-fhd-dphy-cmd-120hz-r4831a.o
+obj-$(CONFIG_LCM_SM5109_I2C) += lcm_sm5109_i2c.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21641_BOE_NT37701_FHD_DSI_CMD) += oplus21641_boe_nt37701_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21641_BOE_NT37701A_FHD_DSI_CMD) += oplus21641_boe_nt37701a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21641_TIANMA_ILI7838A_FHD_DSI_CMD) += oplus21641_tianma_ili7838a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21861_BOE_NT37701A_FHD_DSI_CMD) += oplus21861_boe_nt37701a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21861_TIANMA_ILI7838A_FHD_DSI_CMD) += oplus21861_tianma_ili7838a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21121_BOE_NT37701A_FHD_DSI_CMD) += oplus21121_boe_nt37701a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21121_BOE_RM692E5_FHD_DSI_CMD) += oplus21121_boe_rm692e5_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21143_ILI7807S_DSI_VDO) += oplus21143_ili7807s_dsi_vdo.o
+obj-$(CONFIG_DRM_PANEL_OPLUS21143_TIANMA_NT36672C_DSI_VDO) += oplus21143_tianma_nt36672c_dsi_vdo.o
 obj-$(CONFIG_DRM_PANEL_TIANMA_NT36672C_CPHY_VDO_90HZ_RT4801) += panel-tianma-nt36672c-cphy-vdo-90hz-rt4801.o
 obj-$(CONFIG_DRM_PANEL_NT37801_MSYNC2_RTE) += panel-nt37801-msync2-rte.o
+obj-$(CONFIG_DRM_PANEL_OPLUS22021_BOE_NT37701A_FHD_DSI_CMD) += oplus22021_boe_nt37701a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS22021_SAMSUNG_AMF680CM01_FHD_DSI_CMD) += oplus22021_samsung_amf680cm01_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_FOLDABLE_FHD_CMD) += panel-foldable-fhd-cmd.o
+
+obj-$(CONFIG_DRM_PANEL_OPLUS22017_TIANMA_ILI7838A_FHD_DSI_CMD) += oplus22017_tianma_ili7838a_fhd_dsi_cmd.o
+obj-$(CONFIG_DRM_PANEL_OPLUS22017_BOE_NT37705_FHD_DSI_CMD) += oplus22017_boe_nt37705_fhd_dsi_cmd.o
+#mediatek-drm-panel-drv-y :=  \
+#		  mtk_round_corner/mtk_drm_rc.o \
+#		  mtk_drm_panel_helper.o \
+#		  mtk_drm_panel_helper_dbi.o \
+#		  mtk_drm_panel_helper_dpi.o \
+#		  mtk_drm_panel_helper_dsi.o \
+#		  mtk_drm_panel_drv_dbi.o \
+#		  mtk_drm_panel_drv_dpi.o \
+#		  mtk_drm_panel_drv_dsi.o \
+#		  mtk_drm_panel_drv.o
+obj-$(CONFIG_BACKLIGHT_KTZ8866)         += ktz8866.o
+obj-$(CONFIG_DRM_PANEL_EDO_HX5329_CMD_120) += panel-edo-hx5329-cmd-120hz.o
 
 mediatek-drm-gateic-y := mtk_drm_panel_i2c.o \
 		  mtk_drm_gateic_rt4801h.o \
@@ -101,8 +141,8 @@ mediatek-drm-panel-drv-y :=  \
 		  mtk_drm_panel_drv_dpi.o \
 		  mtk_drm_panel_drv_dsi.o \
 		  mtk_drm_panel_drv.o
-
-obj-$(CONFIG_DRM_MEDIATEK_PANEL) += mediatek-drm-gateic.o
-obj-$(CONFIG_DRM_MEDIATEK_PANEL) += mediatek-drm-panel-drv.o
-
+#obj-$(CONFIG_DRM_MEDIATEK_PANEL) += mediatek-drm-gateic.o
+#obj-$(CONFIG_DRM_MEDIATEK_PANEL) += mediatek-drm-panel-drv.o
 ccflags-$(CONFIG_DRM_MEDIATEK_PANEL) += -I$(srctree)/drivers/leds/
+subdir-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/
+subdir-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/

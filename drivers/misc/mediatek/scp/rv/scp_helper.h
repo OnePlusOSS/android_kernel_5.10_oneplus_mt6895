@@ -137,6 +137,7 @@ struct scp_work_struct {
 
 struct scp_reserve_mblock {
 	enum scp_reserve_mem_id_t num;
+	u32 alignment;
 	u64 start_phys;
 	u64 start_virt;
 	u64 size;
@@ -163,6 +164,9 @@ struct scp_region_info_st {
 	uint32_t regdump_start;
 	uint32_t regdump_size;
 	uint32_t ap_params_start;
+//#ifdef OPLUS_FEATURE_SENSOR
+	uint32_t sensor_data_addr;
+//#endif
 };
 
 extern struct scp_regs scpreg;
@@ -352,45 +356,6 @@ static inline uint64_t scp_do_wdt_clear(uint64_t coreid)
 	return res.a0;
 }
 
-static inline unsigned long scp_do_tbuf_dump(void)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_smc(MTK_SIP_TINYSYS_SCP_CONTROL,
-			MTK_TINYSYS_SCP_KERNEL_OP_DUMP_TBUF,
-			0, 0, 0, 0, 0, 0, &res);
-	return res.a0;
-}
-
-static inline unsigned long scp_do_l2tcm_dump(void)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_smc(MTK_SIP_TINYSYS_SCP_CONTROL,
-			MTK_TINYSYS_SCP_KERNEL_OP_DUMP_L2TCM,
-			0, 0, 0, 0, 0, 0, &res);
-	return res.a0;
-}
-
-static inline unsigned long scp_do_reg_dump(void)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_smc(MTK_SIP_TINYSYS_SCP_CONTROL,
-			MTK_TINYSYS_SCP_KERNEL_OP_DUMP_REG,
-			0, 0, 0, 0, 0, 0, &res);
-	return res.a0;
-}
-
-static inline unsigned long scp_do_rvbus_dump(void)
-{
-	struct arm_smccc_res res;
-
-	arm_smccc_smc(MTK_SIP_TINYSYS_SCP_CONTROL,
-			MTK_TINYSYS_SCP_KERNEL_OP_DUMP_RVBUS,
-			0, 0, 0, 0, 0, 0, &res);
-	return res.a0;
-}
 #endif
 
 #endif

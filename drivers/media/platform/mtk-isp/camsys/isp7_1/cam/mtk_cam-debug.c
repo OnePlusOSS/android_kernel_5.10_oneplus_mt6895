@@ -523,10 +523,26 @@ static ssize_t dbg_ctrl_write(struct file *file, const char __user *data,
 	dev_dbg(ctrl->debug_fs->cam->dev, "%s:pipe(%d):received cmd(%s)\n",
 		__func__, ctrl->pipe_id, tmp);
 	cmd_str = strsep(&parse_str, ":");
+	if (!cmd_str) {
+		dev_info(ctrl->debug_fs->cam->dev,
+			 "%s: parse cmd_str failed\n", __func__);
+		goto FAIL;
+	}
+
 	param_str_0 = strsep(&parse_str, ":");
+	if (!param_str_0) {
+		dev_info(ctrl->debug_fs->cam->dev,
+			 "%s: parse param_str_0 failed\n", __func__);
+		goto FAIL;
+	}
 
 	if (cmd_str[0] == 'r') {
 		param_str_1 = strsep(&parse_str, ":");
+		if (!param_str_1) {
+			dev_info(ctrl->debug_fs->cam->dev,
+			 "%s: parse param_str_1 failed\n", __func__);
+			goto FAIL;
+		}
 		if (kstrtoul(param_str_1, 10, &seq)) {
 			ret = -EFAULT;
 			dev_dbg(ctrl->debug_fs->cam->dev, "kstrtoul failed:%s\n",
@@ -639,19 +655,26 @@ static ssize_t exp_read(struct file *file, char __user *user_buf,
 	struct mtk_cam_debug_fs *debug_fs;
 	size_t read_count;
 
-	if (!dev)
+	if (!dev) {
 		pr_debug("%s: dev can't be null\n", __func__);
-
+		return -1;
+	}
 	cam = (struct mtk_cam_device *)dev_get_drvdata(dev);
-	if (!cam)
+	if (!cam) {
 		dev_dbg(dev, "%s: cam can't be null\n", __func__);
+		return -1;
+	}
 
 	debug_fs = cam->debug_fs;
-	if (!debug_fs)
+	if (!debug_fs) {
 		dev_dbg(dev, "%s: debug_fs can't be null\n", __func__);
+		return -1;
+	}
 
-	if (!debug_fs->exp_dump_buf)
+	if (!debug_fs->exp_dump_buf) {
 		dev_dbg(dev, "%s: dump buf can't be null\n", __func__);
+		return -1;
+	}
 
 	/* If no dump, return 0 byte read directly */
 	if (!mtk_cam_debug_has_exp_dump(debug_fs))
@@ -878,22 +901,25 @@ static void mtk_cam_exception_work(struct work_struct *work)
 	}
 
 	ctx->cam->debug_fs->ops->exp_dump(ctx->cam->debug_fs, &dump_param);
-	snprintf(title_desc, 48, "Camsys:%s", dbg_work->desc);
-	snprintf(warn_desc, 48, "%s:ctx(%d):req(%d):%s",
-		 req->req.debug_str, ctx->stream_id, s_data->frame_seq_no,
-		 dbg_work->desc);
-	dev_info(ctx->cam->dev, "%s:camsys dump, %s\n",
-		 __func__, warn_desc);
-
+	if (snprintf(title_desc, 48, "Camsys:%s", dbg_work->desc) < 0 ||
+		snprintf(warn_desc, 48, "%s:ctx(%d):req(%d):%s",
+		req->req.debug_str, ctx->stream_id, s_data->frame_seq_no,
+		dbg_work->desc) < 0) {
+		dev_info(ctx->cam->dev, "%s:snprintf failed\n", __func__);
+		return;
+	}
+	dev_info(ctx->cam->dev, "%s:camsys dump, %s\n", __func__, warn_desc);
 	if (dbg_work->smi_dump)
 		mtk_smi_dbg_hang_detect("camsys");
 
 #if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
-	aee_kernel_warning_api(__FILE__, __LINE__, DB_OPT_DEFAULT, title_desc,
+	aee_kernel_exception_api(__FILE__, __LINE__, DB_OPT_DEFAULT, title_desc,
 			       warn_desc);
 #else
 	WARN_ON(1);
 #endif
+    if(dbg_work->smi_dump)
+        mtk_smi_dbg_hang_detect("camsys");
 
 	atomic_set(&dbg_work->state, MTK_CAM_REQ_DBGWORK_S_FINISHED);
 }
@@ -976,7 +1002,7 @@ static void mtk_cam_exceptoin_detect_work(struct work_struct *work)
 	}
 
 	if (ctx->seninf) {
-		ret = mtk_cam_seninf_dump(ctx->seninf, s_data->frame_seq_no);
+		ret = mtk_cam_seninf_dump(ctx->seninf, s_data->frame_seq_no, false);
 		dev_info(ctx->cam->dev,
 			"%s:ctx(%d):used_raw(0x%x) frame_seq_no(%d):mtk_cam_seninf_dump() ret=%d\n",
 			__func__, ctx->stream_id, ctx->used_raw_dev, s_data->frame_seq_no, ret);
@@ -1035,7 +1061,10 @@ int mtk_cam_req_dump(struct mtk_cam_request_stream_data *s_data,
 	dbg_work->dump_flags = dump_flag;
 	dbg_work->smi_dump = smi_dump;
 	atomic_set(&dbg_work->state, MTK_CAM_REQ_DBGWORK_S_PREPARED);
-	snprintf(dbg_work->desc, MTK_CAM_DEBUG_DUMP_DESC_SIZE - 1, desc);
+	if (snprintf(dbg_work->desc, MTK_CAM_DEBUG_DUMP_DESC_SIZE - 1, desc) < 0) {
+		dev_info(ctx->cam->dev, "%s:snprintf failed\n", __func__);
+		return false;
+	}
 	if (!queue_work(wq, &dbg_work->work)) {
 		dev_dbg(ctx->cam->dev,
 			"%s: seq(%d) failed, debug work is already in queue\n",
@@ -1089,6 +1118,21 @@ mtk_cam_debug_detect_dequeue_failed(struct mtk_cam_request_stream_data *s_data,
 			 s_data->frame_seq_no, s_data->state.estate, irq_info->ts_ns / 1000);
 		}
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*extisp debug dump case*/
+	if (s_data->state.estate == E_STATE_EXTISP_OUTER ||
+	    s_data->state.estate == E_STATE_EXTISP_INNER) {
+		s_data->no_frame_done_cnt++;
+		if (s_data->no_frame_done_cnt > 1) {
+			dev_info(ctx->cam->dev,
+			 "%s:EXTISP-SOF[ctx:%d-#%d] no p1 done for %d sofs, FBC_CNT %d dump req(%d) state(%d) ts(%lu)\n",
+			 req->req.debug_str, ctx->stream_id,
+			 ctx->dequeued_frame_seq_no,
+			 s_data->no_frame_done_cnt, irq_info->fbc_cnt,
+			 s_data->frame_seq_no, s_data->state.estate, irq_info->ts_ns / 1000);
+		}
+	}
+#endif
 	if (s_data->no_frame_done_cnt >= NO_P1_DONE_DEBUG_START) {
 		dev_info(raw_dev->dev,
 			 "INT_EN %x\n",
@@ -1160,7 +1204,7 @@ static void mtk_cam_req_seninf_dump_work(struct work_struct *work)
 	if (!seninf)
 		pr_info("%s: filaed, seninf can't be NULL\n", __func__);
 	else
-		mtk_cam_seninf_dump(seninf, seninf_dump_work->frame_seq_no);
+		mtk_cam_seninf_dump(seninf, seninf_dump_work->frame_seq_no, false);
 
 	kfree(seninf_dump_work);
 }

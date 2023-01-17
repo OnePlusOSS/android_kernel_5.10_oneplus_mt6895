@@ -5,6 +5,7 @@
 #define __MTK_CAM_SENINF_H__
 
 #include <linux/kthread.h>
+#include <linux/remoteproc.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-fwnode.h>
@@ -31,6 +32,10 @@ struct seninf_cam_mux {
 	int idx;
 };
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define DT_REMAP_MAX_CNT 4
+#endif
+
 struct seninf_vc {
 	u8 vc;
 	u8 dt;
@@ -44,6 +49,9 @@ struct seninf_vc {
 	u16 exp_hsize;
 	u16 exp_vsize;
 	u8 bit_depth;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	u8 dt_remap_to_type;
+#endif
 };
 
 struct seninf_vcinfo {
@@ -85,6 +93,10 @@ struct seninf_core {
 	void __iomem *reg_if;
 	void __iomem *reg_ana;
 	int refcnt;
+
+	/* CCU control flow */
+	phandle rproc_ccu_phandle;
+	struct rproc *rproc_ccu_handle;
 
 	/* platform properties */
 	int cphy_settle_delay_dt;
@@ -181,6 +193,7 @@ struct seninf_ctx {
 
 	int open_refcnt;
 	struct mutex mutex;
+	struct mutex pwr_mutex;
 
 	/* csi irq */
 	unsigned int data_not_enough_cnt;

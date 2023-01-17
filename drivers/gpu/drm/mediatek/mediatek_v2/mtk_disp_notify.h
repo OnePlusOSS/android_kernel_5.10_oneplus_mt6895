@@ -15,6 +15,8 @@
 #define MTK_DISP_EARLY_EVENT_BLANK	0x00
 #define MTK_DISP_EVENT_BLANK		0x01
 
+#define MTK_DISP_EVENT_FOR_TOUCH		0x10
+
 enum {
 	/* disp power on */
 	MTK_DISP_BLANK_UNBLANK,
@@ -25,5 +27,8 @@ enum {
 int mtk_disp_notifier_register(const char *source, struct notifier_block *nb);
 int mtk_disp_notifier_unregister(struct notifier_block *nb);
 int mtk_disp_notifier_call_chain(unsigned long val, void *v);
+int mtk_disp_sub_notifier_register(const char *source, struct notifier_block *nb);
+int mtk_disp_sub_notifier_unregister(struct notifier_block *nb);
+int mtk_disp_sub_notifier_call_chain(unsigned long val, void *v);
 
 #endif

@@ -11,13 +11,15 @@
 #include <drm/mediatek_drm.h>
 
 #define RT_MAX_NUM 10
-#define ESD_CHECK_NUM 3
+#define ESD_CHECK_NUM 4
 #define MAX_TX_CMD_NUM 20
 #define MAX_RX_CMD_NUM 20
 #define READ_DDIC_SLOT_NUM 4
 #define MAX_DYN_CMD_NUM 20
-#define MAX_TX_CMD_NUM_PACK 64
 
+//#ifdefined OPLUS_ADFR
+#define MAX_TX_CMD_NUM_PACK 64
+//#endif
 struct mtk_dsi;
 struct cmdq_pkt;
 struct mtk_panel_para_table {
@@ -74,6 +76,8 @@ struct DSI_RX_DATA_REG {
 	unsigned char byte3;
 };
 
+
+//#ifdef OPLUS_ADFR
 struct mtk_ddic_cmd {
 	unsigned int cmd_num;
 	unsigned char *para_list;
@@ -86,7 +90,6 @@ struct mtk_ddic_dsi_cmd {
 	unsigned int cmd_count;
 	struct mtk_ddic_cmd mtk_ddic_cmd_table[MAX_TX_CMD_NUM_PACK];
 };
-
 
 typedef void (*dcs_write_gce) (struct mtk_dsi *dsi, struct cmdq_pkt *handle,
 				const void *data, size_t len);
@@ -101,6 +104,11 @@ enum MTK_PANEL_OUTPUT_PORT_MODE {
 	MTK_PANEL_SINGLE_PORT = 0x0,
 	MTK_PANEL_DSC_SINGLE_PORT,
 	MTK_PANEL_DUAL_PORT,
+};
+
+enum MTK_PANEL_ROTATION {
+	MTK_PANEL_ROTATE_0 = 0,
+	MTK_PANEL_ROTATE_180,
 };
 
 enum MTK_PANEL_SPR_OUTPUT_MODE {
@@ -215,6 +223,21 @@ struct mtk_panel_spr_params {
 	struct spr_color_params spr_color_params[SPR_COLOR_PARAMS_TYPE_NUM];
 
 };
+struct dsc_rc_range_parameters {
+	/**
+	 * @range_min_qp: Min Quantization Parameters allowed for this range
+	 */
+	u8 range_min_qp;
+	/**
+	 * @range_max_qp: Max Quantization Parameters allowed for this range
+	 */
+	u8 range_max_qp;
+	/**
+	 * @range_bpg_offset:
+	 * Bits/group offset to apply to target for this group
+	 */
+	u8 range_bpg_offset;
+};
 
 struct mtk_panel_dsc_params {
 	unsigned int enable;
@@ -250,6 +273,11 @@ struct mtk_panel_dsc_params {
 	unsigned int rc_quant_incr_limit1;
 	unsigned int rc_tgt_offset_hi;
 	unsigned int rc_tgt_offset_lo;
+/* #ifdef OPLUS_FEATURE_DISPLAY */
+	unsigned int dsc_cfg_change ;
+/* endif */
+	unsigned int rc_buf_thresh[14];
+	struct dsc_rc_range_parameters rc_range_parameters[15];
 };
 struct mtk_dsi_phy_timcon {
 	unsigned int hs_trail;
@@ -375,6 +403,8 @@ struct msync_cmd_table {
 struct mtk_panel_params {
 	unsigned int pll_clk;
 	unsigned int data_rate;
+	//either pll_clk or data_rate must be set, event if data_rate_khz is set
+	unsigned int data_rate_khz; //only used in exact value for fps
 	struct mtk_dsi_phy_timcon phy_timcon;
 	unsigned int vfp_low_power;
 	struct dynamic_mipi_params dyn;
@@ -414,6 +444,38 @@ struct mtk_panel_params {
 	unsigned int wait_sof_before_dec_vfp;
 	unsigned int doze_delay;
 	unsigned int lp_perline_en; //0: lp perframe 1: lp perline
+	unsigned int cmd_null_pkt_en;
+	unsigned int cmd_null_pkt_len;
+	unsigned int before_hbm_en_time;
+	unsigned int before_hbm_en_delay_time;
+	unsigned int before_hbm_dis_time;
+	/* #ifdef OPLUS_ADFR */
+	unsigned int oplus_mode_switch_hs;
+	unsigned int oplus_fakeframe_cfg;
+	unsigned int oplus_fakeframe_deferred_time;
+	unsigned int oplus_autoon_cfg;
+	unsigned int oplus_autooff_cfg;
+	unsigned int oplus_minfps0_cfg;
+	unsigned int oplus_minfps1_cfg;
+	unsigned int oplus_serial_para0;
+	unsigned int oplus_serial_para2;
+	/* #endif */
+	/* #ifdef OPLUS_FEATURE */
+	unsigned int oplus_panel_cv_switch;
+	unsigned int oplus_hbm_on_sync_with_flush;
+	unsigned int oplus_hbm_off_sync_with_flush;
+	unsigned int oplus_need_hbm_wait;
+	unsigned int oplus_need_before_hbm_wait;
+	unsigned int oplus_samsung_panel;
+	unsigned int oplus_wait_te_num;
+	unsigned int tp_lcd_suspend;
+	unsigned char vendor[32];
+	unsigned char manufacture[32];
+	/* #endif */ /* OPLUS_BUG_STABILITY */
+	bool esd_check_multi;
+	bool oplus_esd_val_compare_skip;
+	unsigned int set_area_before_trigger;
+	bool oplus_need_wait_ms_time;
 
 //Settings for LFR Function:
 	unsigned int lfr_enable;
@@ -425,11 +487,40 @@ struct mtk_panel_params {
 
 	struct mtk_panel_cm_params cm_params;
 	struct mtk_panel_spr_params spr_params;
+	/* #ifdef OPLUS_FEATURE */
+	bool color_vivid_status;
+	bool color_srgb_status;
+	bool color_softiris_status;
+	bool color_dual_panel_status;
+	bool color_dual_brightness_status;
+	bool color_oplus_calibrate_status;
+	/* #endif */ /* OPLUS_BUG_STABILITY */
+	/* #ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT */
+	/* check how many black frames are inserted in aod off cmd flow which will affect hbm on cmd execution time, then calculate delay time to keep apart aod off cmd and hbm on cmd to make sure ui ready is accurate */
+	unsigned int oplus_ofp_aod_off_insert_black;
+	/* check the total time of black frames by oscilloscope, will use it to check whether hbm cmd is sent within black frames */
+	unsigned int oplus_ofp_aod_off_black_frame_total_time;
+	/* 51 backlight cmd will affect hbm on cmd execution time, need to keep apart the backlight cmd before hbm on */
+	bool oplus_ofp_need_keep_apart_backlight;
+	/* wait for the hbm on take effect after hbm on cmd were sent */
+	unsigned int oplus_ofp_hbm_on_delay;
+	/* do some delay before hbm off cmd if need */
+	unsigned int oplus_ofp_pre_hbm_off_delay;
+	/* wait for the hbm off take effect after hbm off cmd were sent */
+	unsigned int oplus_ofp_hbm_off_delay;
+	/* #endif */ /* OPLUS_FEATURE_ONSCREENFINGERPRINT */
+	unsigned int oplus_display_global_dre;
+	unsigned int oplus_dc_then_hbm_on;
+	enum MTK_PANEL_ROTATION rotate;
+	unsigned int oplus_cmdq_pkt_set_event;
 };
 
 struct mtk_panel_ext {
 	struct mtk_panel_funcs *funcs;
 	struct mtk_panel_params *params;
+	/*#ifdef OPLUS_FEATURE_DISPLAY*/
+	bool is_connected;
+	/*#endif*/
 };
 
 struct mtk_panel_ctx {
@@ -463,9 +554,11 @@ struct mtk_panel_funcs {
 	int (*mode_switch)(struct drm_panel *panel,
 		struct drm_connector *connector, unsigned int cur_mode,
 		unsigned int dst_mode, enum MTK_PANEL_MODE_SWITCH_STAGE stage);
+//#ifdef OPLUS_ADFR
 	int (*mode_switch_hs)(struct drm_panel *panel, struct drm_connector *connector,
 		void *dsi_drv, unsigned int cur_mode, unsigned int dst_mode,
 		enum MTK_PANEL_MODE_SWITCH_STAGE stage, dcs_write_gce_pack cb);
+//#endif
 	int (*msync_te_level_switch)(void *dsi, dcs_write_gce cb,
 		void *handle, unsigned int fps_level);
 	int (*msync_te_level_switch_grp)(void *dsi, dcs_grp_write_gce cb,
@@ -474,6 +567,20 @@ struct mtk_panel_funcs {
 			void *handle, unsigned int flag);
 	int (*get_virtual_heigh)(void);
 	int (*get_virtual_width)(void);
+	int (*panel_poweroff)(struct drm_panel *panel);
+	int (*panel_poweron)(struct drm_panel *panel);
+	int (*panel_reset)(struct drm_panel *panel);
+	int (*set_dc_backlight)(void *dsi_drv, dcs_write_gce cb,
+		void *handle, unsigned int level);
+	int (*esd_backlight_recovery)(void *dsi_drv, dcs_write_gce cb,
+		void *handle);
+	int (*set_seed)(void *dsi_drv, dcs_write_gce cb,
+		void *handle, unsigned int seed_mode);
+	int (*send_cmd_before_dsi_read)(struct drm_panel *panel, void *dsi_drv,
+                dcs_write_gce cb, void *handle);
+	int (*sn_set)(struct drm_panel *panel);
+	//#endif
+	int (*ext_cmd_set)(void *dsi, dcs_write_gce cb, void *handle);
 	/**
 	 * @doze_enable_start:
 	 *
@@ -518,15 +625,11 @@ struct mtk_panel_funcs {
 	int (*doze_area)(struct drm_panel *panel,
 		void *dsi_drv, dcs_write_gce cb, void *handle);
 
-	/**
-	 * @doze_get_mode_flags:
-	 *
-	 * If CV switch is needed for doze mode, fill the mode_flags in this
-	 * function for both CMD and VDO mode.
-	 */
 	unsigned long (*doze_get_mode_flags)(
 		struct drm_panel *panel, int aod_en);
-
+//#ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT
+	void (*hbm_set_state)(struct drm_panel *panel, bool state);
+//#endif
 	int (*hbm_set_cmdq)(struct drm_panel *panel, void *dsi_drv,
 			    dcs_write_gce cb, void *handle, bool en);
 	void (*hbm_get_state)(struct drm_panel *panel, bool *state);
@@ -534,10 +637,35 @@ struct mtk_panel_funcs {
 	bool (*hbm_set_wait_state)(struct drm_panel *panel, bool wait);
 
 	void (*lcm_dump)(struct drm_panel *panel, enum MTK_LCM_DUMP_FLAG flag);
+	struct drm_display_mode *(*get_default_mode)(struct drm_panel *panel,
+		struct drm_connector *connector);
+/* #ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT */
+	int (*set_hbm)(void *dsi_drv, dcs_write_gce cb,
+		void *handle, unsigned int hbm_mode);
+/* #endif */ /* OPLUS_FEATURE_ONSCREENFINGERPRINT */
+	//#ifdef OPLUS_ADFR
+	int (*send_fake_fakeframe)(void *dsi_drv, dcs_write_gce_pack cb, void *handle);
+	int (*set_auto_mode)(void *dsi_drv, struct drm_panel *panel, dcs_write_gce_pack cb, void *handle, bool auto_en, struct drm_display_mode *m);
+	int (*set_minfps)(void *dsi_drv, struct drm_panel *panel, dcs_write_gce_pack cb, void *handle, void *minfps, struct drm_display_mode *m);
+	int (*get_disp_modeinfo)(struct drm_panel *panel, int mode_id, struct drm_display_mode *modeinfo);
+	/* add for mux switch control */
+	int (*set_vsync_switch)(struct drm_panel *panel, int vsync_mode);
+	//#endif
+	/*#ifdef OPLUS_BUG_STABILITY*/
+	int (*oplus_set_power)(uint32_t voltage_id, uint32_t voltage_value);
+	int (*oplus_update_power_value)(uint32_t voltage_id);
+        /*#endif*/ /*OPLUS_BUG_STABILITY*/
 	enum mtk_lcm_version (*get_lcm_version)(void);
 
 	int (*send_ddic_cmd_pack)(struct drm_panel *panel,
 		void *dsi_drv, dcs_write_gce_pack cb, void *handle);
+	int (*esd_check_precondition)(void *dsi, dcs_write_gce cb, void *handle);
+	/*#ifdef OPLUS_BUG_STABILITY*/
+	int (*lcm_osc_change)(void *dsi, dcs_write_gce cb, void *handle, bool en);
+	void (*cabc_switch)(void *dsi_drv, dcs_write_gce cb,void *handle, unsigned int cabc_mode);
+	int (*lcm_dc_post_enter)(void *dsi_drv, dcs_write_gce cb,
+		void *handle);
+	/*#endif*/
 };
 
 void mtk_panel_init(struct mtk_panel_ctx *ctx);
@@ -555,5 +683,7 @@ int mtk_panel_tch_handle_reg(struct drm_panel *panel);
 void **mtk_panel_tch_handle_init(void);
 int mtk_panel_tch_rst(struct drm_panel *panel);
 enum mtk_lcm_version mtk_drm_get_lcm_version(void);
+void mtk_panel_lock(void);
+void mtk_panel_unlock(void);
 
 #endif

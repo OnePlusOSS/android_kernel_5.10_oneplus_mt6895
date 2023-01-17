@@ -316,12 +316,13 @@ static struct mtk_panel_params ext_params = {
 	.cust_esd_check = 0,
 	.esd_check_enable = 1,
 	.lcm_esd_check_table[0] = {
-
-			.cmd = 0x53, .count = 1, .para_list[0] = 0x24,
+			.cmd = 0x53, .count = 1, .para_list[0] = 0x4,
 		},
 	.lcm_color_mode = MTK_DRM_COLOR_MODE_DISPLAY_P3,
 	.physical_width_um = PHYSICAL_WIDTH,
 	.physical_height_um = PHYSICAL_HEIGHT,
+	.cmd_null_pkt_en = 0,
+	.cmd_null_pkt_len = 105,
 	.output_mode = MTK_PANEL_DSC_SINGLE_PORT,
 	.dsc_params = {
 		.enable                =  DSC_ENABLE,
@@ -367,12 +368,13 @@ static struct mtk_panel_params ext_params_mode_1 = {
 	.cust_esd_check = 0,
 	.esd_check_enable = 1,
 	.lcm_esd_check_table[0] = {
-
-			.cmd = 0x53, .count = 1, .para_list[0] = 0x24,
+			.cmd = 0x53, .count = 1, .para_list[0] = 0x4,
 		},
 	.lcm_color_mode = MTK_DRM_COLOR_MODE_DISPLAY_P3,
 	.physical_width_um = PHYSICAL_WIDTH,
 	.physical_height_um = PHYSICAL_HEIGHT,
+	.cmd_null_pkt_en = 0,
+	.cmd_null_pkt_len = 105,
 	.output_mode = MTK_PANEL_DSC_SINGLE_PORT,
 	.dsc_params = {
 		.enable                =  DSC_ENABLE,
@@ -419,12 +421,13 @@ static struct mtk_panel_params ext_params_mode_2 = {
 	.cust_esd_check = 0,
 	.esd_check_enable = 1,
 	.lcm_esd_check_table[0] = {
-
-			.cmd = 0x53, .count = 1, .para_list[0] = 0x24,
+			.cmd = 0x53, .count = 1, .para_list[0] = 0x4,
 		},
 	.lcm_color_mode = MTK_DRM_COLOR_MODE_DISPLAY_P3,
 	.physical_width_um = PHYSICAL_WIDTH,
 	.physical_height_um = PHYSICAL_HEIGHT,
+	.cmd_null_pkt_en = 0,
+	.cmd_null_pkt_len = 105,
 	.output_mode = MTK_PANEL_DSC_SINGLE_PORT,
 	.dsc_params = {
 		.enable                =  DSC_ENABLE,
@@ -504,6 +507,9 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	struct mtk_panel_ext *ext = find_panel_ext(panel);
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id(connector, mode);
+
+	if (!m)
+		return ret;
 
 	if (drm_mode_vrefresh(m) == MODE_0_FPS)
 		ext->params = &ext_params;
@@ -736,6 +742,9 @@ static int mode_switch(struct drm_panel *panel,
 {
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id(connector, dst_mode);
+
+	if (!m)
+		return ret;
 
 	if (cur_mode == dst_mode)
 		return ret;

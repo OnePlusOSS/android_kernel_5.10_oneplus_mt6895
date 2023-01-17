@@ -10,6 +10,7 @@
 
 unsigned long long mtk_lcm_total_size;
 
+/* read u32 array and parsing into u32 buffer */
 int mtk_lcm_dts_read_u32_array(struct device_node *np, char *prop,
 		u32 *out, int min_len, int max_len)
 {
@@ -55,7 +56,8 @@ void mtk_lcm_dts_read_u8(struct device_node *np, char *prop,
 		*out = (u8)data;
 }
 
-int mtk_lcm_dts_read_u8_array(struct device_node *np, char *prop,
+/* read u32 array and parsing into u8 buffer */
+int mtk_lcm_dts_read_u8_array_from_u32(struct device_node *np, char *prop,
 		u8 *out, int min_len, int max_len)
 {
 	int len = 0, i = 0;
@@ -94,6 +96,42 @@ int mtk_lcm_dts_read_u8_array(struct device_node *np, char *prop,
 	}
 
 	LCM_KFREE(data, sizeof(u32) * max_len);
+	return len;
+}
+
+/* read u8 array and parsing into u8 buffer */
+int mtk_lcm_dts_read_u8_array(struct device_node *np, char *prop,
+		u8 *out, int min_len, int max_len)
+{
+	int len = 0;
+
+	if (IS_ERR_OR_NULL(prop) ||
+	    IS_ERR_OR_NULL(np) ||
+	    IS_ERR_OR_NULL(out) ||
+	    max_len == 0)
+		return 0;
+
+	len = of_property_read_variable_u8_array(np,
+			prop, out, min_len, max_len);
+#if MTK_LCM_DEBUG_DUMP
+	if (len == 1) {
+		DDPMSG("%s: %s = 0x%x\n", __func__, prop, *out);
+	} else if (len > 0) {
+		int i = 0;
+
+		DDPMSG("%s: %s array of %d data\n", __func__, prop, len);
+		for (i = 0; i < len - 8; i += 8)
+			DDPMSG("data%u: 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
+			i, out[i], out[i+1], out[i+2], out[i+3],
+			out[i+4], out[i+5], out[i+6], out[i+7]);
+	} else if (len == 0) {
+		DDPMSG("%s: %s is empty\n", __func__, prop);
+	} else {
+		DDPMSG("%s: %s is not existed or overflow, %d\n",
+			__func__, prop, len);
+	}
+#endif
+
 	return len;
 }
 
@@ -397,7 +435,7 @@ static int parse_lcm_ops_func_cb(struct mtk_lcm_ops_data *lcm_op, u8 *dts,
 			lcm_op->param.cb_id_data.id_count + 1];
 		LCM_KZALLOC(lcm_op->param.cb_id_data.buffer_data,
 			lcm_op->param.cb_id_data.data_count + 1, GFP_KERNEL);
-		if (IS_ERR_OR_NULL(lcm_op->param.cb_id_data.id)) {
+		if (IS_ERR_OR_NULL(lcm_op->param.cb_id_data.buffer_data)) {
 			DDPPR_ERR("%s,%d: failed to allocate data\n",
 				__func__, __LINE__);
 			return -ENOMEM;
@@ -580,11 +618,11 @@ int parse_lcm_ops_func(struct device_node *np,
 		return 0;
 	} else if ((unsigned int)len < sizeof(table_dts_buf)) {
 		table_dts_buf[len] = '\0';
-		DDPINFO("%s: start to parse:%s, dts_len:%u, phase:0x%x\n",
+		DDPINFO("%s: start to parse:%s, dts_len:%d, phase:0x%x\n",
 			__func__, func, len, phase);
 	} else {
 		table_dts_buf[sizeof(table_dts_buf) - 1] = '\0';
-		DDPMSG("%s: start to parse:%s, len:%u has out of size:%u\n",
+		DDPMSG("%s: start to parse:%s, len:%d has out of size:%lu\n",
 			__func__, func, len, sizeof(table_dts_buf));
 		len = sizeof(table_dts_buf);
 	}
@@ -940,9 +978,12 @@ static void mtk_get_type_name(unsigned int type, char *out)
 		break;
 	default:
 		if (type > MTK_LCM_CUST_TYPE_START &&
-		    type < MTK_LCM_CUST_TYPE_END)
+		    type < MTK_LCM_CUST_TYPE_END) {
 			ret = snprintf(name, MTK_LCM_NAME_LENGTH - 1,
 				"CUST-%d", type);
+			if (ret < 0 || ret >= MTK_LCM_NAME_LENGTH)
+				DDPMSG("%s, %d, snprintf failed\n", __func__, __LINE__);
+		}
 		ret = snprintf(name, MTK_LCM_NAME_LENGTH - 1,
 				"unknown");
 		break;
@@ -1391,7 +1432,7 @@ static int mtk_lcm_create_operation_group(struct mtk_panel_para_table *group,
 		data = op->param.cb_id_data.buffer_data;
 		size = op->param.cb_id_data.data_count;
 		if (size > ARRAY_SIZE(group[id].para_list)) {
-			DDPPR_ERR("%s: invalid size:%u\n",
+			DDPPR_ERR("%s: invalid size:%lu\n",
 				__func__, size);
 			return -EINVAL;
 		}
@@ -1404,11 +1445,11 @@ static int mtk_lcm_create_operation_group(struct mtk_panel_para_table *group,
 		case MTK_LCM_CB_TYPE_RUNTIME_INPUT:
 		case MTK_LCM_CB_TYPE_RUNTIME_INPUT_MULTIPLE:
 			if (count == 0) {
-				DDPPR_ERR("%s:invalid func:%u of count:%u\n",
+				DDPPR_ERR("%s:invalid func:%u of count:%lu\n",
 					__func__, op->type, count);
 				break;
 			} else if (count != input_count) {
-				DDPMSG("%s, %d, invalid count:%u, expect:%u\n",
+				DDPMSG("%s, %d, invalid count:%lu, expect:%u\n",
 					__func__, __LINE__, count, input_count);
 				break;
 			} else if (IS_ERR_OR_NULL(input_data)) {
@@ -1462,9 +1503,9 @@ int mtk_panel_execute_callback(void *dsi, dcs_write_gce cb,
 	}
 
 	if (IS_ERR_OR_NULL(master))
-		snprintf(owner, MTK_LCM_NAME_LENGTH - 1, "unknown");
+		ret = snprintf(owner, MTK_LCM_NAME_LENGTH - 1, "unknown");
 	else
-		snprintf(owner, MTK_LCM_NAME_LENGTH - 1, master);
+		ret = snprintf(owner, MTK_LCM_NAME_LENGTH - 1, master);
 	if (ret < 0 || ret >= MTK_LCM_NAME_LENGTH)
 		DDPMSG("%s, failed at snprintf, %d", __func__, ret);
 	ret = 0;
@@ -1489,11 +1530,11 @@ int mtk_panel_execute_callback(void *dsi, dcs_write_gce cb,
 		case MTK_LCM_CB_TYPE_RUNTIME_INPUT:
 		case MTK_LCM_CB_TYPE_RUNTIME_INPUT_MULTIPLE:
 			if (count == 0) {
-				DDPPR_ERR("%s:invalid func:%u of count:%u\n",
+				DDPPR_ERR("%s:invalid func:%u of count:%lu\n",
 					__func__, op->type, count);
 				break;
 			} else if (count != input_count) {
-				DDPMSG("%s, %d, func:%s, invalid count:%u, expect:%u\n",
+				DDPMSG("%s, %d, func:%s, invalid count:%lu, expect:%u\n",
 					__func__, __LINE__, owner, count, input_count);
 				cb(dsi, handle, data, size);
 				break;
@@ -1507,13 +1548,17 @@ int mtk_panel_execute_callback(void *dsi, dcs_write_gce cb,
 			for (j = 0; j < count; j++) {
 				id = op->param.cb_id_data.id[j];
 				if (id >= size) {
-					DDPPR_ERR("%s: func:%s, invalid id:%u of table:%u\n",
+					DDPPR_ERR("%s: func:%s, invalid id:%u of table:%lu\n",
 						__func__, owner, id, size);
 					LCM_KFREE(mask, count);
 					ret = -EINVAL;
 					goto out;
 				}
 
+				if (!mask) {
+					ret = -EINVAL;
+					goto out;
+				}
 				mask[j] = data[id]; //backup backlight mask
 				data[id] &= input_data[j];
 #if MTK_LCM_DEBUG_DUMP

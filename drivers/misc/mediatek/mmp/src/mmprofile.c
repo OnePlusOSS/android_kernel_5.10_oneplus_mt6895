@@ -818,7 +818,9 @@ static void mmprofile_log_int(mmp_event event, enum mmp_log_type type,
 	struct mmprofile_event_t *p_event = NULL;
 	unsigned int index;
 	unsigned int lock;
-
+#ifdef OPLUS_BUG_STABILITY
+	return ;
+#endif /*OPLUS_BUG_STABILITY*/
 	if (!mmprofile_globals.enable)
 		return;
 	if ((event >= MMPROFILE_MAX_EVENT_COUNT) ||
@@ -1478,6 +1480,10 @@ static ssize_t mmprofile_dbgfs_start_read(struct file *file, char __user *buf,
 
 	MMP_LOG(ANDROID_LOG_DEBUG, "start=%d", mmprofile_globals.start);
 	r = sprintf(str, "start = %d\n", mmprofile_globals.start);
+	if (r < 0) {
+		pr_err("%s sprintf error:%d\n", __func__, r);
+		return 0;
+	}
 	return simple_read_from_buffer(buf, size, ppos, str, r);
 }
 
@@ -1506,6 +1512,10 @@ static ssize_t mmprofile_dbgfs_enable_read(struct file *file, char __user *buf,
 
 	MMP_LOG(ANDROID_LOG_DEBUG, "enable=%d", mmprofile_globals.enable);
 	r = sprintf(str, "enable = %d\n", mmprofile_globals.enable);
+	if (r < 0) {
+		pr_err("%s sprintf error:%d\n", __func__, r);
+		return 0;
+	}
 	return simple_read_from_buffer(buf, size, ppos, str, r);
 }
 

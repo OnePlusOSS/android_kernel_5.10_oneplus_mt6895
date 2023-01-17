@@ -24,6 +24,7 @@ static int disable_unused_probe(struct platform_device *pdev)
 	struct clk *clk;
 	int clk_con, i = 0;
 	int pp1, en1, pp2, en2;
+	int retval = 0;
 
 	clk_con = of_count_phandle_with_args(pdev->dev.of_node, "clocks",
 			"#clock-cells");
@@ -31,6 +32,8 @@ static int disable_unused_probe(struct platform_device *pdev)
 	if (!clk_con)
 		return 0;
 
+	pr_notice("disable_unused dev: %s ongo\n",
+					pdev->name);
 	pm_runtime_enable(&pdev->dev);
 	pm_runtime_get_sync(&pdev->dev);
 	for (i = 0; i < clk_con; i++) {
@@ -44,17 +47,29 @@ static int disable_unused_probe(struct platform_device *pdev)
 				pr_notice("get clk %d fail, ret=%d, clk_con=%d\n",
 						i, (int)ret, clk_con);
 		} else {
+			pr_notice("disable_unused clk [%d]: %s ongo\n",
+					i, __clk_get_name(clk));
 #if DUMP_UNUSED_CLKS
 			/* enable parent clk first because of clk dependency */
-			clk_prepare_enable(clk_get_parent(clk));
-
+			retval = clk_prepare_enable(clk_get_parent(clk));
+			if (retval) {
+				pr_info("parent clk of clk %d clk_prepare_enable failed\n", i);
+				pr_info("return err code=%d\n", retval);
+				return 0;
+			}
 			/* record clk initial on/off state */
 			en1 = __clk_is_enabled(clk);
 			pp1 = clk_hw_is_prepared(__clk_get_hw(clk));
 #endif
 
 			/* enable then disable clk to turn off unused clks */
-			clk_prepare_enable(clk);
+			retval = clk_prepare_enable(clk);
+			if (retval) {
+				pr_info("clk %d clk_prepare_enable failed\n", i);
+				pr_info("return err code=%d\n", retval);
+				return 0;
+			}
+
 			clk_disable_unprepare(clk);
 
 #if DUMP_UNUSED_CLKS

@@ -205,6 +205,10 @@ static int tcpci_alert_tx_success(struct tcpc_device *tcpc)
 	tcpc->pd_transmit_state = PD_TX_STATE_GOOD_CRC;
 	mutex_unlock(&tcpc->access_lock);
 
+#if IS_ENABLED(CONFIG_WAIT_TX_RETRY_DONE)
+	complete(&tcpc->pd_port.tx_done);
+#endif /* CONFIG_WAIT_TX_RETRY_DONE */
+
 	if (tx_state == PD_TX_STATE_WAIT_CRC_VDM)
 		pd_put_vdm_event(tcpc, &evt, false);
 	else
@@ -225,6 +229,10 @@ static int tcpci_alert_tx_failed(struct tcpc_device *tcpc)
 	tx_state = tcpc->pd_transmit_state;
 	tcpc->pd_transmit_state = PD_TX_STATE_NO_GOOD_CRC;
 	mutex_unlock(&tcpc->access_lock);
+
+#if IS_ENABLED(CONFIG_WAIT_TX_RETRY_DONE)
+	complete(&tcpc->pd_port.tx_done);
+#endif /* CONFIG_WAIT_TX_RETRY_DONE */
 
 	if (tx_state == PD_TX_STATE_WAIT_CRC_VDM)
 		vdm_put_hw_event(tcpc, PD_HW_TX_FAILED);
@@ -248,6 +256,9 @@ static int tcpci_alert_tx_discard(struct tcpc_device *tcpc)
 	mutex_unlock(&tcpc->access_lock);
 
 	TCPC_INFO("Discard\n");
+#if IS_ENABLED(CONFIG_WAIT_TX_RETRY_DONE)
+	complete(&tcpc->pd_port.tx_done);
+#endif /* CONFIG_WAIT_TX_RETRY_DONE */
 
 	if (tx_state == PD_TX_STATE_WAIT_CRC_VDM)
 		pd_put_last_vdm_event(tcpc);
@@ -276,6 +287,11 @@ static int tcpci_alert_recv_msg(struct tcpc_device *tcpc)
 	struct pd_msg *pd_msg;
 	enum tcpm_transmit_type type;
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic 2022/06/16 add for fix hardreset repeat interrupt .*/
+	struct pd_msg dummy_msg = {0};
+	uint32_t alert_status;
+#endif
 	pd_msg = pd_alloc_msg(tcpc);
 	if (pd_msg == NULL) {
 		tcpci_alert_status_clear(tcpc, TCPC_REG_ALERT_RX_MASK);
@@ -289,6 +305,21 @@ static int tcpci_alert_recv_msg(struct tcpc_device *tcpc)
 		pd_free_msg(tcpc, pd_msg);
 		return retval;
 	}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic 2022/06/16 add for fix hardreset repeat interrupt .*/
+	if (!memcmp(pd_msg, &dummy_msg, sizeof(dummy_msg))) {
+		TCPC_INFO("recv_msg is been clear\n");
+		retval = tcpci_get_alert_status(tcpc, &alert_status);
+		if (retval)
+			return retval;
+		if (alert_status & TCPC_REG_ALERT_RX_HARD_RST) {
+			TCPC_INFO("recv_msg is cleaned by recv hardreset, ignore msg\n");
+			pd_free_msg(tcpc, pd_msg);
+			return 0;
+		}
+	}
+#endif
 
 	pd_msg->frame_type = (uint8_t) type;
 	pd_put_pd_msg_event(tcpc, pd_msg);
@@ -408,11 +439,17 @@ static inline bool tcpci_check_hard_reset_complete(
 {
 	if ((alert_status & TCPC_REG_ALERT_HRESET_SUCCESS)
 			== TCPC_REG_ALERT_HRESET_SUCCESS) {
+#if IS_ENABLED(CONFIG_WAIT_TX_RETRY_DONE)
+		complete(&tcpc->pd_port.tx_done);
+#endif /* CONFIG_WAIT_TX_RETRY_DONE */
 		pd_put_sent_hard_reset_event(tcpc);
 		return true;
 	}
 
 	if (alert_status & TCPC_REG_ALERT_TX_DISCARDED) {
+#if IS_ENABLED(CONFIG_WAIT_TX_RETRY_DONE)
+		complete(&tcpc->pd_port.tx_done);
+#endif /* CONFIG_WAIT_TX_RETRY_DONE */
 		TCPC_INFO("HResetFailed\n");
 		tcpci_transmit(tcpc, TCPC_TX_HARD_RESET, 0, NULL);
 		return false;
@@ -467,6 +504,13 @@ int tcpci_alert(struct tcpc_device *tcpc)
 		alert_status &= ~TCPC_REG_ALERT_TX_MASK;
 	}
 #endif	/* CONFIG_USB_POWER_DELIVERY */
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic 2022/06/16 add for fix hardreset repeat interrupt .*/
+	/* workaround for ignore dummy message when recv hardreset */
+	if (alert_status & TCPC_REG_ALERT_RX_HARD_RST)
+		alert_status &= ~TCPC_REG_ALERT_RX_STATUS;
+#endif
 
 #if !CONFIG_USB_PD_DBG_SKIP_ALERT_HANDLER
 	for (i = 0; i < ARRAY_SIZE(tcpci_alert_handlers); i++) {

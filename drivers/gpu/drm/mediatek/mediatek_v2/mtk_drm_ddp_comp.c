@@ -126,7 +126,62 @@
 
 #define MTK_DDP_COMP_USER "DISP"
 
+#if defined(CONFIG_PXLW_IRIS)
+int mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
+		   unsigned int offset, void *handle)
+{
+	int ret = 0;
+#ifndef DRM_CMDQ_DISABLE
+	ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		       comp->regs_pa + offset, value, ~0);
+	if (ret < 0)
+		DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+				__func__, __LINE__, ret);
+#else
+	writel(value, comp->regs + offset);
+#endif
+	return ret;
+}
 
+int mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
+			   unsigned int offset, void *handle)
+{
+	int ret = 0;
+#ifndef DRM_CMDQ_DISABLE
+	if (handle) {
+		ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		       comp->regs_pa + offset, value, ~0);
+		if (ret < 0)
+			DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+					__func__, __LINE__, ret);
+		return ret;
+	}
+#endif
+	writel_relaxed(value, comp->regs + offset);
+	return ret;
+}
+
+int mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
+			unsigned int offset, unsigned int mask, void *handle)
+{
+	int ret = 0;
+	unsigned int tmp;
+#ifndef DRM_CMDQ_DISABLE
+	if(handle) {
+		ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		    comp->regs_pa + offset, value, mask);
+		if (ret < 0)
+		DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+				__func__, __LINE__, ret);
+		return ret;
+	}
+#endif
+	tmp = readl(comp->regs + offset);
+	tmp = (tmp & ~mask) | (value & mask);
+	writel(tmp, comp->regs + offset);
+	return ret;
+}
+#else
 void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 		   unsigned int offset, void *handle)
 {
@@ -138,6 +193,7 @@ void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 #endif
 }
 
+//#ifdef OPLUS_ADFR
 void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 			   unsigned int offset, void *handle)
 {
@@ -151,6 +207,7 @@ void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 	writel_relaxed(value, comp->regs + offset);
 
 }
+//#endif
 
 void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 			unsigned int offset, unsigned int mask, void *handle)
@@ -168,6 +225,7 @@ void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 	tmp = (tmp & ~mask) | (value & mask);
 	writel(tmp, comp->regs + offset);
 }
+#endif /* CONFIG_PXLW_IRIS */
 
 void mtk_ddp_write_mask_cpu(struct mtk_ddp_comp *comp,
 	unsigned int value, unsigned int offset, unsigned int mask)
@@ -506,6 +564,10 @@ static int mtk_ddp_comp_irq_work_init(struct mtk_ddp_comp *ddp_comp, int index)
 {
 	int i;
 
+	if (index < 0 || index >= MTK_IRQ_WORK_MAX) {
+		DDPMSG("%s index %d out of bounds\n", __func__, index);
+		return -EINVAL;
+	}
 	INIT_WORK(&ddp_comp->ts_works[index].work, mtk_irq_time_handle);
 	ddp_comp->ts_works[index].number = 0;
 	ddp_comp->ts_works[index].is_busy = FALSE;
@@ -519,10 +581,16 @@ static int mtk_ddp_comp_irq_work_init(struct mtk_ddp_comp *ddp_comp, int index)
 int mtk_ddp_comp_create_workqueue(struct mtk_ddp_comp *ddp_comp)
 {
 	int i = 0;
+	int ret = 0;
 	char wq_buf[64] = {0};
 
 	memset(wq_buf, 0, sizeof(wq_buf));
-	snprintf(wq_buf, sizeof(wq_buf), "mtk_%s_wq", mtk_dump_comp_str_id(ddp_comp->id));
+	ret = snprintf(wq_buf, sizeof(wq_buf), "mtk_%s_wq", mtk_dump_comp_str_id(ddp_comp->id));
+	if (ret < 0) {
+		DDPPR_ERR("%s snprintf fail: %d\n", __func__, ret);
+		/* Handle snprintf() error */
+		return -EINVAL;
+	}
 	DDPMSG("begin mtk_ddp_comp_create %d: %s\n", ddp_comp->id, wq_buf);
 
 	ddp_comp->wq = create_singlethread_workqueue(wq_buf);
@@ -539,10 +607,18 @@ int mtk_ddp_comp_create_workqueue(struct mtk_ddp_comp *ddp_comp)
 
 bool mtk_ddp_comp_is_output(struct mtk_ddp_comp *comp)
 {
-	if (comp->id < 0 || comp->id >= DDP_COMPONENT_ID_MAX)
+	if (comp->id >= DDP_COMPONENT_ID_MAX)
 		return false;
 
 	return mtk_ddp_matches[comp->id].is_output;
+}
+
+bool mtk_ddp_comp_is_output_by_id(enum mtk_ddp_comp_id id)
+{
+	if (id >= DDP_COMPONENT_ID_MAX)
+		return false;
+
+	return mtk_ddp_matches[id].is_output;
 }
 
 void mtk_ddp_comp_get_name(struct mtk_ddp_comp *comp, char *buf, int buf_len)
@@ -558,10 +634,7 @@ void mtk_ddp_comp_get_name(struct mtk_ddp_comp *comp, char *buf, int buf_len)
 
 	if (buf_len > sizeof(buf))
 		buf_len = sizeof(buf);
-	if (mtk_ddp_matches[comp->id].type < 0) {
-		DDPPR_ERR("%s invalid type\n", __func__);
-		return;
-	}
+
 	r = snprintf(buf, buf_len, "%s%d",
 		  mtk_ddp_comp_stem[mtk_ddp_matches[comp->id].type],
 		  mtk_ddp_matches[comp->id].alias_id);
@@ -573,7 +646,7 @@ void mtk_ddp_comp_get_name(struct mtk_ddp_comp *comp, char *buf, int buf_len)
 
 int mtk_ddp_comp_get_type(enum mtk_ddp_comp_id comp_id)
 {
-	if (comp_id < 0 || comp_id >= DDP_COMPONENT_ID_MAX)
+	if (comp_id >= DDP_COMPONENT_ID_MAX)
 		return -EINVAL;
 
 	return mtk_ddp_matches[comp_id].type;
@@ -604,9 +677,6 @@ enum mtk_ddp_comp_id mtk_ddp_comp_get_id(struct device_node *node,
 {
 	int id;
 	int i;
-
-	if (comp_type < 0)
-		return -EINVAL;
 
 	id = of_alias_get_id(node, mtk_ddp_comp_stem[comp_type]);
 
@@ -673,7 +743,7 @@ static void mtk_ddp_comp_set_larb(struct device *dev, struct device_node *node,
 	    type == MTK_DISP_WDMA || type == MTK_DISP_POSTMASK) {
 		dev_warn(dev, "%s: %s need larb device\n", __func__,
 				mtk_dump_comp_str(comp));
-		DDPPR_ERR("%s: smi-id:%d\n", mtk_dump_comp_str(comp),
+		DDPMSG("%s: smi-id:%d\n", mtk_dump_comp_str(comp),
 				comp->larb_id);
 	}
 }
@@ -780,7 +850,7 @@ int mtk_ddp_comp_init(struct device *dev, struct device_node *node,
 
 	DDPINFO("%s+\n", __func__);
 
-	if (comp_id < 0 || comp_id >= DDP_COMPONENT_ID_MAX)
+	if (comp_id >= DDP_COMPONENT_ID_MAX)
 		return -EINVAL;
 
 	type = mtk_ddp_matches[comp_id].type;
@@ -856,9 +926,6 @@ int mtk_ddp_comp_register(struct drm_device *drm, struct mtk_ddp_comp *comp)
 	if (private->ddp_comp[comp->id])
 		return -EBUSY;
 
-	if (comp->id < 0)
-		return -EINVAL;
-
 	private->ddp_comp[comp->id] = comp;
 	return 0;
 }
@@ -866,7 +933,7 @@ int mtk_ddp_comp_register(struct drm_device *drm, struct mtk_ddp_comp *comp)
 void mtk_ddp_comp_unregister(struct drm_device *drm, struct mtk_ddp_comp *comp)
 {
 	struct mtk_drm_private *private = drm->dev_private;
-	if (comp && comp->id >= 0)
+	if (comp)
 		private->ddp_comp[comp->id] = NULL;
 }
 
@@ -885,17 +952,20 @@ void mtk_ddp_comp_pm_disable(struct mtk_ddp_comp *comp)
 void mtk_ddp_comp_clk_prepare(struct mtk_ddp_comp *comp)
 {
 	unsigned int index = 0;
-	int ret;
+	int ret = 0;
 
 	if (comp == NULL)
 		return;
 
 	if (comp->larb_dev)
 #ifdef MTK_SMI_CLK_CTRL
-		mtk_smi_larb_get(comp->larb_dev);
+		ret = mtk_smi_larb_get(comp->larb_dev);
 #else
-		pm_runtime_get_sync(comp->dev);
+		ret = pm_runtime_get_sync(comp->dev);
 #endif
+
+	if (ret)
+		DDPPR_ERR("larb or pm_runtime get fail:%s\n", mtk_dump_comp_str(comp));
 
 	if (comp->clk) {
 		ret = clk_prepare_enable(comp->clk);
@@ -918,7 +988,7 @@ void mtk_ddp_comp_clk_unprepare(struct mtk_ddp_comp *comp)
 
 	if (comp->clk)
 		clk_disable_unprepare(comp->clk);
-	DDPMSG("%s: comp %d unprepare done\n", __func__, comp->id);
+	DDPINFO("%s: comp %d unprepare done\n", __func__, comp->id);
 
 	if (comp->larb_dev)
 #ifdef MTK_SMI_CLK_CTRL
@@ -936,7 +1006,7 @@ void mtk_ddp_comp_clk_unprepare(struct mtk_ddp_comp *comp)
 void mtk_ddp_comp_iommu_enable(struct mtk_ddp_comp *comp,
 			       struct cmdq_pkt *handle)
 {
-	int port, index, ret;
+	int port = 0, index, ret;
 	struct resource res;
 	struct mtk_drm_private *priv;
 
@@ -1620,10 +1690,6 @@ void mt6983_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id id,
 	if (handle == NULL) {
 		unsigned int v;
 
-		v = (readl(priv->config_regs + MMSYS_SODI_REQ_MASK)
-			& (~sodi_req_mask));
-		v += (sodi_req_val & sodi_req_mask);
-		/* TODO: HARD CODE for RDMA0 scenario */
 		v = 0xF500;
 		writel_relaxed(v, priv->config_regs + MMSYS_SODI_REQ_MASK);
 		writel_relaxed(0x7, priv->config_regs + MMSYS_DUMMY0);

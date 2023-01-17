@@ -31,6 +31,7 @@
 #include "kd_imgsensor_define_v4l2.h"
 #include "kd_imgsensor_errcode.h"
 #include "imx766dualmipiraw_Sensor.h"
+#include "imx766dual_eeprom.h"
 
 #include "adaptor-subdrv.h"
 #include "adaptor-i2c.h"
@@ -40,7 +41,7 @@
 #define IMX766DUAL_EEPROM_READ_ID  0xA2
 #define IMX766DUAL_EEPROM_WRITE_ID 0xA3
 #define IMX766DUAL_I2C_SPEED       100
-#define IMX766DUAL_MAX_OFFSET      0x4000
+#define IMX766DUAL_MAX_OFFSET      0x8000
 
 #define MTK_IDENTITY_VALUE 0x010B00FF
 #define LRC_SIZE 140
@@ -165,3 +166,34 @@ unsigned int read_imx766dual_DCC(struct subdrv_ctx *ctx, BYTE *data)
 	return readed_size;
 }
 
+struct eeprom_map_info imx766dual_eeprom_info[] = {
+	{ EEPROM_META_MODULE_ID, 0x0000, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_SENSOR_ID, 0x0006, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_LENS_ID, 0x0008, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_VCM_ID, 0x000A, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_MIRROR_FLIP, 0x000E, 0x000F, 0x0010, 1, true },
+	{ EEPROM_META_MODULE_SN, 0x00B0, 0x000F, 0x0010, 17, true },
+	{ EEPROM_META_AF_CODE, 0x0092, 0x0098, 0x0099, 6, true },
+	{ EEPROM_META_STEREO_DATA, IMX766DUAL_STEREO_START_ADDR, 0x000F, 0x0010, CALI_DATA_SLAVE_LENGTH, true },
+};
+
+unsigned int read_imx766dual_eeprom_info(struct subdrv_ctx *ctx,
+					 kal_uint16 meta_id, BYTE *data,
+					 int size)
+{
+	kal_uint16 addr;
+	int readsize;
+
+	if (meta_id != imx766dual_eeprom_info[meta_id].meta)
+		return -1;
+
+	if (size != imx766dual_eeprom_info[meta_id].size)
+		return -1;
+
+	addr = imx766dual_eeprom_info[meta_id].start;
+	readsize = imx766dual_eeprom_info[meta_id].size;
+
+	read_imx766dual_eeprom(ctx, addr, data, readsize);
+
+	return 0;
+}
