@@ -38,6 +38,7 @@
 #include "imgsensor_cfg_table.h"
 #include "imgsensor_sensor_list.h"
 #include "imgsensor_hw.h"
+#include "imgsensor_sensor.h"
 #include "imgsensor_i2c.h"
 #include "imgsensor_proc.h"
 #ifdef IMGSENSOR_OC_ENABLE
@@ -58,6 +59,7 @@
 
 static DEFINE_MUTEX(gimgsensor_mutex);
 static DEFINE_MUTEX(gimgsensor_open_mutex);
+extern int register_device_proc(char *name, char *version, char *manufacture);
 
 struct IMGSENSOR gimgsensor;
 MUINT32 last_id;
@@ -91,6 +93,51 @@ void IMGSENSOR_PROFILE(struct timespec64 *ptv, char *tag)
 {
 }
 #endif
+void register_imgsensor_deviceinfo(char *name, char *version, u8 module_id)
+{
+    char *manufacture;
+    if (name == NULL || version == NULL)
+    {
+        pr_info("name or version is NULL");
+        return;
+    }
+    switch (module_id)
+    {
+        case IMGSENSOR_MODULE_ID_SUNNY:  /* Sunny */
+            manufacture = DEVICE_MANUFACUTRE_SUNNY;
+            break;
+        case IMGSENSOR_MODULE_ID_TRULY:  /* Truly */
+            manufacture = DEVICE_MANUFACUTRE_TRULY;
+            break;
+        case IMGSENSOR_MODULE_ID_SEMCO:  /* Semco */
+            manufacture = DEVICE_MANUFACUTRE_SEMCO;
+            break;
+        case IMGSENSOR_MODULE_ID_LITEON:  /* Lite-ON */
+            manufacture = DEVICE_MANUFACUTRE_LITEON;
+            break;
+        case IMGSENSOR_MODULE_ID_QTECH:  /* Q-Tech */
+            manufacture = DEVICE_MANUFACUTRE_QTECH;
+            break;
+        case IMGSENSOR_MODULE_ID_OFILM:  /* O-Film */
+            manufacture = DEVICE_MANUFACUTRE_OFILM;
+            break;
+        case IMGSENSOR_MODULE_ID_SHINE:  /* Shine */
+            manufacture = DEVICE_MANUFACUTRE_SHINE;
+            break;
+        case IMGSENSOR_MODULE_ID_HOLITECH:  /* Holitech */
+            manufacture = DEVICE_MANUFACUTRE_HOLITECH;
+            break;
+        case IMGSENSOR_MODULE_ID_CXT:  /* C & T */
+            manufacture = DEVICE_MANUFACUTRE_CXT;
+            break;
+        case IMGSENSOR_MODULE_ID_LCE:  /* LCE */
+            manufacture = DEVICE_MANUFACUTRE_LCE;
+            break;
+        default:
+            manufacture = DEVICE_MANUFACUTRE_NA;
+    }
+    register_device_proc(name, version, manufacture);
+}
 
 /******************************************************************************
  * sensor function adapter
@@ -101,8 +148,7 @@ void IMGSENSOR_PROFILE(struct timespec64 *ptv, char *tag)
 struct IMGSENSOR_SENSOR
 *imgsensor_sensor_get_inst(enum IMGSENSOR_SENSOR_IDX idx)
 {
-	if (idx < IMGSENSOR_SENSOR_IDX_MIN_NUM ||
-		idx >= IMGSENSOR_SENSOR_IDX_MAX_NUM)
+	if (idx >= IMGSENSOR_SENSOR_IDX_MAX_NUM)
 		return NULL;
 	else
 		return &gimgsensor.sensor[idx];
@@ -578,7 +624,7 @@ int imgsensor_set_driver(struct IMGSENSOR_SENSOR *psensor)
 
 	imgsensor_i2c_filter_msg(&psensor_inst->i2c_cfg, true);
 
-	while (pimgsensor->psensor_list[i] && i < MAX_NUM_OF_SUPPORT_SENSOR) {
+	while (i < MAX_NUM_OF_SUPPORT_SENSOR && pimgsensor->psensor_list[i]) {
 		if (pimgsensor->psensor_list[i]->init) {
 			pimgsensor->psensor_list[i]->init(&psensor->pfunc);
 
@@ -1083,8 +1129,9 @@ static inline int adopt_CAMERA_HW_FeatureControl(void *pBuf)
 	{
 		struct IMGSENSOR_SENSOR_LIST *psensor_list =
 			(struct IMGSENSOR_SENSOR_LIST *)pFeaturePara;
-
-		if (FeatureParaLen < 1 * sizeof(struct IMGSENSOR_SENSOR_LIST)) {
+		/* NOTICE: MUINT32 (*init)(struct SENSOR_FUNCTION_STRUCT **pfFunc) */
+		/* Not used and don't use due to A32+K64 no support ioctl of address type */
+		if (FeatureParaLen < (1 * sizeof(MUINT32) + 32 * sizeof(MUINT8))) {
 			PK_DBG("FeatureParaLen is too small %d\n", FeatureParaLen);
 			kfree(pFeaturePara);
 			return -EINVAL;
@@ -1112,7 +1159,7 @@ static inline int adopt_CAMERA_HW_FeatureControl(void *pBuf)
 		pSensorSyncInfo =
 			(struct ACDK_KD_SENSOR_SYNC_STRUCT *) pFeaturePara;
 
-		if (FeatureParaLen < 1 * sizeof(struct ACDK_KD_SENSOR_SYNC_STRUCT)) {
+		if (FeatureParaLen < 4 * sizeof(unsigned long long)) {
 			PK_DBG("FeatureParaLen is too small %d\n", FeatureParaLen);
 			kfree(pFeaturePara);
 			return -EINVAL;
@@ -1805,7 +1852,11 @@ static inline int adopt_CAMERA_HW_FeatureControl(void *pBuf)
 	case SENSOR_FEATURE_GET_PDAF_DATA:
 	case SENSOR_FEATURE_GET_4CELL_DATA:
 		{
-#define PDAF_DATA_SIZE 4096
+#if defined(S5KJN1_MIPI_RAW_DOKI)
+	#define PDAF_DATA_SIZE 9216
+#else
+	#define PDAF_DATA_SIZE 4096
+#endif
 			char *pPdaf_data = NULL;
 			unsigned long long *pFeaturePara_64 =
 				(unsigned long long *)pFeaturePara;
@@ -1875,7 +1926,7 @@ static inline int adopt_CAMERA_HW_FeatureControl(void *pBuf)
 			/* buffer size exam */
 			if ((sizeof(kal_uint8) * u4RegLen) >
 			    IMGSENSOR_FEATURE_PARA_LEN_MAX ||
-			    (u4RegLen > LSC_TBL_DATA_SIZE || u4RegLen < 0)) {
+			    (u4RegLen > LSC_TBL_DATA_SIZE)) {
 				kfree(pFeaturePara);
 				PK_PR_ERR(" buffer size (%u) is too large\n",
 					u4RegLen);
@@ -1937,7 +1988,6 @@ static inline int adopt_CAMERA_HW_FeatureControl(void *pBuf)
 				if (copy_from_user
 					((void *)pData, (void __user *)usr_ptr,
 					sizeof(struct SET_SENSOR_PATTERN_SOLID_COLOR))) {
-					kfree(pData);
 					PK_DBG("[CAMERA_HW]ERROR: copy_from_user fail\n");
 				}
 				//pr_debug("%x %x %x %x",
@@ -2247,8 +2297,9 @@ static long imgsensor_ioctl(
 			PK_DBG("[CAMERA SENSOR] ioctl allocate mem failed\n");
 			i4RetValue = -ENOMEM;
 			goto CAMERA_HW_Ioctl_EXIT;
+		} else {
+			memset(pBuff, 0x0, _IOC_SIZE(a_u4Command));
 		}
-
 		if (_IOC_WRITE & _IOC_DIR(a_u4Command)) {
 			if (copy_from_user(pBuff, (void *)a_u4Param,
 			_IOC_SIZE(a_u4Command))) {
@@ -2483,12 +2534,23 @@ static int __init imgsensor_init(void)
 	}
 	if (seninf_init() < 0)
 		return -ENODEV;
+
+#ifdef SENINF_N3D_SUPPORT
+	if (n3d_init() < 0)
+		return -ENODEV;
+#endif
+
 	return 0;
 }
 
 static void __exit imgsensor_exit(void)
 {
 	platform_driver_unregister(&gimgsensor_platform_driver);
+
+#ifdef SENINF_N3D_SUPPORT
+	n3d_exit();
+#endif
+
 	seninf_exit();
 }
 #ifdef NEED_LATE_INITCALL

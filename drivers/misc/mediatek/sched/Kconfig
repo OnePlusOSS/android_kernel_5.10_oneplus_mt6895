@@ -107,3 +107,8 @@ config MTK_CORE_CTL
 	  utilizations from scheduler information automatically.
 	  If you are not sure about whether to enable it or not,
 	  please set n.
+
+config SCHEDUTIL_USE_TL
+	bool "use target loads in schedutil governor"
+	help
+	  Add target_loads sysfs attr in cpufreq schedutil governor.

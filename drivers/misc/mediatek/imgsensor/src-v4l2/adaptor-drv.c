@@ -20,6 +20,10 @@
 #include "adaptor-ioctl.h"
 #include "imgsensor-glue/imgsensor-glue.h"
 #include "virt-sensor/virt-sensor-entry.h"
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 #undef E
 #define E(__x__) (__x__##_entry)
@@ -178,6 +182,12 @@ static void add_sensor_mode(struct adaptor_ctx *ctx,
 		para.u8, &len);
 	mode->fine_intg_line = val;
 
+	val = 0;
+	subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_ESD_RESET_BY_USER,
+		para.u8, &len);
+
+	mode->esd_reset_by_user = val;
 
 	if (!mode->mipi_pixel_rate || !mode->max_framerate || !mode->pclk)
 		return;
@@ -561,6 +571,7 @@ static int imgsensor_set_pad_format(struct v4l2_subdev *sd,
 	set_std_parts_fmt_code(fmt->format.code, ctx->fmt_code);
 
 
+	/* Returns the best match or NULL if the Length of the array is zero */
 	mode = v4l2_find_nearest_size(ctx->mode,
 		ctx->mode_cnt, width, height,
 		fmt->format.width, fmt->format.height);
@@ -571,8 +582,20 @@ static int imgsensor_set_pad_format(struct v4l2_subdev *sd,
 		if (sensor_mode_id >= 0 && sensor_mode_id < ctx->mode_cnt)
 			mode = &ctx->mode[sensor_mode_id];
 	}
-	dev_info(ctx->dev, "set fmt code = 0x%x, which %d sensor_mode_id = %u\n",
-			fmt->format.code, fmt->which, mode->id);
+
+	if (mode == NULL) {
+		dev_info(ctx->dev,
+			"set fmt code = 0x%x, which %d ctx->mode_cnt = %d\n",
+			fmt->format.code, fmt->which, ctx->mode_cnt);
+
+		mutex_unlock(&ctx->mutex);
+		return -EINVAL;
+	}
+
+	dev_info(ctx->dev,
+		"set fmt code = 0x%x, which %d sensor_mode_id = %u\n",
+		fmt->format.code, fmt->which, mode->id);
+
 
 	update_pad_format(ctx, mode, fmt);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
@@ -1111,7 +1134,8 @@ static ssize_t debug_i2c_ops_store(struct device *dev,
 	char *token = NULL;
 	char *sbuf = kzalloc(sizeof(char) * (count + 1), GFP_KERNEL);
 	char *s = sbuf;
-	int ret, num_para = 0;
+	int ret;
+	unsigned int num_para = 0;
 	char *arg[DBG_ARG_IDX_MAX_NUM];
 	struct adaptor_ctx *ctx = to_ctx(dev_get_drvdata(dev));
 	u32 val;
@@ -1136,7 +1160,7 @@ static ssize_t debug_i2c_ops_store(struct device *dev,
 	}
 
 	if (num_para > DBG_ARG_IDX_MAX_NUM) {
-		dev_info(dev, "Wrong command parameter number %d\n", num_para);
+		dev_info(dev, "Wrong command parameter number %u\n", num_para);
 		goto ERR_DEBUG_OPS_STORE;
 	}
 	ret = kstrtouint(arg[DBG_ARG_IDX_I2C_ADDR], 0, &reg);
@@ -1177,13 +1201,64 @@ ERR_DEBUG_OPS_STORE:
 
 static DEVICE_ATTR_RW(debug_i2c_ops);
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static struct task_struct *pg_task = NULL;
+void cam_aon_do_work(struct work_struct *work)
+{
+	int rc = 0;
+	struct kernel_siginfo info;
+	struct adaptor_ctx *ctx =
+			container_of(work, struct adaptor_ctx, aon_wq);
+	dev_info(ctx->dev, "send signal to userspace");
+
+	adaptor_i2c_wr_regs_u8(ctx->subctx.i2c_client, ctx->subctx.i2c_write_id >> 1,
+		ctx->subctx.aonhemd_clear_setting_table, ctx->subctx.aonhemd_clear_setting_len);
+
+	if (ctx->pid != 0 && ctx->irq_cnt == 1) {
+		dev_info(ctx->dev, "send signal to app");
+		if (pg_task != NULL)
+			put_task_struct(pg_task);
+		pg_task = get_pid_task(find_vpid(ctx->pid), PIDTYPE_PID);
+		if (pg_task == NULL) {
+			dev_err(ctx->dev, "send_sig_info failed pg_task is null");
+			return;
+		}
+		info.si_signo = SIGIO;
+		info.si_errno = 0;
+		info.si_code = 1;
+		info.si_addr = NULL;
+		rc = send_sig_info(SIGIO, &info, pg_task);
+		if (rc < 0) {
+			dev_err(ctx->dev, "send_sig_info failed");
+			return;
+		}
+	}
+	ctx->irq_cnt++;
+	return;
+}
+
+static irqreturn_t aon_interupt_handler(int irq, void *data)
+{
+	struct adaptor_ctx *ctx = data;
+	schedule_work(&ctx->aon_wq);
+	return IRQ_HANDLED;
+}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 static int imgsensor_probe(struct i2c_client *client)
 {
+
 	struct device *dev = &client->dev;
 	struct device_node *endpoint;
 	struct adaptor_ctx *ctx;
 	int ret;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+    const char* of_support_explorer_aon = NULL;
+	int irq_flags = 0;
+#endif
+	int forbid_index;
+	dev_info(dev, "imgsensor_probe success\n");
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
@@ -1195,6 +1270,18 @@ static int imgsensor_probe(struct i2c_client *client)
 	ctx->i2c_client = client;
 	ctx->dev = dev;
 	ctx->sensor_debug_flag = &sensor_debug;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	ret = of_property_read_string(ctx->dev->of_node, "support_explorer_aon", &of_support_explorer_aon); 
+	if ( !ret && strcmp(of_support_explorer_aon, "true") == 0) {
+		ctx->support_explorer_aon_fl = 1;
+	} else {
+	ctx->support_explorer_aon_fl = 0;
+	}
+	dev_dbg(ctx->dev, "%s support_explorer_aon_fl:%d\n", __func__, ctx->support_explorer_aon_fl);
+	ctx->aon_irq_gpio = of_get_named_gpio(dev->of_node, "aon-irq-gpio", 0);
+	dev_dbg(dev, "parsing dtsi aon_irq_gpio = %d", ctx->aon_irq_gpio);
+#endif
 
 	endpoint = of_graph_get_next_endpoint(dev->of_node, NULL);
 	if (!endpoint) {
@@ -1211,7 +1298,6 @@ static int imgsensor_probe(struct i2c_client *client)
 		dev_err(dev, "parsing endpoint node failed\n");
 		return ret;
 	}
-
 	ret = adaptor_hw_init(ctx);
 	if (ret) {
 		dev_err(dev, "failed to init hw handles\n");
@@ -1221,6 +1307,9 @@ static int imgsensor_probe(struct i2c_client *client)
 	ret = search_sensor(ctx);
 	if (ret) {
 		dev_err(dev, "no sensor found\n");
+		#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+		push_sensor_name(ctx->subdrv->name);
+		#endif
 		return ret;
 	}
 
@@ -1238,7 +1327,11 @@ static int imgsensor_probe(struct i2c_client *client)
 	ctx->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ctx->sd.dev = &client->dev;
 	ctx->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
-
+	ctx->forbid_idx = -1;
+	if (!of_property_read_u32(dev->of_node, "forbid-index", &forbid_index)) {
+		ctx->forbid_idx = forbid_index;
+		dev_info(dev, "not support to power on with sensor%d\n", ctx->forbid_idx);
+	}
 
 	/* init subdev name */
 	snprintf(ctx->sd.name, V4L2_SUBDEV_NAME_SIZE, "%s",
@@ -1294,6 +1387,23 @@ static int imgsensor_probe(struct i2c_client *client)
 	if (!ctx->sensor_ws)
 		dev_info(dev, "failed to wakeup_source_register\n");
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (ctx->aon_irq_gpio > 0) {
+		ret = gpio_direction_input(ctx->aon_irq_gpio);
+		if (ret) {
+			dev_err(dev, "aon_irq_gpio request failed\n");
+		}
+		irq_flags = IRQF_TRIGGER_RISING | IRQF_ONESHOT;
+		ret = devm_request_irq(dev, gpio_to_irq(ctx->aon_irq_gpio), aon_interupt_handler,
+					irq_flags, "aon-hemd-irq", ctx);
+		disable_irq_wake(gpio_to_irq(ctx->aon_irq_gpio));
+		disable_irq(gpio_to_irq(ctx->aon_irq_gpio));
+		INIT_WORK(&ctx->aon_wq, cam_aon_do_work);
+		ctx->pid = 0;
+		ctx->irq_cnt = 0;
+	}
+#endif
+
 	return 0;
 
 free_entity:
@@ -1348,7 +1458,10 @@ static const struct i2c_device_id imgsensor_id[] = {
 MODULE_DEVICE_TABLE(i2c, imgsensor_id);
 
 static const struct of_device_id imgsensor_of_match[] = {
-	{.compatible = "mediatek,imgsensor"},
+	{.compatible = "mediatek,imgsensor0"},
+	{.compatible = "mediatek,imgsensor1"},
+	{.compatible = "mediatek,imgsensor2"},
+	{.compatible = "mediatek,imgsensor3"},
 	{}
 };
 MODULE_DEVICE_TABLE(of, imgsensor_of_match);
@@ -1369,7 +1482,6 @@ static struct i2c_driver imgsensor_i2c_driver = {
 static int __init adaptor_drv_init(void)
 {
 	i2c_add_driver(&imgsensor_i2c_driver);
-
 	return 0;
 }
 

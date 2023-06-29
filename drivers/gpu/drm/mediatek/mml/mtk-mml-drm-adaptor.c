@@ -42,6 +42,7 @@ struct mml_drm_ctx {
 	struct mutex config_mutex;
 	struct mml_dev *mml;
 	const struct mml_task_ops *task_ops;
+	const struct mml_config_ops *cfg_ops;
 	atomic_t job_serial;
 	struct workqueue_struct *wq_config[MML_PIPE_CNT];
 	struct workqueue_struct *wq_destroy;
@@ -72,6 +73,9 @@ enum mml_mode mml_drm_query_cap(struct mml_drm_ctx *ctx,
 		}
 	}
 
+	if (info->dest_cnt > MML_MAX_OUTPUTS)
+		info->dest_cnt = MML_MAX_OUTPUTS;
+
 	if (!info->src.format) {
 		mml_err("[drm]invalid src mml color format %#010x", info->src.format);
 		goto not_support;
@@ -87,8 +91,9 @@ enum mml_mode mml_drm_query_cap(struct mml_drm_ctx *ctx,
 	}
 
 	/* for alpha rotate */
-	if (MML_FMT_IS_ARGB(info->src.format) &&
-		MML_FMT_IS_ARGB(info->dest[0].data.format)) {
+	if (info->alpha &&
+	    MML_FMT_IS_ARGB(info->src.format) &&
+	    MML_FMT_IS_ARGB(info->dest[0].data.format)) {
 		const struct mml_frame_dest *dest = &info->dest[0];
 		u32 srccw = dest->crop.r.width;
 		u32 srcch = dest->crop.r.height;
@@ -113,14 +118,23 @@ enum mml_mode mml_drm_query_cap(struct mml_drm_ctx *ctx,
 		const struct mml_frame_dest *dest = &info->dest[i];
 		u32 destw = dest->data.width;
 		u32 desth = dest->data.height;
+		u32 crop_srcw = dest->crop.r.width ? dest->crop.r.width : srcw;
+		u32 crop_srch = dest->crop.r.height ? dest->crop.r.height : srch;
 
 		if (dest->rotate == MML_ROT_90 || dest->rotate == MML_ROT_270)
 			swap(destw, desth);
 
-		if (srcw / destw > 20 || srch / desth > 255 ||
-			destw / srcw > 32 || desth / srch > 32) {
+		if (crop_srcw / destw > 20 || crop_srch / desth > 255 ||
+			destw / crop_srcw > 32 || desth / crop_srch > 32) {
 			mml_err("[drm]exceed HW limitation src %ux%u dest %ux%u",
-				srcw, srch, destw, desth);
+				crop_srcw, crop_srch, destw, desth);
+			goto not_support;
+		}
+
+		if ((crop_srcw * desth) / (destw * crop_srch) > 16 ||
+			(destw * crop_srch) / (crop_srcw * desth) > 16) {
+			mml_err("[drm]exceed tile ratio limitation src %ux%u dest %ux%u",
+				crop_srcw, crop_srch, destw, desth);
 			goto not_support;
 		}
 
@@ -382,6 +396,7 @@ static struct mml_frame_config *frame_config_create(
 	cfg->ctx = ctx;
 	cfg->mml = ctx->mml;
 	cfg->task_ops = ctx->task_ops;
+	cfg->cfg_ops = ctx->cfg_ops;
 	cfg->ctx_kt_done = &ctx->kt_done;
 	INIT_WORK(&cfg->work_destroy, frame_config_destroy_work);
 	kref_init(&cfg->ref);
@@ -393,29 +408,39 @@ static u32 frame_calc_layer_hrt(struct mml_drm_ctx *ctx, struct mml_frame_info *
 	u32 layer_w, u32 layer_h)
 {
 	/* MML HRT bandwidth calculate by
-	 *	width * height * Bpp * fps * v-blanking
+	 *	bw = width * height * Bpp * fps * v-blanking
+	 *
+	 * for raw data format, data size is
+	 *	bpp * width / 8
+	 * and for block format (such as UFO), data size is
+	 *	bpp * width / 256
 	 *
 	 * And for resize case total source pixel must read during layer
 	 * region (which is compose width and height). So ratio should be:
-	 *	panel * src / layer
+	 *	ratio = panel * src / layer
 	 *
-	 * This API returns bandwidth in KBps
+	 * This API returns bandwidth in KBps: bw * ratio
+	 *
+	 * Following api reorder factors to avoid overflow of uint32_t.
 	 */
+	const u32 bpp_div = MML_FMT_BLOCK(info->src.format) ? 256 : 8;
+
 	return ctx->panel_pixel / layer_w * info->src.width / layer_h * info->src.height *
-		MML_FMT_BITS_PER_PIXEL(info->src.format) / 8 * 122 / 100 *
+		MML_FMT_BITS_PER_PIXEL(info->src.format) / bpp_div * 122 / 100 *
 		MML_HRT_FPS / 1000;
 }
 
-static void frame_buf_to_task_buf(struct mml_file_buf *fbuf,
+static s32 frame_buf_to_task_buf(struct mml_file_buf *fbuf,
 				  struct mml_buffer *user_buf,
 				  const char *name)
 {
 	u8 i;
+	s32 ret = 0;
 
 	if (user_buf->use_dma)
 		mml_buf_get(fbuf, user_buf->dmabuf, user_buf->cnt, name);
 	else
-		mml_buf_get_fd(fbuf, user_buf->fd, user_buf->cnt, name);
+		ret = mml_buf_get_fd(fbuf, user_buf->fd, user_buf->cnt, name);
 
 	/* also copy size for later use */
 	for (i = 0; i < user_buf->cnt; i++)
@@ -428,6 +453,8 @@ static void frame_buf_to_task_buf(struct mml_file_buf *fbuf,
 		fbuf->fence = sync_file_get_fence(user_buf->fence);
 		mml_msg("[drm]get dma fence %p by %d", fbuf->fence, user_buf->fence);
 	}
+
+	return ret;
 }
 
 static void task_move_to_running(struct mml_task *task)
@@ -536,10 +563,14 @@ static void task_buf_put(struct mml_task *task)
 		mml_msg("[drm]release dest %hhu iova %#011llx",
 			i, task->buf.dest[i].dma[0].iova);
 		mml_buf_put(&task->buf.dest[i]);
+		if (task->buf.dest[i].fence)
+			dma_fence_put(task->buf.dest[i].fence);
 	}
 	mml_msg("[drm]release src iova %#011llx",
 		task->buf.src.dma[0].iova);
 	mml_buf_put(&task->buf.src);
+	if (task->buf.src.fence)
+		dma_fence_put(task->buf.src.fence);
 	mml_trace_ex_end();
 }
 
@@ -603,6 +634,7 @@ static void task_frame_done(struct mml_task *task)
 			cfg->run_task_cnt,
 			cfg->done_task_cnt,
 			task->state);
+		task->err = true;
 		kref_put(&task->ref, task_move_to_destroy);
 	} else {
 		/* works fine, safe to move */
@@ -716,6 +748,12 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 		}
 	}
 
+	/* always fixup dest_cnt > MML_MAX_OUTPUTS */
+	if (submit->info.dest_cnt > MML_MAX_OUTPUTS)
+		submit->info.dest_cnt = MML_MAX_OUTPUTS;
+	if (submit->buffer.dest_cnt > MML_MAX_OUTPUTS)
+		submit->buffer.dest_cnt = MML_MAX_OUTPUTS;
+
 	/* always fixup format/modifier for afbc case
 	 * the format in info should change to fourcc format in future design
 	 * and store mml format in another structure
@@ -782,6 +820,8 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 			}
 			task->config = cfg;
 			task->state = MML_TASK_DUPLICATE;
+			/* add more count for new task create */
+			kref_get(&cfg->ref);
 		}
 	} else {
 		cfg = frame_config_create(ctx, &submit->info);
@@ -810,14 +850,14 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 			cfg->disp_hrt = frame_calc_layer_hrt(ctx, &submit->info,
 				cfg->layer_w, cfg->layer_h);
 		}
+
+		/* add more count for new task create */
+		kref_get(&cfg->ref);
 	}
 
 	/* maintain racing ref count for easy query mode */
 	if (cfg->info.mode == MML_MODE_RACING)
 		atomic_inc(&ctx->racing_cnt);
-
-	/* add more count for new task create */
-	kref_get(&cfg->ref);
 
 	/* make sure id unique and cached last */
 	task->job.jobid = atomic_inc_return(&ctx->job_serial);
@@ -836,16 +876,37 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 
 	/* copy per-frame info */
 	task->ctx = ctx;
-	task->end_time.tv_sec = submit->end.sec;
-	task->end_time.tv_nsec = submit->end.nsec;
+	if (submit->end.nsec >= cfg->dvfs_boost_time.tv_nsec) {
+		task->end_time.tv_sec =
+			submit->end.sec - cfg->dvfs_boost_time.tv_sec;
+		task->end_time.tv_nsec =
+			submit->end.nsec - cfg->dvfs_boost_time.tv_nsec;
+	} else {
+		task->end_time.tv_sec =
+			submit->end.sec - cfg->dvfs_boost_time.tv_sec - 1;
+		task->end_time.tv_nsec =
+			1000000000 + submit->end.nsec - cfg->dvfs_boost_time.tv_nsec;
+	}
 	/* give default time if empty */
 	frame_check_end_time(&task->end_time);
-	frame_buf_to_task_buf(&task->buf.src, &submit->buffer.src, "mml_rdma");
+
+	result = frame_buf_to_task_buf(&task->buf.src,
+			      &submit->buffer.src,
+			      "mml_rdma");
+	if (result) {
+		mml_err("[drm]%s get dma buf fail", __func__);
+		goto err_buf_exit;
+	}
 	task->buf.dest_cnt = submit->buffer.dest_cnt;
-	for (i = 0; i < submit->buffer.dest_cnt; i++)
-		frame_buf_to_task_buf(&task->buf.dest[i],
+	for (i = 0; i < submit->buffer.dest_cnt; i++) {
+		result = frame_buf_to_task_buf(&task->buf.dest[i],
 				      &submit->buffer.dest[i],
 				      "mml_wrot");
+		if (result) {
+			mml_err("[drm]%s get dma buf fail", __func__);
+			goto err_buf_exit;
+		}
+	}
 
 	/* create fence for this task */
 	fence.value = task->job.jobid;
@@ -881,6 +942,7 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 
 err_unlock_exit:
 	mutex_unlock(&ctx->config_mutex);
+err_buf_exit:
 	mml_trace_end();
 	mml_log("%s fail result %d", __func__, result);
 	return result;
@@ -1055,6 +1117,21 @@ const static struct mml_task_ops drm_task_ops = {
 	.kt_setsched = kt_setsched,
 };
 
+static void config_get(struct mml_frame_config *cfg)
+{
+	kref_get(&cfg->ref);
+}
+
+static void config_put(struct mml_frame_config *cfg)
+{
+	kref_put(&cfg->ref, frame_config_queue_destroy);
+}
+
+static const struct mml_config_ops drm_config_ops = {
+	.get = config_get,
+	.put = config_put,
+};
+
 static struct mml_drm_ctx *drm_ctx_create(struct mml_dev *mml,
 					  struct mml_drm_param *disp)
 {
@@ -1081,6 +1158,7 @@ static struct mml_drm_ctx *drm_ctx_create(struct mml_dev *mml,
 	mutex_init(&ctx->config_mutex);
 	ctx->mml = mml;
 	ctx->task_ops = &drm_task_ops;
+	ctx->cfg_ops = &drm_config_ops;
 	ctx->wq_destroy = alloc_ordered_workqueue("mml_destroy", 0, 0);
 	ctx->disp_dual = disp->dual;
 	ctx->disp_vdo = disp->vdo_mode;

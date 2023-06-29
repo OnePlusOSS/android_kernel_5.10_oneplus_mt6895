@@ -1749,12 +1749,26 @@ static struct imgsensor_struct imgsensor = {
 	.i2c_write_id = 0x34, /* record current sensor's i2c write id */
 	.current_ae_effective_frame = 2,
 };
+
+static struct IMGSENSOR_I2C_CFG *get_i2c_cfg(void)
+{
+	return &(((struct IMGSENSOR_SENSOR_INST *)
+		  (imgsensor.psensor_func->psensor_inst))->i2c_cfg);
+}
+
 static kal_uint16 read_cmos_sensor(kal_uint32 addr)
 {
 	kal_uint16 get_byte = 0;
 	char pusendcmd[2] = {(char)(addr >> 8), (char)(addr & 0xFF)};
 
-	iReadRegI2C(pusendcmd, 2, (u8 *)&get_byte, 2, imgsensor.i2c_write_id);
+	imgsensor_i2c_read(
+		get_i2c_cfg(),
+		pusendcmd,
+		2,
+		(u8 *)&get_byte,
+		2,
+		imgsensor.i2c_write_id,
+		IMGSENSOR_I2C_SPEED);
 	return ((get_byte<<8)&0xff00) | ((get_byte>>8)&0x00ff);
 }
 
@@ -1763,7 +1777,14 @@ static kal_uint16 read_cmos_sensor_8(kal_uint16 addr)
 	kal_uint16 get_byte = 0;
 	char pusendcmd[2] = {(char)(addr >> 8), (char)(addr & 0xFF) };
 
-	iReadRegI2C(pusendcmd, 2, (u8 *)&get_byte, 1, imgsensor.i2c_write_id);
+	imgsensor_i2c_read(
+		get_i2c_cfg(),
+		pusendcmd,
+		2,
+		(u8 *)&get_byte,
+		1,
+		imgsensor.i2c_write_id,
+		IMGSENSOR_I2C_SPEED);
 	return get_byte;
 }
 
@@ -1772,7 +1793,13 @@ static void write_cmos_sensor_8(kal_uint16 addr, kal_uint8 para)
 	char pusendcmd[3] = {(char)(addr >> 8), (char)(addr & 0xFF),
 			(char)(para & 0xFF)};
 
-	iWriteRegI2C(pusendcmd, 3, imgsensor.i2c_write_id);
+	imgsensor_i2c_write(
+		get_i2c_cfg(),
+		pusendcmd,
+		3,
+		3,
+		imgsensor.i2c_write_id,
+		IMGSENSOR_I2C_SPEED);
 }
 
 
@@ -1780,7 +1807,13 @@ static void write_cmos_sensor(kal_uint16 addr, kal_uint16 para)
 {
 	char pusendcmd[4] = {
 	(char)(addr >> 8), (char)(addr & 0xFF), (char)(para >> 8), (char)(para & 0xFF) };
-	iWriteRegI2C(pusendcmd, 4, imgsensor.i2c_write_id);
+	imgsensor_i2c_write(
+		get_i2c_cfg(),
+		pusendcmd,
+		4,
+		4,
+		imgsensor.i2c_write_id,
+		IMGSENSOR_I2C_SPEED);
 
 }
 
@@ -1813,20 +1846,25 @@ static kal_uint16 table_write_cmos_sensor(kal_uint16 *para, kal_uint32 len)
 			 * or reach end of data
 			 */
 			if ((I2C_BUFFER_LEN - tosend) < 3 || IDX == len || addr != addr_last) {
-				iBurstWriteReg_multi(puSendCmd,
+				imgsensor_i2c_write(
+							get_i2c_cfg(),
+							pusendcmd,
 							tosend,
-							imgsensor.i2c_write_id,
 							3,
+							imgsensor.i2c_write_id,
 							imgsensor_info.i2c_speed);
 				tosend = 0;
 			}
 
 		#elif MULTI_WRITE_REGISTER_VALUE == 16
 			if ((I2C_BUFFER_LEN - tosend) < 4 || len == IDX || addr != addr_last) {
-				iBurstWriteReg_multi(puSendCmd,
-					tosend,
-					imgsensor.i2c_write_id,
-					4, imgsensor_info.i2c_speed);
+				imgsensor_i2c_write(
+						get_i2c_cfg(),
+						puSendCmd,
+						tosend,
+						4,
+						imgsensor.i2c_write_id,
+						imgsensor_info.i2c_speed);
 
 				tosend = 0;
 			}
@@ -1926,7 +1964,7 @@ static kal_int32 get_sensor_temperature(void)
 
 	temperature = read_cmos_sensor_8(0x013a);
 
-	if (temperature >= 0x0 && temperature <= 0x60)
+	if (temperature <= 0x60)
 		temperature_convert = temperature;
 	else if (temperature >= 0x61 && temperature <= 0x7F)
 		temperature_convert = 97;
@@ -3071,23 +3109,17 @@ static kal_uint32 set_max_framerate_by_scenario(
 			set_dummy();
 		break;
 	case MSDK_SCENARIO_ID_CAMERA_CAPTURE_JPEG:
-		if (imgsensor.current_fps != imgsensor_info.cap.max_framerate) {
-			LOG_INF(
-			"Warning: current_fps %d fps is not support, so use cap's setting: %d fps!\n"
-			, framerate, imgsensor_info.cap.max_framerate/10);
 		frame_length = imgsensor_info.cap.pclk / framerate * 10
 				/ imgsensor_info.cap.linelength;
 		spin_lock(&imgsensor_drv_lock);
-			imgsensor.dummy_line =
+		imgsensor.dummy_line =
 			(frame_length > imgsensor_info.cap.framelength)
-			  ? (frame_length - imgsensor_info.cap.framelength) : 0;
-			imgsensor.frame_length =
-				imgsensor_info.cap.framelength
-				+ imgsensor.dummy_line;
-			imgsensor.min_frame_length = imgsensor.frame_length;
-			spin_unlock(&imgsensor_drv_lock);
-		}
-
+		? (frame_length - imgsensor_info.cap.framelength) : 0;
+		imgsensor.frame_length =
+			imgsensor_info.cap.framelength
+			+ imgsensor.dummy_line;
+		imgsensor.min_frame_length = imgsensor.frame_length;
+		spin_unlock(&imgsensor_drv_lock);
 		if (imgsensor.frame_length > imgsensor.shutter)
 			set_dummy();
 		break;
@@ -3812,7 +3844,10 @@ static struct SENSOR_FUNCTION_STRUCT sensor_func = {
 UINT32 S5K3M5SX_MIPI_RAW_SensorInit(struct SENSOR_FUNCTION_STRUCT **pfFunc)
 {
 	/* To Do : Check Sensor status here */
+	sensor_func.arch = IMGSENSOR_ARCH_V2;
 	if (pfFunc != NULL)
 		*pfFunc = &sensor_func;
+	if (imgsensor.psensor_func == NULL)
+		imgsensor.psensor_func = &sensor_func;
 	return ERROR_NONE;
 }

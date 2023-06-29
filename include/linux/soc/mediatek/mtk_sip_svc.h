@@ -33,8 +33,16 @@
 /* SDA */
 #define MTK_SIP_SDA_CONTROL \
 	MTK_SIP_SMC_CMD(0x525)
+
+#if IS_ENABLED(CONFIG_MTK_IRQ_DBG)
 #define MTK_SIP_KERNEL_GIC_DUMP \
 	MTK_SIP_SMC_CMD(0x526)
+#endif
+/* LEGACY chip with sysirq */
+#if IS_ENABLED(CONFIG_MTK_IRQ_DBG_LEGACY)
+#define MTK_SIP_KERNEL_GIC_DUMP \
+	MTK_SIP_SMC_CMD(0x201)
+#endif
 
 /* Debug feature and ATF related */
 #define MTK_SIP_KERNEL_WDT \

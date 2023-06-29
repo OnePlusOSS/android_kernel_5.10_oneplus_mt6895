@@ -207,14 +207,17 @@ static long AF_SetMotorName(__user struct stAF_MotorName *pstMotorName)
 	struct stAF_MotorName stMotorName;
 
 	if (copy_from_user(&stMotorName, pstMotorName,
-			   sizeof(struct stAF_MotorName)))
+			   sizeof(struct stAF_MotorName))) {
 		LOG_INF("copy to user failed when getting motor information\n");
+		return i4RetValue;
+	}
 
 	for (i = 0; i < MAX_NUM_OF_LENS; i++) {
 		if (g_stAF_DrvList[i].uEnable != 1)
 			break;
 
 		LOG_INF("Search Motor Name : %s\n", g_stAF_DrvList[i].uDrvName);
+		stMotorName.uMotorName[STRUCT_MOTOR_NAME - 1] = '\0';
 		if (strcmp(stMotorName.uMotorName,
 			   g_stAF_DrvList[i].uDrvName) == 0) {
 			LOG_INF("Motor Name : %s\n", stMotorName.uMotorName);
@@ -292,22 +295,23 @@ static long AF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
 		{
 	/* Set Driver Name */
 	int i;
-	struct stAF_MotorName stMotorName;
+	struct stAF_MotorName stMotorName = {'\0'};
 	struct stAF_DrvList *pstAF_CurDrv = NULL;
 	__user struct stAF_MotorName *pstMotorName =
 			(__user struct stAF_MotorName *)a_u4Param;
 
 	if (copy_from_user(&stMotorName, pstMotorName,
-			   sizeof(struct stAF_MotorName)))
+			   sizeof(struct stAF_MotorName))) {
 		LOG_INF("copy to user failed when getting motor information\n");
-
-	LOG_INF("GETDRVNAME : set driver name(%s)\n", stMotorName.uMotorName);
+		break;
+	}
 
 	for (i = 0; i < MAX_NUM_OF_LENS; i++) {
 		if (g_stAF_DrvList[i].uEnable != 1)
 			break;
 
 		LOG_INF("Search Motor Name : %s\n", g_stAF_DrvList[i].uDrvName);
+		stMotorName.uMotorName[STRUCT_MOTOR_NAME - 1] = '\0';
 		if (strcmp(stMotorName.uMotorName,
 			   g_stAF_DrvList[i].uDrvName) == 0) {
 			LOG_INF("Motor Name : %s\n", stMotorName.uMotorName);
@@ -364,9 +368,9 @@ static long AF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
 
 				if (g_EnableTimer == 0) {
 					/* Start Timer */
-					hrtimer_start(&ois_timer,
-						      ktime_set(0, 50000000),
-						      HRTIMER_MODE_REL);
+					/* hrtimer_start(&ois_timer, */
+						      /* ktime_set(0, 50000000), */
+						      /* HRTIMER_MODE_REL); */
 					g_EnableTimer = 1;
 				}
 			}
@@ -458,7 +462,7 @@ static int AF_Release(struct inode *a_pstInode, struct file *a_pstFile)
 
 	/* OIS/EIS Timer & Workqueue */
 	/* Cancel Timer */
-	hrtimer_cancel(&ois_timer);
+	/* hrtimer_cancel(&ois_timer); */
 
 	/* flush work queue */
 	flush_work(&ois_work);

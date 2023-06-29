@@ -19,6 +19,7 @@
 #include <soc/mediatek/emi.h>
 
 #include "ccci_fsm_internal.h"
+#include "ccci_fsm_sys.h"
 #include "ccci_platform.h"
 #include "md_sys1_platform.h"
 #include "modem_sys.h"
@@ -31,7 +32,7 @@ static void fsm_finish_event(struct ccci_fsm_ctl *ctl,
 	struct ccci_fsm_event *event);
 
 static int needforcestop;
-
+static int hs2_done;
 static int s_is_normal_mdee;
 static int s_devapc_dump_counter;
 
@@ -414,7 +415,7 @@ static void fsm_routine_start(struct ccci_fsm_ctl *ctl,
 				spin_lock_irqsave(&ctl->event_lock, flags);
 			} else if (event->event_id == CCCI_EVENT_HS2) {
 				hs2_got = 1;
-
+				hs2_done = 1;
 				fsm_broadcast_state(ctl, READY);
 
 				fsm_finish_event(ctl, event);
@@ -556,12 +557,14 @@ static int ccci_md_epon_set(int md_id)
 	switch (md_id) {
 	case MD_SYS1:
 		if (!md || !md->hw_info) {
-			CCCI_NORMAL_LOG(md_id, FSM, "%s, NULL!!!\n");
+			CCCI_NORMAL_LOG(md_id, FSM, "%s, NULL!!!\n", __func__);
 			break;
 		}
 		if (md->hw_info->md_l2sram_base) {
+			md_cd_lock_modem_clock_src(1);
 			ret = *((int *)(md->hw_info->md_l2sram_base
 				+ md->hw_info->md_epon_offset)) == 0xBAEBAE10;
+			md_cd_lock_modem_clock_src(0);
 			in_md_l2sram = 1;
 		} else if (mdss_dbg && mdss_dbg->base_ap_view_vir)
 			ret = *((int *)(mdss_dbg->base_ap_view_vir
@@ -823,11 +826,13 @@ struct ccci_fsm_ctl *fsm_get_entity_by_md_id(int md_id)
 	}
 	return NULL;
 }
+EXPORT_SYMBOL(fsm_get_entity_by_md_id);
 
 int ccci_fsm_init(int md_id)
 {
 	struct ccci_fsm_ctl *ctl = NULL;
 	int ret = 0;
+	struct device_node *node = NULL;
 
 	if (md_id < 0 || md_id >= ARRAY_SIZE(ccci_fsm_entries))
 		return -CCCI_ERR_INVALID_PARAM;
@@ -839,9 +844,16 @@ int ccci_fsm_init(int md_id)
 					__func__);
 		return -1;
 	}
+	node = of_find_compatible_node(NULL, NULL,
+		"mediatek,mddriver");
+	if (node)
+		of_property_read_u32(node,
+			"mediatek,md_generation", &ctl->fsm_md_gen);
+
 	ctl->md_id = md_id;
 	ctl->last_state = CCCI_FSM_INVALID;
 	ctl->curr_state = CCCI_FSM_GATED;
+
 	INIT_LIST_HEAD(&ctl->command_queue);
 	INIT_LIST_HEAD(&ctl->event_queue);
 	init_waitqueue_head(&ctl->command_wq);
@@ -1028,5 +1040,15 @@ unsigned long ccci_get_md_boot_count(int md_id)
 		return ctl->boot_count;
 	else
 		return 0;
+}
+
+unsigned int ccci_get_hs2_done_status(void)
+{
+	return hs2_done;
+}
+
+void reset_modem_hs2_status(void)
+{
+	hs2_done = 0;
 }
 

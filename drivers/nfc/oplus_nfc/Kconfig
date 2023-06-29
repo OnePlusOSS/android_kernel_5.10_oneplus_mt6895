@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0
+config OPLUS_NFC
+  tristate "config oplus nfc chipset"
+  default n
+  help
+	define this config to get chipset version from dts.

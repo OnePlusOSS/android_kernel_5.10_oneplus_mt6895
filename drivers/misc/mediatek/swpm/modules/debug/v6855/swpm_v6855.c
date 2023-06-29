@@ -9,8 +9,14 @@
 #include <linux/notifier.h>
 #include <linux/perf_event.h>
 #include <linux/spinlock.h>
+#include <linux/thermal.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
+
+#if IS_ENABLED(CONFIG_MEDIATEK_CPUFREQ_DEBUG_LITE)
+/* TODO: wait for cpufreq_lite */
+/* extern int get_devinfo(int i); */
+#endif
 
 #if IS_ENABLED(CONFIG_MTK_SWPM_PERF_ARMV8_PMU)
 #include <swpm_perf_arm_pmu.h>
@@ -29,9 +35,10 @@
 #endif
 
 #define CREATE_TRACE_POINTS
+#define DRAM_LP5 (0)
 #include <swpm_tracker_trace.h>
-//EXPORT_TRACEPOINT_SYMBOL(swpm_power);
-//EXPORT_TRACEPOINT_SYMBOL(swpm_power_idx);
+/* EXPORT_TRACEPOINT_SYMBOL(swpm_power); */
+/* EXPORT_TRACEPOINT_SYMBOL(swpm_power_idx); */
 
 #include <mtk_swpm_common_sysfs.h>
 #include <mtk_swpm_sysfs.h>
@@ -87,22 +94,33 @@ struct mem_swpm_rec_data *mem_ptr;
 struct me_swpm_rec_data *me_ptr;
 
 /* rt => /100000, uA => *1000, res => 100 */
-#if SWPM_DEPRECATED
 #define CORE_DEFAULT_DEG (30)
-#define CORE_DEFAULT_LKG (115)
-#define CORE_LKG_RT_RES (100)
-static unsigned int core_lkg;
-static unsigned int core_lkg_replaced;
-static unsigned short core_lkg_rt[NR_CORE_LKG_TYPE] = {
-	7547, 4198, 5670, 11214, 16155, 19466,
-	5042, 9301, 12999, 2085, 6321
+#define CORE_STATIC_MA (70)
+#define CORE_STATIC_ID (7)
+#define CORE_STATIC_RT_RES (100)
+#define V_OF_CORE_STATIC (750)
+static char core_ts_name[NR_CORE_TS][MAX_POWER_NAME_LENGTH] = {
+	"soc1", "soc2", "soc3", "soc4",
 };
-#endif
+static unsigned int core_static;
+static unsigned int core_static_replaced;
+static unsigned short core_static_rt[NR_CORE_STATIC_TYPE] = {
+	2170, 3804, 3931, 4335, 10544, 11673, 11788, 13976, 17134, 20646
+};
 static unsigned short core_volt_tbl[NR_CORE_VOLT] = {
 	550, 600, 650, 750,
 };
 static unsigned short ddr_opp_freq[NR_DDR_FREQ] = {
 	400, 600, 800, 933, 1066, 1600, 2133, 2750,
+};
+static unsigned short dram_pwr_sample[NR_DRAM_PWR_SAMPLE] = {
+#if DRAM_LP5
+	/*Support for LP5*/
+	800, 1333, 2750,
+#else
+	/*Support for LP4*/
+	1600, 1600, 1600,
+#endif
 };
 static struct aphy_core_bw_data aphy_ref_core_bw_tbl[] = {
 	[DDR_400] = {
@@ -142,58 +160,58 @@ static struct aphy_core_pwr_data aphy_def_core_pwr_tbl[] = {
 	[APHY_VCORE] = {
 	.pwr = {
 		[DDR_400] = {
-			.read_coef = {4, 10, 20, 38, 80, 117,
-	152, 189, 212, 229, 229, 234},
-			.write_coef = {8, 17, 36, 68, 152, 221,
-	288, 363, 429, 458, 458, 458},
+			.read_coef = {4, 9, 18, 34, 71, 104,
+	135, 168, 188, 203, 204, 208},
+			.write_coef = {7, 16, 32, 61, 135, 196,
+	256, 322, 382, 407, 407, 407},
 		},
 		[DDR_600] = {
-			.read_coef = {5, 14, 49, 117, 212, 253,
-	267, 276, 278, 280, 281, 281},
-			.write_coef = {13, 32, 119, 291, 560, 613,
-	684, 684, 684, 684, 684, 686},
+			.read_coef = {5, 12, 44, 104, 188, 225,
+	237, 246, 248, 249, 250, 250},
+			.write_coef = {12, 28, 106, 259, 498, 545,
+	608, 608, 608, 608, 608, 610},
 		},
 		[DDR_800] = {
-			.read_coef = {48, 120, 338, 545, 773, 838,
-	886, 887, 888, 889, 889, 889},
-			.write_coef = {55, 125, 406, 715, 1131, 1233,
-	1277, 1277, 1277, 1277, 1279, 1281},
+			.read_coef = {42, 106, 300, 485, 687, 745,
+	788, 788, 789, 790, 790, 790},
+			.write_coef = {49, 111, 361, 636, 1005, 1096,
+	1135, 1136, 1136, 1136, 1137, 1139},
 		},
 		[DDR_933] = {
-			.read_coef = {61, 158, 442, 714, 995, 1080,
-	1135, 1139, 1139, 1139, 1139, 1139},
-			.write_coef = {65, 167, 513, 903, 1424, 1553,
-	1663, 1665, 1668, 1668, 1668, 1671},
+			.read_coef = {55, 141, 393, 634, 884, 960,
+	1009, 1013, 1013, 1013, 1013, 1013},
+			.write_coef = {58, 148, 456, 802, 1266, 1381,
+	1478, 1480, 1482, 1482, 1482, 1485},
 		},
 		[DDR_1066] = {
-			.read_coef = {70, 178, 501, 808, 1126, 1223,
-	1286, 1291, 1291, 1291, 1291, 1291},
-			.write_coef = {74, 189, 582, 1023, 1613, 1759,
-	1884, 1886, 1889, 1889, 1889, 1892},
+			.read_coef = {62, 158, 445, 719, 1001, 1087,
+	1143, 1147, 1147, 1147, 1147, 1147},
+			.write_coef = {66, 168, 517, 909, 1433, 1564,
+	1674, 1676, 1679, 1679, 1679, 1682},
 		},
 		[DDR_1600] = {
-			.read_coef = {157, 395, 1024, 1565, 2098, 2272,
-	2345, 2347, 2348, 2349, 2357, 2381},
-			.write_coef = {160, 385, 1135, 1932, 2891, 3155,
-	3369, 3374, 3378, 3378, 3378, 3426},
+			.read_coef = {140, 351, 910, 1392, 1865, 2019,
+	2085, 2086, 2087, 2088, 2095, 2116},
+			.write_coef = {143, 342, 1009, 1717, 2570, 2804,
+	2994, 2999, 3003, 3003, 3003, 3045},
 		},
 		[DDR_2133] = {
-			.read_coef = {309, 675, 1746, 2695, 3386, 3612,
-	3720, 3788, 3798, 3808, 3808, 3808},
-			.write_coef = {320, 664, 1910, 3353, 4666, 5063,
-	5422, 5452, 5452, 5480, 5480, 5480},
+			.read_coef = {275, 600, 1552, 2396, 3010, 3211,
+	3307, 3367, 3376, 3385, 3385, 3385},
+			.write_coef = {285, 590, 1698, 2981, 4147, 4500,
+	4819, 4846, 4846, 4871, 4871, 4871},
 		},
 		[DDR_2750] = {
-			.read_coef = {482, 1047, 2716, 4192, 5267, 5619,
-	5787, 5892, 5908, 5923, 5923, 5923},
-			.write_coef = {498, 1033, 2972, 5216, 7257, 7875,
-	8433, 8480, 8480, 8524, 8524, 8524},
+			.read_coef = {429, 931, 2414, 3726, 4682, 4995,
+	5144, 5237, 5252, 5265, 5265, 5265},
+			.write_coef = {443, 918, 2641, 4636, 6451, 7000,
+	7496, 7538, 7538, 7577, 7577, 7577},
 		},
 	},
-	.coef_idle = {590, 694, 799, 963, 1137, 1138, 2641, 3810},
-	.coef_srst = {83, 83, 83, 92, 100, 141, 193, 259},
-	.coef_ssr = {17, 17, 17, 18, 20, 25, 31, 36},
-	.volt = {550, 550, 550, 550, 550, 600, 650, 750},
+	.coef_idle = {498, 586, 674, 813, 961, 1265, 2230, 3006},
+	.coef_srst = {70, 70, 70, 78, 84, 119, 163, 204},
+	.coef_ssr = {14, 14, 14, 16, 17, 21, 27, 28},
+	.volt = {550, 550, 550, 550, 550, 600, 650, 725},
 	},
 };
 static struct aphy_others_bw_data aphy_ref_others_bw_tbl[] = {
@@ -234,46 +252,46 @@ static struct aphy_others_pwr_data aphy_def_others_pwr_tbl[] = {
 	[APHY_VDDQ] = {
 	.pwr = {
 		[DDR_400] = {
-			.read_coef = {4, 7, 15, 24, 44,
-	59, 68, 73, 91, 105, 112},
-			.write_coef = {5, 13, 27, 52, 95,
-	138, 182, 225, 270, 312, 333},
+			.read_coef = {0, 0, 89, 158, 255,
+	340, 445, 484, 509, 576, 644},
+			.write_coef = {55, 82, 201, 404, 752,
+	996, 1252, 1494, 1723, 1949, 2180},
 		},
 		[DDR_600] = {
-			.read_coef = {1, 5, 16, 33, 66,
-	84, 110, 112, 155, 179, 192},
-			.write_coef = {11, 17, 38, 77, 151,
-	215, 286, 346, 421, 486, 520},
+			.read_coef = {38, 71, 149, 233, 474,
+	620, 556, 630, 762, 863, 931},
+			.write_coef = {86, 152, 380, 642, 1243,
+	1490, 1812, 2288, 2664, 3016, 3256},
 		},
 		[DDR_800] = {
-			.read_coef = {3, 9, 24, 44, 82,
-	112, 147, 166, 185, 219, 235},
-			.write_coef = {13, 22, 52, 108, 198,
-	278, 364, 445, 527, 624, 670},
+			.read_coef = {35, 82, 165, 314, 571,
+	654, 787, 825, 879, 1002, 1075},
+			.write_coef = {97, 189, 413, 723, 1351,
+	1781, 2323, 2734, 3177, 3622, 3886},
 		},
 		[DDR_933] = {
-			.read_coef = {15, 23, 65, 112, 197,
-	260, 341, 391, 407, 471, 504},
-			.write_coef = {20, 44, 98, 172, 323,
-	440, 563, 673, 797, 922, 987},
+			.read_coef = {49, 87, 194, 348, 629,
+	667, 719, 891, 930, 1065, 1146},
+			.write_coef = {109, 205, 495, 812, 1579,
+	1965, 2499, 3056, 3565, 4085, 4396},
 		},
 		[DDR_1066] = {
-			.read_coef = {17, 33, 74, 135, 234,
-	285, 390, 425, 463, 530, 564},
-			.write_coef = {25, 52, 103, 211, 364,
-	509, 647, 763, 933, 1068, 1135},
+			.read_coef = {38, 78, 184, 319, 512,
+	693, 816, 860, 910, 1037, 1127},
+			.write_coef = {99, 204, 477, 909, 1644,
+	2092, 2729, 3238, 3839, 4375, 4752},
 		},
 		[DDR_1600] = {
-			.read_coef = {25, 45, 98, 173, 296,
-	383, 469, 518, 585, 668, 722},
-			.write_coef = {37, 72, 142, 278, 491,
-	655, 843, 1018, 1203, 1373, 1484},
+			.read_coef = {9, 22, 57, 101, 196,
+	273, 373, 459, 550, 642, 695},
+			.write_coef = {106, 188, 450, 883, 1745,
+	2564, 3407, 4237, 5188, 6052, 6556},
 		},
 		[DDR_2133] = {
-			.read_coef = {1751, 1819, 1835, 1856, 1896,
-	1951, 1995, 2040, 2088, 2282, 2398},
-			.write_coef = {1835, 1972, 2206, 2572, 3291,
-	4039, 4710, 5218, 5982, 6538, 6872},
+			.read_coef = {140, 168, 198, 239, 330,
+	417, 514, 581, 680, 799, 865},
+			.write_coef = {205, 329, 581, 991, 1837,
+	2589, 3435, 4250, 5089, 5981, 6475},
 		},
 		[DDR_2750] = {
 			.read_coef = {1510, 2000, 2022, 2057, 2116,
@@ -282,54 +300,54 @@ static struct aphy_others_pwr_data aphy_def_others_pwr_tbl[] = {
 	4170, 4969, 5436, 6150, 6778, 7087},
 		},
 	},
-	.coef_idle = {12, 12, 12, 13, 13, 14, 114, 164},
-	.coef_srst = {0, 0, 0, 0, 0, 0, 0, 0},
-	.coef_ssr = {0, 0, 0, 0, 0, 0, 0, 0},
-	.volt = {300, 300, 300, 300, 300, 300, 500, 500},
+	.coef_idle = {76, 76, 82, 81, 88, 747, 763, 164},
+	.coef_srst = {0, 8, 3, 6, 7, 7, 9, 0},
+	.coef_ssr = { 8, 8, 3, 2, 10, 6, 10, 0},
+	.volt = {600, 600, 600, 600, 600, 600, 600, 500},
 	},
 	[APHY_VM] = {
 	.pwr = {
 		[DDR_400] = {
-			.read_coef = {29, 52, 122, 212, 393,
-	562, 656, 758, 901, 1035, 1079},
-			.write_coef = {39, 52, 107, 168, 258,
-	353, 442, 482, 578, 664, 693},
+			.read_coef = {20, 46, 104, 199, 359,
+	457, 592, 650, 800, 919, 963},
+			.write_coef = {16, 40, 96, 154, 312,
+	348, 449, 522, 606, 696, 730},
 		},
 		[DDR_600] = {
-			.read_coef = {35, 62, 161, 270, 534,
-	777, 987, 1014, 1266, 1401, 1508},
-			.write_coef = {31, 52, 117, 197, 388,
-	502, 653, 752, 907, 1003, 1080},
+			.read_coef = {40, 68, 150, 265, 506,
+	680, 751, 983, 1134, 1284, 1380},
+			.write_coef = {33, 65, 142, 251, 443,
+	570, 735, 839, 959, 1086, 1167},
 		},
 		[DDR_800] = {
-			.read_coef = {43, 91, 218, 362, 649,
-	884, 1100, 1222, 1489, 1692, 1784},
-			.write_coef = {28, 76, 178, 286, 510,
-	651, 840, 992, 1163, 1321, 1393},
+			.read_coef = {38, 67, 181, 323, 596,
+	797, 938, 1151, 1361, 1517, 1619},
+			.write_coef = {36, 72, 196, 347, 610,
+	765, 905, 1046, 1237, 1378, 1471},
 		},
 		[DDR_933] = {
-			.read_coef = {54, 96, 229, 399, 762,
-	984, 1270, 1635, 1865, 2111, 2248},
-			.write_coef = {43, 66, 202, 374, 617,
-	796, 995, 1128, 1397, 1581, 1684},
+			.read_coef = {50, 81, 186, 333, 610,
+	897, 968, 1267, 1472, 1655, 1761},
+			.write_coef = {49, 80, 183, 294, 601,
+	787, 972, 1173, 1383, 1555, 1654},
 		},
 		[DDR_1066] = {
-			.read_coef = {60, 100, 239, 457, 855,
-	1068, 1328, 1731, 1948, 2245, 2384},
-			.write_coef = {47, 86, 201, 366, 639,
-	889, 1139, 1287, 1542, 1777, 1888},
+			.read_coef = {34, 75, 181, 357, 709,
+	931, 1108, 1367, 1639, 1879, 2012},
+			.write_coef = {31, 77, 205, 327, 664,
+	917, 1117, 1302, 1546, 1772, 1898},
 		},
 		[DDR_1600] = {
-			.read_coef = {60, 122, 308, 568, 1066,
-	1501, 1965, 2381, 2722, 2981, 3227},
-			.write_coef = {48, 111, 259, 470, 841,
-	1144, 1457, 1739, 2168, 2374, 2570},
+			.read_coef = {70, 133, 311, 524, 1060,
+	1336, 1714, 1994, 2276, 2591, 2741},
+			.write_coef = {68, 134, 259, 501, 991,
+	1282, 1596, 1868, 2178, 2479, 2622},
 		},
 		[DDR_2133] = {
-			.read_coef = {145, 309, 683, 1222, 2218,
-	2481, 3300, 3646, 4011, 4360, 4542},
-			.write_coef = {169, 297, 713, 1345, 1792,
-	2485, 2836, 3107, 3447, 3747, 3903},
+			.read_coef = {354, 620, 772, 979, 1396,
+	1813, 2234, 2660, 3044, 3473, 3691},
+			.write_coef = {476, 626, 754, 957, 1371,
+	1752, 2154, 2513, 2937, 3350, 3561},
 		},
 		[DDR_2750] = {
 			.read_coef = {466, 804, 1538, 2190, 3073,
@@ -338,52 +356,52 @@ static struct aphy_others_pwr_data aphy_def_others_pwr_tbl[] = {
 	3249, 3609, 4017, 4437, 4812, 5037},
 		},
 	},
-	.coef_idle = {617, 637, 782, 782, 900, 779, 1040, 1334},
+	.coef_idle = {613, 629, 784, 712, 841, 860, 1212, 1334},
 	.coef_srst = {70, 67, 70, 73, 76, 70, 77, 83},
 	.coef_ssr = {24, 24, 24, 24, 23, 23, 24, 24},
 	.volt = {750, 750, 750, 750, 750, 750, 750, 750},
 	},
-	[APHY_VIO] = {
+	[APHY_VIO12] = {
 	.pwr = {
 		[DDR_400] = {
-			.read_coef = {61, 93, 219, 412, 835,
-	1181, 1275, 1363, 1824, 2285, 2746},
+			.read_coef = {64, 86, 175, 322, 586,
+	827, 1078, 1446, 1446, 1446, 1446},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
 		[DDR_600] = {
-			.read_coef = {39, 75, 201, 398, 809,
-	1041, 1474, 1763, 2053, 2342, 2632},
+			.read_coef = {28, 62, 167, 293, 580,
+	1045, 1086, 1209, 1626, 2043, 2461},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
 		[DDR_800] = {
-			.read_coef = {40, 86, 192, 399, 756,
-	1181, 1359, 1589, 1884, 2180, 2475},
+			.read_coef = {31, 85, 166, 357, 684,
+	950, 1294, 1421, 1590, 1758, 1927},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
 		[DDR_933] = {
-			.read_coef = {60, 93, 212, 416, 729,
-	1098, 1500, 1698, 1723, 1748, 1773},
+			.read_coef = {28, 71, 167, 368, 743,
+	903, 1157, 1523, 1758, 1993, 2228},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
 		[DDR_1066] = {
-			.read_coef = {55, 96, 222, 425, 847,
-	1120, 1589, 1626, 1726, 1827, 1927},
+			.read_coef = {39, 65, 189, 383, 564,
+	961, 1330, 1495, 1741, 1988, 2234},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
 		[DDR_1600] = {
-			.read_coef = {70, 110, 258, 489, 897,
-	1219, 1577, 1630, 1878, 2125, 2373},
+			.read_coef = {45, 88, 210, 389, 777,
+	900, 1170, 1497, 1672, 1847, 2022},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
 		[DDR_2133] = {
-			.read_coef = {102, 186, 451, 785, 1459,
-	2251, 2617, 2690, 2733, 2776, 2820},
+			.read_coef = {71, 126, 304, 590, 1179,
+	1567, 1717, 1741, 2126, 2510, 2895},
 			.write_coef = {0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0},
 		},
@@ -394,56 +412,252 @@ static struct aphy_others_pwr_data aphy_def_others_pwr_tbl[] = {
 	0, 0, 0, 0, 0, 0},
 		},
 	},
-	.coef_idle = {120, 144, 124, 151, 160, 126, 156, 195},
-	.coef_srst = {120, 144, 114, 145, 158, 129, 152, 200},
-	.coef_ssr = {0, 0, 0, 0, 0, 0, 0, 0},
+	.coef_idle = {120, 155, 127, 156, 171, 134, 162, 195},
+	.coef_srst = {123, 135, 122, 131, 143, 115, 143, 200},
+	.coef_ssr = { 0, 0, 0, 0, 0, 0, 0, 0},
 	.volt = {1200, 1200, 1200, 1200, 1200, 1200, 1200, 1200},
 	},
 };
 
-static struct dram_pwr_conf dram_def_pwr_conf[] = {
-	[DRAM_VDD1_1P8V] = {
-		/* SW co-relation */
-		.i_dd0 = 3000,
-		.i_dd2p = 350,
-		.i_dd2n = 430,
-		.i_dd4r = 5280,
-		.i_dd4w = 5580,
-		.i_dd5 = 800,
-		.i_dd6 = 218,
+static struct dram_pwr_data dram_def_pwr_conf[] = {
+	[DRAM_VDD1] = {
+	.idd_conf = {
+#if DRAM_LP5
+		[0] = {
+			.volt = 1800,	/* mV */
+			.i_dd0 = 3770,	/* uA */
+			.i_dd2p = 660,
+			.i_dd2n = 129,
+			.i_dd4w = 3370,
+			.i_dd4r = 3070,
+			.i_dd5 = 820,
+			.i_dd6 = 316,
+		},
+		[1] = {
+			.volt = 1800,	/* mV */
+			.i_dd0 = 4160,	/* uA */
+			.i_dd2p = 700,
+			.i_dd2n = 100,
+			.i_dd4w = 4850,
+			.i_dd4r = 4430,
+			.i_dd5 = 800,
+			.i_dd6 = 300,
+		},
+		[2] = {
+			.volt = 1800,	/* mV */
+			.i_dd0 = 3970,	/* uA */
+			.i_dd2p = 610,
+			.i_dd2n = 190,
+			.i_dd4w = 10270,
+			.i_dd4r = 8920,
+			.i_dd5 = 850,
+			.i_dd6 = 275,
+		},
+#else
+		[0] = {
+			.volt = 1800,	/* mV */
+			.i_dd0 = 2940,	/* uA */
+			.i_dd2p = 330,
+			.i_dd2n = 0,
+			.i_dd4w = 3140,
+			.i_dd4r = 3710,
+			.i_dd5 = 348,
+			.i_dd6 = 275,
+		},
+		[1] = {
+			.volt = 1800,	/* mV */
+			.i_dd0 = 2940,	/* uA */
+			.i_dd2p = 330,
+			.i_dd2n = 0,
+			.i_dd4w = 3140,
+			.i_dd4r = 3710,
+			.i_dd5 = 348,
+			.i_dd6 = 275,
+		},
+		[2] = {
+			.volt = 1800,	/* mV */
+			.i_dd0 = 2940,	/* uA */
+			.i_dd2p = 330,
+			.i_dd2n = 0,
+			.i_dd4w = 3140,
+			.i_dd4r = 3710,
+			.i_dd5 = 348,
+			.i_dd6 = 275,
+		},
+#endif
 	},
-	[DRAM_VDD2H_1P05V] = {
-		/* SW co-relation */
-		.i_dd0 = 27714,
-		.i_dd2p = 1380,
-		.i_dd2n = 4012,
-		.i_dd4r = 120000,
-		.i_dd4w = 115619,
-		.i_dd5 = 10600,
-		.i_dd6 = 266,
 	},
-	[DRAM_VDD2L_0P9V] = {
-		/* SW co-relation */
-		.i_dd0 = 27714,
-		.i_dd2p = 1380,
-		.i_dd2n = 4012,
-		.i_dd4r = 120000,
-		.i_dd4w = 115619,
-		.i_dd5 = 10600,
-		.i_dd6 = 266,
+	[DRAM_VDD2H] = {
+	.idd_conf = {
+		[0] = {
+			.volt = 1050,	/* mV */
+			.i_dd0 = 36100,	/* uA */
+			.i_dd2p = 1390,
+			.i_dd2n = 11870,
+			.i_dd4w = 171000,
+			.i_dd4r = 183400,
+			.i_dd5 = 17670,
+			.i_dd6 = 625,
+		},
+		[1] = {
+			.volt = 1050,	/* mV */
+			.i_dd0 = 36100,	/* uA */
+			.i_dd2p = 1390,
+			.i_dd2n = 11870,
+			.i_dd4w = 171000,
+			.i_dd4r = 183400,
+			.i_dd5 = 17670,
+			.i_dd6 = 625,
+		},
+		[2] = {
+			.volt = 1050,	/* mV */
+			.i_dd0 = 36100,	/* uA */
+			.i_dd2p = 1390,
+			.i_dd2n = 11870,
+			.i_dd4w = 171000,
+			.i_dd4r = 183400,
+			.i_dd5 = 17670,
+			.i_dd6 = 625,
+		},
 	},
-	[DRAM_VDDQ_0P3V] = {
-		.i_dd0 = 980,
-		.i_dd2p = 75,
-		.i_dd2n = 75,
-		.i_dd4r = 58138,
-		.i_dd4w = 511,
-		.i_dd5 = 600,
-		.i_dd6 = 36,
+	},
+	[DRAM_VDD2L] = {
+#if DRAM_LP5
+	.idd_conf = {
+		[0] = {
+			.volt = 900,	/* mV */
+			.i_dd0 = 970,	/* uA */
+			.i_dd2p = 20,
+			.i_dd2n = 190,
+			.i_dd4w = 29320,
+			.i_dd4r = 31100,
+			.i_dd5 = 250,
+			.i_dd6 = 0,
+		},
+		[1] = {
+			.volt = 900,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 0,
+			.i_dd4r = 0,
+			.i_dd5 = 0,
+			.i_dd6 = 0,
+		},
+		[2] = {
+			.volt = 900,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 0,
+			.i_dd4r = 0,
+			.i_dd5 = 0,
+			.i_dd6 = 0,
+		},
+	},
+#else
+	.idd_conf = {
+		[0] = {
+			.volt = 0,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 0,
+			.i_dd4r = 0,
+			.i_dd5 = 0,
+			.i_dd6 = 0,
+		},
+		[1] = {
+			.volt = 0,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 0,
+			.i_dd4r = 0,
+			.i_dd5 = 0,
+			.i_dd6 = 0,
+		},
+		[2] = {
+			.volt = 0,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 0,
+			.i_dd4r = 0,
+			.i_dd5 = 0,
+			.i_dd6 = 0,
+		},
+	},
+#endif
+	},
+	[DRAM_VDDQ] = {
+	.idd_conf = {
+#if DRAM_LP5
+		[0] = {
+			.volt = 300,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 110,
+			.i_dd4r = 6120,
+			.i_dd5 = 50,
+			.i_dd6 = 75,
+		},
+		[1] = {
+			.volt = 300,	/* mV */
+			.i_dd0 = 40,	/* uA */
+			.i_dd2p = 40,
+			.i_dd2n = 0,
+			.i_dd4w = 2,
+			.i_dd4r = 11200,
+			.i_dd5 = 0,
+			.i_dd6 = 75,
+		},
+		[2] = {
+			.volt = 500,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 80,
+			.i_dd2n = 0,
+			.i_dd4w = 100,
+			.i_dd4r = 57400,
+			.i_dd5 = 20,
+			.i_dd6 = 75,
+		},
+#else
+		[0] = {
+			.volt = 600,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 160,
+			.i_dd4r = 76840,
+			.i_dd5 = 20,
+			.i_dd6 = 75,
+		},
+		[1] = {
+			.volt = 600,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 160,
+			.i_dd4r = 76840,
+			.i_dd5 = 20,
+			.i_dd6 = 75,
+		},
+		[2] = {
+			.volt = 600,	/* mV */
+			.i_dd0 = 0,	/* uA */
+			.i_dd2p = 0,
+			.i_dd2n = 0,
+			.i_dd4w = 160,
+			.i_dd4r = 76840,
+			.i_dd5 = 20,
+			.i_dd6 = 75,
+		},
+#endif
+	},
 	},
 };
-
-
 
 /* subsys share mem reference table */
 static struct swpm_mem_ref_tbl mem_ref_tbl[NR_POWER_METER] = {
@@ -591,16 +805,30 @@ static inline void swpm_pass_to_sspm(void)
 
 static void swpm_update_temp(void)
 {
-	unsigned int temp = 30, i;
+	unsigned int i;
+	int tz_temp = 0, tz_core = 0;
+	struct thermal_zone_device *tz;
 
-	for (i = 0; i < NR_CPU_CORE; i++) {
+	if (cpu_ptr) {
+		for (i = 0; i < NR_CPU_CORE; i++) {
 #if IS_ENABLED(CONFIG_MTK_THERMAL)
-		temp = get_cpu_temp(i) / 1000;
-		if (temp > 100)
-			temp = 100;
+			tz_temp = get_cpu_temp(i);
+			tz_temp = (tz_temp > 0) ? tz_temp : 0;
 #endif
-		if (cpu_ptr)
-			cpu_ptr->cpu_temp[i] = (unsigned short)temp;
+			cpu_ptr->cpu_temp[i] = (unsigned int)tz_temp;
+		}
+	}
+
+	if (core_ptr) {
+		for (i = 0; i < NR_CORE_TS; i++) {
+			tz = thermal_zone_get_zone_by_name(core_ts_name[i]);
+			if (!IS_ERR(tz)) {
+				thermal_zone_get_temp(tz, &tz_temp);
+				tz_core += tz_temp;
+			}
+		}
+		tz_core = (tz_core > 0) ? tz_core / NR_CORE_TS : 0;
+		core_ptr->thermal = (unsigned int)tz_core;
 	}
 }
 
@@ -625,11 +853,11 @@ static void swpm_init_retry(struct work_struct *work)
 #endif
 }
 
+static char pwr_buf[POWER_CHAR_SIZE] = { 0 };
 static char idx_buf[POWER_INDEX_CHAR_SIZE] = { 0 };
 static void swpm_log_loop(struct timer_list *t)
 {
-	char buf[256] = {0};
-	char *ptr = buf;
+	char *ptr = pwr_buf;
 	char *idx_ptr = idx_buf;
 	int i;
 #ifdef LOG_LOOP_TIME_PROFILE
@@ -688,7 +916,7 @@ static void swpm_log_loop(struct timer_list *t)
 		trace_swpm_power_idx(idx_buf);
 	}
 	/* put power data to ftrace */
-	trace_swpm_power(buf);
+	trace_swpm_power(pwr_buf);
 
 #ifdef LOG_LOOP_TIME_PROFILE
 	t2 = ktime_get();
@@ -722,35 +950,40 @@ static void swpm_timer_init(void)
 
 #endif /* #if IS_ENABLED(CONFIG_MTK_TINYSYS_SSPM_SUPPORT) : 684 */
 
-#if SWPM_DEPRECATED
 static void swpm_core_static_data_init(void)
 {
-	unsigned int lkg, lkg_scaled;
+	unsigned int static_p = 0, scaled_p;
 	unsigned int i, j;
 
 	if (!core_ptr)
 		return;
 
-	lkg = 0;
+#if IS_ENABLED(CONFIG_MEDIATEK_CPUFREQ_DEBUG_LITE)
+	/* TODO: default mA from get_devinfo */
+	/* static_p = get_devinfo(CORE_STATIC_ID); */
+#else
+	static_p = 0;
+#endif
 
-	/* default CORE_DEFAULT_LKG mA, efuse default mW to mA */
-	lkg = (!lkg) ? CORE_DEFAULT_LKG
-			: (lkg * 1000 / V_OF_FUSE_VCORE);
-	/* recording default lkg data, and check replacement data */
-	core_lkg = lkg;
-	lkg = (!core_lkg_replaced) ? lkg : core_lkg_replaced;
+	/* default CORE_STATIC mA */
+	if (!static_p)
+		static_p = CORE_STATIC_MA;
 
-	/* efuse static power unit mW with voltage scaling */
+	/* recording default static data, and check replacement data */
+	core_static = static_p;
+	static_p = (!core_static_replaced) ?
+		static_p : core_static_replaced;
+
+	/* static power unit mA with voltage scaling */
 	for (i = 0; i < NR_CORE_VOLT; i++) {
-		lkg_scaled = lkg * core_volt_tbl[i] / V_OF_FUSE_VCORE;
-		for (j = 0; j < NR_CORE_LKG_TYPE; j++) {
-			/* unit (uA) */
-			core_ptr->core_lkg_pwr[i][j] =
-				lkg_scaled * core_lkg_rt[j] / CORE_LKG_RT_RES;
+		scaled_p = static_p * core_volt_tbl[i] / V_OF_CORE_STATIC;
+		for (j = 0; j < NR_CORE_STATIC_TYPE; j++) {
+			/* calc static ratio and transfer unit to uA */
+			core_ptr->core_static_pwr[i][j] =
+				scaled_p * core_static_rt[j] / CORE_STATIC_RT_RES;
 		}
 	}
 }
-#endif
 
 static void swpm_core_pwr_data_init(void)
 {
@@ -783,6 +1016,8 @@ static void swpm_mem_pwr_data_init(void)
 	memcpy(mem_ptr->aphy_others_pwr_tbl, aphy_def_others_pwr_tbl,
 	       sizeof(aphy_def_others_pwr_tbl));
 	/* copy dram pwr data */
+	memcpy(mem_ptr->dram_pwr_sample, dram_pwr_sample,
+	       sizeof(dram_pwr_sample));
 	memcpy(mem_ptr->dram_conf, dram_def_pwr_conf,
 	       sizeof(dram_def_pwr_conf));
 	memcpy(mem_ptr->ddr_opp_freq, ddr_opp_freq,
@@ -828,10 +1063,8 @@ static void swpm_init_pwr_data(void)
 	if (!ret)
 		me_ptr = (struct me_swpm_rec_data *)ptr;
 
-	/* TBD lkg data flow */
-#if SWPM_DEPRECATED
+	/* TBD static data flow */
 	swpm_core_static_data_init();
-#endif
 	swpm_core_pwr_data_init();
 	swpm_mem_pwr_data_init();
 	swpm_me_pwr_data_init();
@@ -961,8 +1194,8 @@ end:
 static int core_static_replace_proc_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "default: %d, replaced %d (valid:0~999)\n",
-		   core_lkg,
-		   core_lkg_replaced);
+		   core_static,
+		   core_static_replaced);
 	return 0;
 }
 static ssize_t core_static_replace_proc_write(struct file *file,
@@ -975,7 +1208,7 @@ static ssize_t core_static_replace_proc_write(struct file *file,
 		return -EINVAL;
 
 	if (!kstrtouint(buf, 10, &val)) {
-		core_lkg_replaced = (val < 1000) ? val : core_lkg_replaced;
+		core_static_replaced = (val < 1000) ? val : core_static_replaced;
 
 		/* reset core static power data */
 		swpm_core_static_data_init();

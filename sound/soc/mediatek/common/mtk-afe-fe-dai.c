@@ -27,6 +27,12 @@
 #include "../audio_dsp/mtk-dsp-mem-control.h"
 #endif
 
+/* scp relate */
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+#include "../audio_scp/mtk-scp-audio-pcm.h"
+#include "../audio_scp/mtk-scp-audio-mem-control.h"
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_AUDIODSP_SUPPORT)
 #include "adsp_helper.h"
 #endif
@@ -41,6 +47,14 @@
 #define AFE_BASE_END_OFFSET 8
 #define AFE_AGENT_SET_OFFSET 4
 #define AFE_AGENT_CLR_OFFSET 8
+
+static unsigned int g_channel;
+
+int mtk_get_channel_value(void)
+{
+	return g_channel;
+}
+EXPORT_SYMBOL(mtk_get_channel_value);
 
 static bool is_semaphore_control_need(bool is_scp_sema_support)
 {
@@ -251,6 +265,20 @@ int mtk_afe_fe_hw_params(struct snd_pcm_substream *substream,
 		}
 #endif
 
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+		if (memif->use_scp_share_mem) {
+			ret = mtk_scp_allocate_mem(substream,
+						    params_buffer_bytes(params));
+			if (ret < 0) {
+				dev_err(afe->dev, "%s(), scp_share_mem: %d, err: %d\n",
+					__func__, memif->use_scp_share_mem, ret);
+				return ret;
+			}
+
+			goto MEM_ALLOCATE_DONE;
+		}
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_ULTRASND_PROXIMITY)
 	if (memif->scp_ultra_enable) {
 		ret = notify_allocate_mem(NOTIFIER_ULTRASOUND_ALLOCATE_MEM, substream);
@@ -282,6 +310,11 @@ MEM_ALLOCATE_DONE:
 		 &substream->runtime->dma_addr,
 		 substream->runtime->dma_area,
 		 substream->runtime->dma_bytes);
+
+	if (strstr(memif->data->name, "DL11"))
+		afe->memif_32bit_supported = 0;
+	else
+		afe->memif_32bit_supported = 1;
 
 	memset_io(substream->runtime->dma_area, 0,
 		  substream->runtime->dma_bytes);
@@ -328,6 +361,11 @@ MEM_ALLOCATE_DONE:
 			   substream, params, dai, afe);
 #endif
 
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+	afe_pcm_ipi_to_scp(AUDIO_DSP_TASK_PCM_HWPARAM,
+			   substream, params, dai, afe);
+#endif
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mtk_afe_fe_hw_params);
@@ -339,9 +377,27 @@ int mtk_afe_fe_hw_free(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
 	struct mtk_base_afe_memif *memif = &afe->memif[cpu_dai->id];
+	int ret = 0;
+
+	dev_info(afe->dev,
+		 "%s(), %s, use_adsp_share_mem %d, using_sram %d, use_dram_only %d, dma_addr %pad, dma_area %p, dma_bytes 0x%zx, vow_barge_in_enable %d\n",
+		 __func__, memif->data->name,
+		 memif->use_adsp_share_mem,
+		 memif->using_sram, memif->use_dram_only,
+		 &substream->runtime->dma_addr,
+		 substream->runtime->dma_area,
+		 substream->runtime->dma_bytes,
+		 memif->vow_barge_in_enable);
 
 #if IS_ENABLED(CONFIG_SND_SOC_MTK_AUDIO_DSP)
-	afe_pcm_ipi_to_dsp(AUDIO_DSP_TASK_PCM_HWFREE,
+	ret = afe_pcm_ipi_to_dsp(AUDIO_DSP_TASK_PCM_HWFREE,
+			   substream, NULL, dai, afe);
+#endif
+	if (ret)
+		dev_info(afe->dev, "%s() %s ret:%d\n", __func__, memif->data->name, ret);
+
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+	afe_pcm_ipi_to_scp(AUDIO_DSP_TASK_PCM_HWFREE,
 			   substream, NULL, dai, afe);
 #endif
 
@@ -363,12 +419,20 @@ int mtk_afe_fe_hw_free(struct snd_pcm_substream *substream,
 		if (is_adsp_genpool_addr_valid(substream))
 			return mtk_adsp_free_mem(substream);
 #endif
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+		if (is_scp_genpool_addr_valid(substream))
+			return mtk_scp_free_mem(substream);
+#endif
 #if IS_ENABLED(CONFIG_MTK_ULTRASND_PROXIMITY)
 		// ultrasound uses reserve dram, ignore free
 		if (memif->scp_ultra_enable)
 			return 0;
 #endif
-
+#if IS_ENABLED(CONFIG_MTK_VOW_SUPPORT)
+		// vow uses reserve dram, ignore free
+		if (memif->vow_barge_in_enable)
+			return 0;
+#endif
 		return snd_pcm_lib_free_pages(substream);
 	}
 }
@@ -467,6 +531,11 @@ int mtk_afe_fe_prepare(struct snd_pcm_substream *substream,
 
 #if IS_ENABLED(CONFIG_SND_SOC_MTK_AUDIO_DSP)
 	afe_pcm_ipi_to_dsp(AUDIO_DSP_TASK_PCM_PREPARE,
+			   substream, NULL, dai, afe);
+#endif
+
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+	afe_pcm_ipi_to_scp(AUDIO_DSP_TASK_PCM_PREPARE,
 			   substream, NULL, dai, afe);
 #endif
 
@@ -572,6 +641,9 @@ unsigned int is_afe_need_triggered(struct mtk_base_afe_memif *memif)
 
 	if (memif->use_adsp_share_mem ||
 	    memif->vow_barge_in_enable ||
+#if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
+	    memif->use_scp_share_mem ||
+#endif
 	    memif->scp_ultra_enable)
 		return false;
 
@@ -627,14 +699,18 @@ int mtk_memif_set_enable(struct mtk_base_afe *afe, int afe_id)
 {
 	int ret = 0;
 	int adsp_sem_ret = NOTIFY_STOP;
-	int get_sema_type = afe->is_scp_sema_support ?
-			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
-			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
-	int release_sema_type = afe->is_scp_sema_support ?
-				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
-				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
+	int get_sema_type;
+	int release_sema_type;
+
 	if (!afe)
 		return -ENODEV;
+
+	get_sema_type = afe->is_scp_sema_support ?
+			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
+			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
+	release_sema_type = afe->is_scp_sema_support ?
+				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
+				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
 
 	if (!is_semaphore_control_need(afe->is_scp_sema_support))
 		return raw_mtk_memif_set_enable(afe, afe_id);
@@ -661,14 +737,18 @@ int mtk_memif_set_disable(struct mtk_base_afe *afe, int afe_id)
 {
 	int ret = 0;
 	int adsp_sem_ret = NOTIFY_STOP;
-	int get_sema_type = afe->is_scp_sema_support ?
-			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
-			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
-	int release_sema_type = afe->is_scp_sema_support ?
-				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
-				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
+	int get_sema_type;
+	int release_sema_type;
+
 	if (!afe)
 		return -ENODEV;
+
+	get_sema_type = afe->is_scp_sema_support ?
+			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
+			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
+	release_sema_type = afe->is_scp_sema_support ?
+				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
+				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
 
 	if (!is_semaphore_control_need(afe->is_scp_sema_support))
 		return raw_mtk_memif_set_disable(afe, afe_id);
@@ -697,16 +777,20 @@ int mtk_irq_set_enable(struct mtk_base_afe *afe,
 {
 	int ret = 0;
 	int adsp_sem_ret = NOTIFY_STOP;
-	int get_sema_type = afe->is_scp_sema_support ?
-			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
-			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
-	int release_sema_type = afe->is_scp_sema_support ?
-				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
-				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
+	int get_sema_type;
+	int release_sema_type;
+
 	if (!afe)
 		return -ENODEV;
 	if (!irq_data)
 		return -ENODEV;
+
+	get_sema_type = afe->is_scp_sema_support ?
+			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
+			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
+	release_sema_type = afe->is_scp_sema_support ?
+				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
+				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
 
 	if (!is_semaphore_control_need(afe->is_scp_sema_support))
 		return regmap_update_bits(afe->regmap, irq_data->irq_en_reg,
@@ -735,16 +819,20 @@ int mtk_irq_set_disable(struct mtk_base_afe *afe,
 {
 	int ret = 0;
 	int adsp_sem_ret = NOTIFY_STOP;
-	int get_sema_type = afe->is_scp_sema_support ?
-			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
-			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
-	int release_sema_type = afe->is_scp_sema_support ?
-				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
-				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
+	int get_sema_type;
+	int release_sema_type;
+
 	if (!afe)
 		return -EPERM;
 	if (!irq_data)
 		return -EPERM;
+
+	get_sema_type = afe->is_scp_sema_support ?
+			    NOTIFIER_SCP_3WAY_SEMAPHORE_GET :
+			    NOTIFIER_ADSP_3WAY_SEMAPHORE_GET;
+	release_sema_type = afe->is_scp_sema_support ?
+				NOTIFIER_SCP_3WAY_SEMAPHORE_RELEASE :
+				NOTIFIER_ADSP_3WAY_SEMAPHORE_RELEASE;
 
 	if (!is_semaphore_control_need(afe->is_scp_sema_support))
 		return regmap_update_bits(afe->regmap, irq_data->irq_en_reg,
@@ -776,7 +864,10 @@ int mtk_memif_set_addr(struct mtk_base_afe *afe, int id,
 	int msb_at_bit33 = upper_32_bits(dma_addr) ? 1 : 0;
 	unsigned int phys_buf_addr = lower_32_bits(dma_addr);
 	unsigned int phys_buf_addr_upper_32 = upper_32_bits(dma_addr);
-	unsigned int value;
+	unsigned int value = 0;
+	dma_addr_t dma_addr_end = dma_addr + dma_bytes - 1;
+	unsigned int phys_buf_end_addr = lower_32_bits(dma_addr_end);
+	unsigned int phys_buf_end_addr_upper_32 = upper_32_bits(dma_addr_end);
 
 	/* check the memif already disable */
 	regmap_read(afe->regmap, memif->data->enable_reg, &value);
@@ -800,12 +891,12 @@ int mtk_memif_set_addr(struct mtk_base_afe *afe, int id,
 	if (memif->data->reg_ofs_end)
 		mtk_regmap_write(afe->regmap,
 				 memif->data->reg_ofs_end,
-				 phys_buf_addr + dma_bytes - 1);
+				 phys_buf_end_addr);
 	else
 		mtk_regmap_write(afe->regmap,
 				 memif->data->reg_ofs_base +
 				 AFE_BASE_END_OFFSET,
-				 phys_buf_addr + dma_bytes - 1);
+				 phys_buf_end_addr);
 
 	/* set start, end, upper 32 bits */
 	if (memif->data->reg_ofs_base_msb) {
@@ -813,7 +904,7 @@ int mtk_memif_set_addr(struct mtk_base_afe *afe, int id,
 				 phys_buf_addr_upper_32);
 		mtk_regmap_write(afe->regmap,
 				 memif->data->reg_ofs_end_msb,
-				 phys_buf_addr_upper_32);
+				 phys_buf_end_addr_upper_32);
 	}
 
 	/* set MSB to 33-bit */
@@ -846,6 +937,15 @@ int mtk_memif_set_channel(struct mtk_base_afe *afe,
 		mono = (channel == 1) ? 0 : 1;
 	else
 		mono = (channel == 1) ? 1 : 0;
+
+	if (memif->data->ch_num_maskbit) {
+		mtk_regmap_update_bits(afe->regmap, memif->data->ch_num_reg,
+				       memif->data->ch_num_maskbit,
+				       channel, memif->data->ch_num_shift);
+	}
+
+	/* save channel value for cm get*/
+	g_channel = channel;
 
 	return mtk_regmap_update_bits(afe->regmap, memif->data->mono_reg,
 				      1, mono, memif->data->mono_shift);

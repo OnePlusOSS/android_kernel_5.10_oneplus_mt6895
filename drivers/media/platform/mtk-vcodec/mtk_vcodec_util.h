@@ -13,9 +13,11 @@
 #include <linux/dma-direction.h>
 #include <linux/mtk_vcu_controls.h>
 #include "vcodec_ipi_msg.h"
-#if IS_ENABLED(CONFIG_MTK_TINYSYS_VCP_SUPPORT)
+// include vcp header to make build pass even if CONFIG_MTK_TINYSYS_VCP_SUPPORT is off
+// dynamic to switch vcp or vcu path by "mtk_vcodec_vcp"
+//#if IS_ENABLED(CONFIG_MTK_TINYSYS_VCP_SUPPORT)
 #include "vcp_helper.h"
-#endif
+//#endif
 #if IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCU)
 #include "mtk_vcu.h"
 #endif
@@ -120,12 +122,12 @@ extern int mtk_vdec_sw_mem_sec;
 #define mtk_v4l2_debug(level, fmt, args...)                              \
 	do {                                                             \
 		if (((mtk_v4l2_dbg_level) & (level)) == (level))           \
-			pr_info("[MTK_V4L2] level=%d %s(),%d: " fmt "\n",\
+			pr_notice("[MTK_V4L2] level=%d %s(),%d: " fmt "\n",\
 				level, __func__, __LINE__, ##args);      \
 	} while (0)
 
 #define mtk_v4l2_err(fmt, args...)                \
-	pr_info("[MTK_V4L2][ERROR] %s:%d: " fmt "\n", __func__, __LINE__, \
+	pr_notice("[MTK_V4L2][ERROR] %s:%d: " fmt "\n", __func__, __LINE__, \
 		   ##args)
 
 
@@ -135,7 +137,7 @@ extern int mtk_vdec_sw_mem_sec;
 #define mtk_vcodec_debug(h, fmt, args...)                               \
 	do {                                                            \
 		if (mtk_vcodec_dbg)                                  \
-			pr_info("[MTK_VCODEC][%d]: %s() " fmt "\n",     \
+			pr_notice("[MTK_VCODEC][%d]: %s() " fmt "\n",     \
 				((struct mtk_vcodec_ctx *)h->ctx)->id,  \
 				__func__, ##args);                      \
 	} while (0)
@@ -148,7 +150,7 @@ extern int mtk_vdec_sw_mem_sec;
 
 
 #define mtk_vcodec_err(h, fmt, args...)                                 \
-	pr_info("[MTK_VCODEC][ERROR][%d]: %s() " fmt "\n",               \
+	pr_notice("[MTK_VCODEC][ERROR][%d]: %s() " fmt "\n",               \
 		   ((struct mtk_vcodec_ctx *)h->ctx)->id, __func__, ##args)
 
 #define mtk_vcodec_debug_enter(h)  mtk_vcodec_debug(h, "+")
@@ -168,20 +170,20 @@ extern int mtk_vdec_sw_mem_sec;
 
 #endif
 
-#ifdef CONFIG_MTK_AEE_FEATURE
+#if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
 #define v4l2_aee_print(string, args...) do {\
 	char vcu_name[100];\
 	int ret;\
 	ret = snprintf(vcu_name, 100, "[MTK_V4L2] "string, ##args); \
 	if (ret > 0)\
+		pr_notice("[MTK_V4L2] error:"string, ##args);  \
 		aee_kernel_warning_api(__FILE__, __LINE__, \
 			DB_OPT_MMPROFILE_BUFFER | DB_OPT_NE_JBT_TRACES, \
 			vcu_name, "[MTK_V4L2] error:"string, ##args); \
-	pr_info("[MTK_V4L2] error:"string, ##args);  \
 	} while (0)
 #else
 #define v4l2_aee_print(string, args...) \
-		pr_info("[MTK_V4L2] error:"string, ##args)
+		pr_notice("[MTK_V4L2] error:"string, ##args)
 
 #endif
 
@@ -253,7 +255,7 @@ void mtk_vcodec_del_ctx_list(struct mtk_vcodec_ctx *ctx);
 struct vdec_fb *mtk_vcodec_get_fb(struct mtk_vcodec_ctx *ctx);
 int mtk_vdec_put_fb(struct mtk_vcodec_ctx *ctx, enum mtk_put_buffer_type type, bool no_need_put);
 void mtk_enc_put_buf(struct mtk_vcodec_ctx *ctx);
-void v4l2_m2m_buf_queue_check(struct v4l2_m2m_ctx *m2m_ctx,
+int v4l2_m2m_buf_queue_check(struct v4l2_m2m_ctx *m2m_ctx,
 		void *vbuf);
 int mtk_dma_sync_sg_range(const struct sg_table *sgt,
 	struct device *dev, unsigned int size,
@@ -269,5 +271,7 @@ int mtk_vcodec_free_mem(struct vcodec_mem_obj *mem, struct device *dev,
 
 void mtk_vcodec_set_log(struct mtk_vcodec_dev *dev, const char *val,
 	enum mtk_vcodec_log_index log_index);
+
+long long div_64(long long a, long long b);
 
 #endif /* _MTK_VCODEC_UTIL_H_ */

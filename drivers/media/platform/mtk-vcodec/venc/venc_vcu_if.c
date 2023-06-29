@@ -13,6 +13,8 @@
 #include "mtk_vcodec_intr.h"
 #include "mtk_vcodec_enc_pm.h"
 #include "mtk_vcodec_enc.h"
+#include "mtk_heap.h"
+
 
 static void handle_enc_init_msg(struct venc_vcu_inst *vcu, void *data)
 {
@@ -113,6 +115,7 @@ int vcu_enc_ipi_handler(void *data, unsigned int len, void *priv)
 	struct venc_vcu_inst *vcu;
 	struct mtk_vcodec_ctx *ctx;
 	int ret = 0;
+	unsigned int core_id;
 	unsigned long flags;
 	struct task_struct *task = NULL;
 
@@ -186,12 +189,13 @@ int vcu_enc_ipi_handler(void *data, unsigned int len, void *priv)
 		handle_query_cap_ack_msg(data);
 		break;
 	case VCU_IPIMSG_ENC_WAIT_ISR:
-		if (msg->status == MTK_VENC_CORE_0)
+		core_id = msg->status;
+		if (core_id == MTK_VENC_CORE_0)
 			vcodec_trace_count("VENC_HW_CORE_0", 2);
 		else
 			vcodec_trace_count("VENC_HW_CORE_1", 2);
 
-		if (-1 == mtk_vcodec_wait_for_done_ctx(ctx, msg->status,
+		if (-1 == mtk_vcodec_wait_for_done_ctx(ctx, core_id,
 			MTK_INST_IRQ_RECEIVED,
 			WAIT_INTR_TIMEOUT_MS)) {
 			handle_enc_waitisr_msg(vcu, data, 1);
@@ -200,7 +204,7 @@ int vcu_enc_ipi_handler(void *data, unsigned int len, void *priv)
 		} else
 			handle_enc_waitisr_msg(vcu, data, 0);
 
-		if (msg->status == MTK_VENC_CORE_0)
+		if (core_id == MTK_VENC_CORE_0)
 			vcodec_trace_count("VENC_HW_CORE_0", 1);
 		else
 			vcodec_trace_count("VENC_HW_CORE_1", 1);
@@ -624,6 +628,13 @@ int vcu_enc_encode(struct venc_vcu_inst *vcu, unsigned int bs_mode,
 		out.bs_addr = bs_buf->dma_addr;
 		vsi->venc.bs_dma = bs_buf->dma_addr;
 		out.bs_size = bs_buf->size;
+
+		if (vsi->config.svp_mode) {
+			out.sec_mem_handle = dmabuf_to_secure_handle(bs_buf->dmabuf);
+			pr_info("%s %d out.sec_mem_handle 0x%x", __func__,
+				 __LINE__, out.sec_mem_handle);
+		}
+
 		mtk_vcodec_debug(vcu, " output (dma:%lx)",
 			(unsigned long)bs_buf->dmabuf);
 	}

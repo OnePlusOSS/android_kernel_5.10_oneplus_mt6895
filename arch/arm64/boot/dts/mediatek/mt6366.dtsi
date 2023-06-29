@@ -15,14 +15,47 @@
 			compatible = "mediatek,mt63xx-debug";
 		};
 
-		pmic_efuse: mt6366-efuse {
-			compatible = "mediatek,mt6366-efuse";
+		mt63xx-oc-debug {
+			compatible = "mediatek,mt63xx-oc-debug";
+		};
+
+		pmic_efuse: mt6358-efuse {
+			compatible = "mediatek,mt6358-efuse";
 			#address-cells = <1>;
 			#size-cells = <1>;
+			mt6366_thermal_efuse: mt6366_e_data {
+				reg = <0x40 12>;
+			};
+		};
+
+		accdet: accdet {
+			compatible = "mediatek,mt6358-accdet";
+			accdet-name = "mt6358-accdet";
+			/* accdet micbias voltage: 0x07,2.7v;0x05,2.5v;0x02,1.9v */
+			accdet-mic-vol = <6>;
+			headset-mode-setting = <0x500 0x500 1 0x1f0 0x800 0x800 0x20 0x44>,
+						< 0x0 0x0 0xe 0x0 0x0 0x0 0x0 0x0>;
+			accdet-plugout-debounce = <1>;
+			/*1:ACC mode, 2:low cost without in bias, 6:low cost with in bias*/
+			accdet-mic-mode = <1>;
+			/* eint_level_trigger: 8,LEVEL_LOW(DEF) ;4,LV_HIGH;others,LV_LOW */
+			headset-eint-level-pol = <8>;
+			/*0--MD_MAX--UP_MAX--DW_MAX*/
+			headset-three-key-threshold = <0 80 220 400>;
+			headset-three-key-threshold-CDD = <0 121 192 600>;
+			/*0--MD_MAX--VOICE_MAX--UP_MAX--DW_MAX*/
+			headset-four-key-threshold = <0 58 121 192 400>;
+			io-channels = <&pmic_auxadc AUXADC_ACCDET>;
+			io-channel-names = "pmic_accdet";
+			nvmem = <&pmic_efuse>;
+			nvmem-names = "mt63xx-accdet-efuse";
+			mediatek,accdet-pmic = <0x66>;
+			status = "okay";
 		};
 
 		pmic_auxadc: mt635x-auxadc {
-			compatible = "mediatek,mt6358-auxadc";
+			compatible = "mediatek,pmic-auxadc",
+				     "mediatek,mt6358-auxadc";
 			#io-channel-cells = <1>;
 			/* efuse offset from mt6358 */
 			cali-efuse-offset = <1>;
@@ -78,12 +111,25 @@
 			};
 			imp {
 				channel = <AUXADC_IMP>;
-				resistance-ratio = <7 2>;
+				resistance-ratio = <3 1>;
 				avg-num = <128>;
 			};
 			imix_r {
 				channel = <AUXADC_IMIX_R>;
 				val = <90>;
+			};
+		};
+
+		mt6366keys: mt6366keys {
+			compatible = "mediatek,mt6366-keys";
+			mediatek,long-press-mode = <2>;
+			power-off-time-sec = <1>;
+			power {
+				linux,keycodes = <116>;
+				wakeup-source;
+			};
+			home {
+				linux,keycodes = <115>;
 			};
 		};
 
@@ -267,6 +313,14 @@
 				regulator-always-on;
 			};
 
+			mt6358_vsram_core_reg: ldo_vsram_core {
+				regulator-name = "vsram_core";
+				regulator-min-microvolt = <500000>;
+				regulator-max-microvolt = <1293750>;
+				regulator-enable-ramp-delay = <240>;
+				regulator-always-on;
+			};
+
 			mt6358_vsram_gpu_reg: ldo_vsram_gpu {
 				regulator-name = "vsram_gpu";
 				regulator-min-microvolt = <500000>;
@@ -401,6 +455,7 @@
 				regulator-min-microvolt = <2800000>;
 				regulator-max-microvolt = <2800000>;
 				regulator-enable-ramp-delay = <270>;
+				regulator-always-on;
 			};
 
 			mt6358_vsim2_reg: ldo_vsim2 {
@@ -409,6 +464,57 @@
 				regulator-max-microvolt = <3100000>;
 				regulator-enable-ramp-delay = <540>;
 			};
+
+			mt6358_vcore_sshub_reg: buck_vcore_sshub {
+				regulator-name = "vcore_sshub";
+				regulator-min-microvolt = <500000>;
+				regulator-max-microvolt = <1293750>;
+			};
+
+			mt6358_vsram_others_sshub_reg: ldo_vsram_others_sshub {
+				regulator-name = "vsram_others_sshub";
+				regulator-min-microvolt = <500000>;
+				regulator-max-microvolt = <1293750>;
+			};
+
+			mt6358_va09_reg: ldo_va09 {
+				regulator-name = "va09";
+				compatible = "regulator-fixed";
+				regulator-min-microvolt = <900000>;
+				regulator-max-microvolt = <900000>;
+				regulator-enable-ramp-delay = <264>;
+				/*by platform setting: regulator-boot-on;*/
+			};
+
+			mt6358_vmch_eint_high: VMCH_EINT_HIGH {
+				regulator-name = "mt6358_vmch_eint_high";
+				regulator-min-microvolt = <2900000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-enable-ramp-delay = <60>;
+			};
+
+			mt6358_vmch_eint_low: VMCH_EINT_LOW {
+				regulator-name = "mt6358_vmch_eint_low";
+				regulator-min-microvolt = <2900000>;
+				regulator-max-microvolt = <3300000>;
+				regulator-enable-ramp-delay = <60>;
+			};
+		};
+
+		mt6366_clock_buffer: mt6366_clock_buffer {
+			compatible = "mediatek,clock_buffer";
+			mediatek,xo-mode-num = <4>;
+			mediatek,xo-buf-support = <1 1 1 1 0 0 1>;
+			mediatek,xo-buf-allow-control = <0 1 1 1 0 0 1>;
+			mediatek,xo-buf-name = "XO_SOC", "XO_WCN", "XO_NFC",
+						"XO_CEL", "RSV1", "RSV2",
+						"XO_EXT";
+			mediatek,dcxo-drv-curr-support;
+			mediatek,clkbuf-pmic-central-base;
+
+			mediatek,enable;
+
+			clkbuf_ctl = <&clock_buffer_ctrl>;
 		};
 
 		mt6358_dynamic_loading_throttling: mtk_dynamic_loading_throttling {
@@ -423,16 +529,57 @@
 			io-channel-names = "pmic_ptim",
 					   "pmic_imix_r",
 					   "pmic_batadc";
-			status = "disabled";
 		};
 
 		mt6358_lbat: pmic_lbat_service {
 			compatible = "mediatek,mt6358-lbat_service";
-			status = "disabled";
 		};
 
 		mt6358codec: mt6358codec {
 			compatible = "mediatek,mt6366-sound";
+			mediatek,dmic-mode = <0>;
+			mediatek,mic-type = <1>;
+			io-channels = <&pmic_auxadc AUXADC_HPOFS_CAL>;
+			io-channel-names = "pmic_hpofs_cal";
+			nvmem = <&pmic_efuse>;
+			nvmem-names = "pmic-hp-efuse";
+			reg_vaud28-supply = <&mt6358_vaud28_reg>;
 		};
+
+		mt6358rtc: mt6358rtc {
+			compatible = "mediatek,mt6358-rtc";
+
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			fg_init: fg_init {
+				reg = <0 0x1>;
+			};
+			fg_soc: fg_soc {
+				reg = <1 0x1>;
+			};
+			ext_32k: ext_32k {
+				reg = <2 0x1>;
+				bits = <6 1>;
+			};
+		};
+
+		mtk_gauge: mtk_gauge {
+			compatible = "mediatek,mt6358-gauge";
+			bootmode = <&chosen>;
+			io-channels = <&pmic_auxadc AUXADC_BAT_TEMP>,
+					<&pmic_auxadc AUXADC_BATADC>,
+					<&pmic_auxadc AUXADC_VBIF>,
+					<&pmic_auxadc AUXADC_IMP>,
+					<&pmic_auxadc AUXADC_IMIX_R>;
+			io-channel-names = "pmic_battery_temp",
+					"pmic_battery_voltage",
+					"pmic_bif_voltage",
+					"pmic_ptim_voltage",
+					"pmic_ptim_r";
+			nvmem-cells = <&fg_init>, <&fg_soc>;
+			nvmem-cell-names = "initialization", "state-of-charge";
+		};
+
 	};
 };

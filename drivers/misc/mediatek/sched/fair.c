@@ -10,8 +10,20 @@
 #include "common.h"
 #include <linux/stop_machine.h>
 #include <linux/kthread.h>
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_fair.h>
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+#include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_THERMAL_INTERFACE)
 #include <thermal_interface.h>
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_audio.h>
 #endif
 
 #define CREATE_TRACE_POINTS
@@ -303,9 +315,11 @@ mtk_compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 		trace_sched_energy_util(dst_cpu, max_util_cur, sum_util_cur, cpu, util_cfs_cur,
 				util_cfs_energy_cur, cpu_util_cur);
 
+#if IS_ENABLED(CONFIG_MTK_THERMAL_INTERFACE)
 		/* get temperature for each cpu*/
 		cpu_temp[cpu] = get_cpu_temp(cpu);
 		cpu_temp[cpu] /= 1000;
+#endif
 	}
 
 	energy_base = mtk_em_cpu_energy(pd->em_pd, max_util_base, sum_util_base, cpu_temp);
@@ -396,8 +410,15 @@ void mtk_find_energy_efficient_cpu(void *data, struct task_struct *p, int prev_c
 	rcu_read_lock();
 	if (!uclamp_min_ls)
 		latency_sensitive = uclamp_latency_sensitive(p);
-	else
-		latency_sensitive = p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0;
+	else {
+		latency_sensitive = (p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0) ||
+					uclamp_latency_sensitive(p);
+	}
+
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+	oplus_sched_assist_audio_latency_sensitive(p, &latency_sensitive);
+#endif
+
 
 	pd = rcu_dereference(rd->pd);
 	if (!pd || READ_ONCE(rd->overutilized)) {
@@ -447,6 +468,14 @@ void mtk_find_energy_efficient_cpu(void *data, struct task_struct *p, int prev_c
 #endif
 
 			if (!cpumask_test_cpu(cpu, p->cpus_ptr))
+				continue;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+			if (should_ux_task_skip_cpu(p, cpu))
+				continue;
+#endif
+
+			if (cpu_rq(cpu)->rt.rt_nr_running >= 1)
 				continue;
 
 			util = cpu_util_next(cpu, p, cpu);
@@ -576,6 +605,16 @@ fail:
 
 	*new_cpu = -1;
 done:
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	if (set_frame_group_task_to_perfer_cpu(p, new_cpu))
+		select_reason = LB_FBT_PREFER;
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (set_ux_task_to_prefer_cpu(p, new_cpu)) {
+		select_reason = LB_UX_PREFER;
+	}
+#endif
 	trace_sched_find_energy_efficient_cpu(best_delta, best_energy_cpu,
 			best_idle_cpu, idle_max_spare_cap_cpu, sys_max_spare_cap_cpu);
 	trace_sched_select_task_rq(p, select_reason, prev_cpu, *new_cpu,
@@ -609,12 +648,27 @@ static struct task_struct *detach_a_hint_task(struct rq *src_rq, int dst_cpu)
 		if (task_running(src_rq, p))
 			continue;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+		if (should_ux_task_skip_cpu(p, dst_cpu))
+			continue;
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+		if (fbg_skip_migration(p, cpu_of(src_rq), dst_cpu))
+			continue;
+#endif
 		task_util = uclamp_task_util(p);
 
 		if (!uclamp_min_ls)
 			latency_sensitive = uclamp_latency_sensitive(p);
-		else
-			latency_sensitive = p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0;
+		else {
+			latency_sensitive = (p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0) ||
+						uclamp_latency_sensitive(p);
+		}
+
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+		oplus_sched_assist_audio_latency_sensitive(p, &latency_sensitive);
+#endif
 
 		if (latency_sensitive &&
 			task_util <= dst_capacity) {
@@ -642,8 +696,10 @@ inline bool is_task_latency_sensitive(struct task_struct *p)
 	rcu_read_lock();
 	if (!uclamp_min_ls)
 		latency_sensitive = uclamp_latency_sensitive(p);
-	else
-		latency_sensitive = p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0;
+	else {
+		latency_sensitive = (p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0) ||
+					uclamp_latency_sensitive(p);
+	}
 	rcu_read_unlock();
 
 	return latency_sensitive;
@@ -775,9 +831,14 @@ void mtk_sched_newidle_balance(void *data, struct rq *this_rq, struct rq_flags *
 	 * re-start the picking loop.
 	 */
 	rq_unpin_lock(this_rq, rf);
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+	if (oplus_sched_assist_audio_idle_balance(this_rq))
+		goto audio_pulled;
+#endif
 	raw_spin_unlock(&this_rq->lock);
 
 	this_cpu = this_rq->cpu;
+	rcu_read_lock();
 	for_each_cpu(cpu, cpu_active_mask) {
 		if (cpu == this_cpu)
 			continue;
@@ -829,7 +890,11 @@ void mtk_sched_newidle_balance(void *data, struct rq *this_rq, struct rq_flags *
 					misfit_task_rq, MIGR_IDLE_PULL_MISFIT_RUNNING);
 	if (best_running_task)
 		put_task_struct(best_running_task);
+	rcu_read_unlock();
 	raw_spin_lock(&this_rq->lock);
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+audio_pulled:
+#endif
 	/*
 	 * While browsing the domains, we released the rq lock, a task could
 	 * have been enqueued in the meantime. Since we're not going idle,

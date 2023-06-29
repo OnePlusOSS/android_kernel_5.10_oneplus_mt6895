@@ -82,7 +82,9 @@ ccci_md_all-$(CCCI_OBJ) += fsm/ccci_fsm.o \
 			fsm/mdee_dumper_v1.o \
 			fsm/mdee_dumper_v2.o \
 			fsm/mdee_dumper_v3.o \
-			fsm/mdee_dumper_v5.o
+			fsm/mdee_dumper_v5.o \
+			fsm/oplus_criticallog.o \
+			fsm/criticallog_class.o
 # fsm end
 
 # plat start
@@ -140,6 +142,7 @@ obj-$(CCCI_OBJ) += ccci_ccif.o
 ccci_dpmaif-y := hif/ccci_hif_dpmaif.o hif/dpmaif_drv.o \
 	hif/ccci_hif_dpmaif_comm.o hif/ccci_hif_dpmaif_v3.o hif/dpmaif_drv_v3.o \
 	hif/dpmaif_bat.o hif/dpmaif_bat_v3.o hif/dpmaif_debug.o hif/net_speed.o \
+	hif/ccci_hif_dpmaif_v1.o hif/dpmaif_drv_v1.o \
 	hif/net_pool.o hif/md_spd_dvfs_fn.o hif/md_spd_dvfs_method.o
 
 obj-$(CCCI_OBJ) += ccci_dpmaif.o

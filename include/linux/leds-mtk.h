@@ -13,7 +13,9 @@ enum mtk_leds_events {
 
 struct led_conf_info {
 	int max_hw_brightness;
+	int min_hw_brightness;
 	int limit_hw_brightness;
+	int min_brightness;
 	unsigned int aal_enable;
 	struct led_classdev cdev;
 	int flags;
@@ -23,6 +25,7 @@ struct led_conf_info {
 #ifdef CONFIG_LEDS_MT_BRIGHTNESS_HW_CHANGED
 	int brightness_hw_changed;
 	struct kernfs_node	*brightness_hw_changed_kn;
+    int connector_id;
 #endif
 	};
 

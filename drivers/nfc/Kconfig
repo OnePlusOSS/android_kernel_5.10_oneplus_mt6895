@@ -60,3 +60,9 @@ source "drivers/nfc/nxp-nci/Kconfig"
 source "drivers/nfc/s3fwrn5/Kconfig"
 source "drivers/nfc/st95hf/Kconfig"
 endmenu
+
+source "drivers/nfc/pn553-i2c/Kconfig"
+source "drivers/nfc/p73-spi/Kconfig"
+source "drivers/nfc/oplus_nfc/Kconfig"
+source "drivers/nfc/nq330-i2c/Kconfig"
+

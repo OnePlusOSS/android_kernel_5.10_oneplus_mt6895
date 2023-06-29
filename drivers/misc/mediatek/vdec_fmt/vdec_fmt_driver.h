@@ -163,16 +163,17 @@ struct mtk_vdec_fmt {
 	struct cmdq_base *clt_base;
 	struct cmdq_client *clt_fmt[FMT_CORE_NUM];
 	struct cmdq_client *clt_fmt_sec[FMT_CORE_NUM];
-	int gce_th_num;
+	u32 gce_th_num;
 	u16 gce_codec_eid[GCE_EVENT_MAX];
 	struct gce_cmds *gce_cmds[FMT_CORE_NUM];
 	struct map_hw_reg map_base[FMT_MAP_HW_REG_NUM];
 	u32 gce_gpr[FMT_CORE_NUM];
 	bool is_entering_suspend;
 	struct mutex mux_fmt;
-	struct mutex mux_gce_th[FMT_CORE_NUM];
+	struct mutex *mux_gce_th[FMT_CORE_NUM];
 	struct mutex mux_task;
 	struct gce_cmdq_task gce_task[FMT_INST_MAX];
+	atomic_t gce_task_wait_cnt[FMT_INST_MAX];
 	struct semaphore fmt_sem[FMT_CORE_NUM];
 	struct notifier_block pm_notifier;
 	struct clk *clk_VDEC;
@@ -187,6 +188,10 @@ struct mtk_vdec_fmt {
 	struct dts_info dtsInfo;
 	int fmt_m4u_ports[FMT_PORT_NUM];
 	atomic_t fmt_error;
+	struct mutex mux_active_time;
+	struct timespec64 fmt_active_time;
+	struct workqueue_struct *cmdq_cb_workqueue;
+	struct work_struct cmdq_cb_work;
 };
 
 #define FMT_GCE_SET_CMD_FLUSH _IOW('f', 0, struct gce_cmdq_obj)

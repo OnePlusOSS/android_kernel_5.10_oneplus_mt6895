@@ -31,6 +31,10 @@
 
 #include "mdp_rdma_ex.h"
 
+#ifdef CMDQ_SECURE_PATH_SUPPORT
+#include "mtk_heap.h"
+#endif
+
 #define MDP_TASK_PAENDING_TIME_MAX	100000000
 
 #define RDMA_CPR_PREBUILT(mod, pipe, index) \
@@ -228,19 +232,19 @@ static bool mdp_ion_get_dma_buf(struct device *dev, int fd,
 
 	buf = dma_buf_get(fd);
 	if (IS_ERR(buf)) {
-		CMDQ_ERR("ion buf get fail %d\n", PTR_ERR(buf));
+		CMDQ_ERR("ion buf get fail %ld\n", PTR_ERR(buf));
 		goto err;
 	}
 
 	attach = dma_buf_attach(buf, dev);
 	if (IS_ERR(attach)) {
-		CMDQ_ERR("ion buf attach fail %d", PTR_ERR(attach));
+		CMDQ_ERR("ion buf attach fail %ld", PTR_ERR(attach));
 		goto err_attach;
 	}
 
 	sgt =  dma_buf_map_attachment(attach, DMA_BIDIRECTIONAL);
 	if (IS_ERR(sgt)) {
-		CMDQ_ERR("ion buf map fail %d", PTR_ERR(sgt));
+		CMDQ_ERR("ion buf map fail %ld", PTR_ERR(sgt));
 		goto err_map;
 	}
 
@@ -342,16 +346,36 @@ static s32 translate_meta(struct op_meta *meta,
 
 		/* check platform support LSB/MSB or not */
 		if (gMdpRegMSBSupport) {
+
 			reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
+			if (reg_addr) {
+				status = cmdq_op_write_reg_ex(
+					handle, cmd_buf, reg_addr, mva & U32_MAX, ~0);
+			} else {
+				CMDQ_ERR("%s: op:%u, get reg_addr fail, eng:%d, offset 0x%x\n",
+					__func__, meta->op, meta->engine, meta->offset);
+				return -EINVAL;
+			}
+
 			reg_addr_msb = cmdq_mdp_get_hw_reg_msb(meta->engine, meta->offset);
-
-			status = cmdq_op_write_reg_ex(handle, cmd_buf, reg_addr, mva & U32_MAX, ~0);
-			status = cmdq_op_write_reg_ex(handle, cmd_buf, reg_addr_msb, mva >> 32, ~0);
-
+			if (reg_addr_msb) {
+				status = cmdq_op_write_reg_ex(
+					handle, cmd_buf, reg_addr_msb, DO_SHIFT_RIGHT(mva, 32), ~0);
+			} else {
+				CMDQ_ERR("%s: op:%u, get reg_addr_msb fail, eng:%d, offset 0x%x\n",
+					__func__, meta->op, meta->engine, meta->offset);
+				return -EINVAL;
+			}
 		} else {
 			reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
-
-			status = cmdq_op_write_reg_ex(handle, cmd_buf, reg_addr, mva, ~0);
+			if (reg_addr) {
+				status = cmdq_op_write_reg_ex(
+					handle, cmd_buf, reg_addr, mva, ~0);
+			} else {
+				CMDQ_ERR("%s: op:%u, get reg_addr fail, eng:%d, offset 0x%x\n",
+					__func__, meta->op, meta->engine, meta->offset);
+				return -EINVAL;
+			}
 		}
 
 		break;
@@ -390,7 +414,7 @@ static s32 translate_meta(struct op_meta *meta,
 
 			/* check platform support LSB/MSB or not */
 			if (gMdpRegMSBSupport) {
-				src_base_msb = mva >> 32;
+				src_base_msb = DO_SHIFT_RIGHT(mva, 32);
 				src_base_lsb = mva & U32_MAX;
 			} else {
 				src_base_msb = 0;
@@ -480,6 +504,12 @@ static s32 translate_meta(struct op_meta *meta,
 			if (!dram_addr)
 				return -EINVAL;
 
+#if defined(CMDQ_SECURE_PATH_SUPPORT)
+			if (handle->secData.is_secure) {
+				cmdq_op_set_event(handle, mdp_get_rb_event_lock());
+				cmdq_op_wait(handle, mdp_get_rb_event_unlock());
+			}
+#endif
 			/* flush first since readback add commands to pkt */
 			cmdq_handle_flush_cmd_buf(handle, cmd_buf);
 
@@ -562,6 +592,35 @@ static s32 translate_meta(struct op_meta *meta,
 	}
 	case CMDQ_MOP_NOP:
 		break;
+#ifdef CMDQ_SECURE_PATH_SUPPORT
+	case CMDQ_MOP_WRITE_SEC_FD:
+	{
+		struct dma_buf *buf;
+
+		/* secure fd -> secure handle */
+		buf = dma_buf_get(meta->fd);
+		meta->sec_handle = dmabuf_to_secure_handle(buf);
+		CMDQ_MSG("CMDQ_MOP_WRITE_SEC_FD: translate fd %d to sec_handle %d\n",
+			meta->fd, meta->sec_handle);
+		dma_buf_put(buf);
+
+		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
+		if (!reg_addr)
+			return -EINVAL;
+		status = cmdq_op_write_reg_ex(handle, cmd_buf, reg_addr,
+					meta->sec_handle, ~0);
+
+		/* use total buffer size count in translation */
+		if (!status) {
+			/* flush to make sure count is correct */
+			cmdq_handle_flush_cmd_buf(handle, cmd_buf);
+			status = cmdq_mdp_update_sec_addr_index(handle,
+				meta->sec_handle, meta->sec_index,
+				cmdq_mdp_handle_get_instr_count(handle) - 1);
+		}
+		break;
+	}
+#endif
 	default:
 		CMDQ_ERR("invalid meta op:%u\n", meta->op);
 		status = -EINVAL;
@@ -790,6 +849,12 @@ s32 mdp_ioctl_async_exec(struct file *pf, unsigned long param)
 		goto done;
 	}
 
+#if IS_ENABLED(CONFIG_MTK_CMDQ_MBOX_EXT)
+	/* add perf begin for this handle->pkt while non-secure case */
+	if (!handle->secData.is_secure)
+		cmdq_pkt_perf_begin(handle->pkt);
+#endif
+
 	/* Make command from user job */
 	CMDQ_TRACE_FORCE_BEGIN("mdp_translate_user_job\n");
 	trans_cost = sched_clock();
@@ -988,8 +1053,7 @@ static s32 mdp_get_free_slots(u32 *rb_slot_index)
 	u32 free_slot, free_slot_group;
 
 	mutex_lock(&rb_slot_list_mutex);
-
-	CMDQ_MSG("%s: start, rb_slot_vcp[0]:0x%x, rb_slot_vcp[1]:0x%x\n",
+	CMDQ_MSG("%s: start, rb_slot_vcp[0]:0x%llx, rb_slot_vcp[1]:0x%llx\n",
 		__func__, rb_slot_vcp[0], rb_slot_vcp[1]);
 
 	if (rb_slot_vcp[0] != ULLONG_MAX) {
@@ -1403,7 +1467,7 @@ void mdp_ioctl_free_job_by_node(void *node)
 
 void mdp_ioctl_free_readback_slots_by_node(void *fp)
 {
-	u32 i, free_slot_group, free_slot;
+	u32 i, free_slot_group = 0, free_slot = 0;
 	dma_addr_t paStart = 0;
 	u32 count = 0;
 

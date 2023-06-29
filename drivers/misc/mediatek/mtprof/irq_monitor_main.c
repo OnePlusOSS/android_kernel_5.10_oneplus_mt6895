@@ -50,15 +50,6 @@ static inline void irq_mon_msg_ftrace(const char *msg)
 #define pr_aee_sram(msg) do {} while (0)
 #endif
 
-#if IS_ENABLED(CONFIG_MTK_IRQ_MONITOR_DEBUG)
-#include <linux/hrtimer.h>
-#define HRTIMER_HIS_ARRAY_SIZE (50)
-#define HRTIMER_HIS_RECORD_CNT (400)
-struct arch_timer_caller_history_struct
-	hrtimer_history[HRTIMER_HIS_ARRAY_SIZE];
-static uint64_t hrtimer_count;
-static DEFINE_SPINLOCK(hrtimer_lock);
-#endif
 
 void irq_mon_msg(unsigned int out, char *buf, ...)
 {
@@ -379,6 +370,9 @@ static void probe_irq_handler_exit(void *ignore,
 			/* skip mtk_syst_handler, let hrtimer handle it. */
 			irq_aee_state[irq] = 1;
 
+		if (!irq_name)
+			irq_name = "NULL";
+
 		if (!strcmp(irq_name, "IPI") && irq_to_ipi_type(irq) == 4) // IPI_TIMER
 			/* skip ipi timer handler, let hrtimer handle it. */
 			irq_aee_state[irq] = 1;
@@ -594,31 +588,12 @@ static void probe_preempt_enable(void *ignore,
 	this_cpu_write(preempt_pi_stat->tracing, 0);
 }
 
-#if IS_ENABLED(CONFIG_MTK_IRQ_MONITOR_DEBUG)
-void dump_hrtimer_burst_history(void)
-{
-	int i;
-	unsigned long flags = 0;
-
-	spin_lock_irqsave(&hrtimer_lock, flags);
-	for (i = 0; i < HRTIMER_HIS_ARRAY_SIZE; i++)
-		pr_info("hrtimer_history[%d].caller %pS, call time: %lld",
-			i, hrtimer_history[i].timer_caller_ip,
-			hrtimer_history[i].timer_called);
-	spin_unlock_irqrestore(&hrtimer_lock, flags);
-}
-EXPORT_SYMBOL(dump_hrtimer_burst_history);
-#endif
 
 static void probe_hrtimer_expire_entry(void *ignore,
 		struct hrtimer *hrtimer, ktime_t *now)
 {
 	unsigned long long ts;
 	struct irq_mon_tracer *tracer = &hrtimer_expire_tracer;
-#if IS_ENABLED(CONFIG_MTK_IRQ_MONITOR_DEBUG)
-	u64 temp_count = 0;
-	unsigned long flags = 0;
-#endif
 
 	if (!tracer->tracing)
 		return;
@@ -629,16 +604,7 @@ static void probe_hrtimer_expire_entry(void *ignore,
 	this_cpu_write(hrtimer_trace_stat->start_timestamp, ts);
 	this_cpu_write(hrtimer_trace_stat->end_timestamp, 0);
 
-#if IS_ENABLED(CONFIG_MTK_IRQ_MONITOR_DEBUG)
-	spin_lock_irqsave(&hrtimer_lock, flags);
-	hrtimer_count++;
-	if ((hrtimer_count % HRTIMER_HIS_RECORD_CNT) == 0)
-		temp_count = hrtimer_count / HRTIMER_HIS_RECORD_CNT;
-	temp_count = temp_count % HRTIMER_HIS_ARRAY_SIZE;
-	hrtimer_history[temp_count].timer_caller_ip = (unsigned long)hrtimer->function;
-	hrtimer_history[temp_count].timer_called = ts;
-	spin_unlock_irqrestore(&hrtimer_lock, flags);
-#endif
+
 }
 
 /* ignore irq_count_tracer_fn hrtimer long */
@@ -1001,6 +967,8 @@ static ssize_t irq_mon_door_write(struct file *filp, const char *ubuf,
 {
 	char buf[16];
 
+	if (!count)
+		return count;
 	count = min(count, sizeof(buf) - 1);
 	if (copy_from_user(&buf, ubuf, count))
 		return -EFAULT;

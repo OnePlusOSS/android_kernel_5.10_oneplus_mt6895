@@ -48,6 +48,7 @@ struct sensor_mode {
 	u64 linetime_in_ns_readout;
 	u64 fine_intg_line;
 	struct mtk_csi_param csi_param;
+	u8 esd_reset_by_user;
 };
 
 struct adaptor_hw_ops {
@@ -112,6 +113,7 @@ struct adaptor_ctx {
 	MSDK_SENSOR_CONFIG_STRUCT sensor_cfg;
 	int fmt_code;
 	int idx; /* requireed by frame-sync modules */
+	int forbid_idx; /* idx with which is forbidden to open in sametime */
 	struct mtk_hdr_ae ae_memento;
 
 	u32 seamless_scenarios[SENSOR_SCENARIO_ID_MAX];
@@ -128,6 +130,7 @@ struct adaptor_ctx {
 	unsigned int is_streaming:1;
 	unsigned int is_sensor_inited:1;
 	unsigned int is_sensor_scenario_inited:1;
+	unsigned int is_sensor_reset_stream_off:1;
 
 	int open_refcnt;
 	int power_refcnt;
@@ -137,6 +140,15 @@ struct adaptor_ctx {
 	unsigned int *sensor_debug_flag;
 	u32 shutter_for_timeout;
 	struct wakeup_source *sensor_ws;
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	unsigned int support_explorer_aon_fl;//1:use explorer AON driver
+	int aon_irq_gpio;
+	int pid;
+	int irq_cnt;
+	struct work_struct aon_wq;
+	#endif
+
 };
 
 #endif

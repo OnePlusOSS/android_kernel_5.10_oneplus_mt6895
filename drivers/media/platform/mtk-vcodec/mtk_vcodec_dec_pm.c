@@ -17,7 +17,7 @@
 #include "mtk_vcodec_util.h"
 #include "mtk_vcu.h"
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 #include <mach/mt_iommu.h>
 #include "mach/pseudo_m4u.h"
 #include "smi_port.h"
@@ -27,9 +27,14 @@
 #include "iommu_debug.h"
 #endif
 
+#if IS_ENABLED(CONFIG_MTK_TINYSYS_VCP_SUPPORT)
+extern void vdec_dump_mem_buf(unsigned long h_vdec);
+#endif
+
 void mtk_dec_init_ctx_pm(struct mtk_vcodec_ctx *ctx)
 {
 	ctx->input_driven = 0;
+	ctx->user_lock_hw = 1;
 }
 
 int mtk_vcodec_init_dec_pm(struct mtk_vcodec_dev *mtkdev)
@@ -57,6 +62,11 @@ int mtk_vcodec_init_dec_pm(struct mtk_vcodec_dev *mtkdev)
 	}
 
 	// parse "mediatek,larbs"
+	node = of_parse_phandle(pdev->dev.of_node, "mediatek,larbs", 0);
+	if (!node) {
+		mtk_v4l2_err("no mediatek,larbs found");
+		return -1;
+	}
 	for (larb_index = 0; larb_index < MTK_VDEC_MAX_LARB_COUNT; larb_index++) {
 		node = of_parse_phandle(pdev->dev.of_node, "mediatek,larbs", larb_index);
 		if (!node)
@@ -193,10 +203,10 @@ static void mtk_vdec_hw_break(struct mtk_vcodec_dev *dev, int hw_id)
 			fourcc = v4l2_fourcc('U', 'N', 'K', 'N');
 
 		if (vdec_vld_addr == NULL || vdec_misc_addr == NULL) {
-			mtk_v4l2_debug(4, "VDEC codec:0x%08x(%c%c%c%c) HW break fail since vdec_vld_addr 0x%x vdec_misc_addr 0x%x",
+			mtk_v4l2_debug(4, "VDEC codec:0x%08x(%c%c%c%c) HW break fail since vdec_vld_addr 0x%lx vdec_misc_addr 0x%lx",
 				fourcc, fourcc & 0xFF, (fourcc >> 8) & 0xFF,
 				(fourcc >> 16) & 0xFF, (fourcc >> 24) & 0xFF,
-				vdec_vld_addr, vdec_misc_addr);
+				(unsigned long)vdec_vld_addr, (unsigned long)vdec_misc_addr);
 			return;
 		}
 
@@ -241,7 +251,7 @@ static void mtk_vdec_hw_break(struct mtk_vcodec_dev *dev, int hw_id)
 						offset << 2, offset, value);
 				}
 				if (is_ufo)
-					mtk_v4l2_err("[DEBUG][UFO] 0x%x(%d) = 0x%lx",
+					mtk_v4l2_err("[DEBUG][UFO] 0x%x(%d) = 0x%x",
 						0x08C, 0x08C >> 2, ufo_cg_status);
 
 				if (timeout == 20000)
@@ -276,10 +286,11 @@ static void mtk_vdec_hw_break(struct mtk_vcodec_dev *dev, int hw_id)
 			fourcc = v4l2_fourcc('U', 'N', 'K', 'N');
 
 		if (vdec_lat_vld_addr == NULL || vdec_lat_misc_addr == NULL) {
-			mtk_v4l2_debug(4, "VDEC codec:0x%08x(%c%c%c%c) HW break fail since vdec_lat_vld_addr 0x%x vdec_lat_misc_addr 0x%x",
+			mtk_v4l2_debug(4, "VDEC codec:0x%08x(%c%c%c%c) HW break fail since vdec_lat_vld_addr 0x%lx vdec_lat_misc_addr 0x%lx",
 				fourcc, fourcc & 0xFF, (fourcc >> 8) & 0xFF,
 				(fourcc >> 16) & 0xFF, (fourcc >> 24) & 0xFF,
-				vdec_lat_vld_addr, vdec_lat_misc_addr);
+				(unsigned long)vdec_lat_vld_addr,
+				(unsigned long)vdec_lat_misc_addr);
 			return;
 		}
 
@@ -336,7 +347,7 @@ static void mtk_vdec_hw_break(struct mtk_vcodec_dev *dev, int hw_id)
 void mtk_vcodec_dec_clock_on(struct mtk_vcodec_pm *pm, int hw_id)
 {
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 	int i, larb_port_num, larb_id;
 	struct M4U_PORT_STRUCT port;
 #endif
@@ -366,39 +377,47 @@ void mtk_vcodec_dec_clock_on(struct mtk_vcodec_pm *pm, int hw_id)
 	// enable main clocks
 	for (j = 0; j < clks_data->main_clks_len; j++) {
 		clk_id = clks_data->main_clks[j].clk_id;
-		ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
-		if (ret)
-			mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
-				clk_id, clks_data->main_clks[j].clk_name, ret);
+		if (clk_id >= 0) {
+			ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
+			if (ret)
+				mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
+					clk_id, clks_data->main_clks[j].clk_name, ret);
+		}
 	}
 
 	if (hw_id == MTK_VDEC_CORE || hw_id == MTK_VDEC_LAT) {
 		// enable soc clocks
 		for (j = 0; j < clks_data->soc_clks_len; j++) {
 			clk_id = clks_data->soc_clks[j].clk_id;
-			ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
-			if (ret)
-				mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
-					clk_id, clks_data->soc_clks[j].clk_name, ret);
+			if (clk_id >= 0) {
+				ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
+				if (ret)
+					mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
+						clk_id, clks_data->soc_clks[j].clk_name, ret);
+			}
 		}
 	}
 	if (hw_id == MTK_VDEC_CORE) {
 		// enable core clocks
 		for (j = 0; j < clks_data->core_clks_len; j++) {
 			clk_id = clks_data->core_clks[j].clk_id;
-			ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
-			if (ret)
-				mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
-					clk_id, clks_data->core_clks[j].clk_name, ret);
+			if (clk_id >= 0) {
+				ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
+				if (ret)
+					mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
+						clk_id, clks_data->core_clks[j].clk_name, ret);
+			}
 		}
 	} else if (hw_id == MTK_VDEC_LAT) {
 		// enable lat clocks
 		for (j = 0; j < clks_data->lat_clks_len; j++) {
 			clk_id = clks_data->lat_clks[j].clk_id;
-			ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
-			if (ret)
-				mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
-					clk_id, clks_data->lat_clks[j].clk_name, ret);
+			if (clk_id >= 0) {
+				ret = clk_prepare_enable(pm->vdec_clks[clk_id]);
+				if (ret)
+					mtk_v4l2_err("clk_prepare_enable id: %d, name: %s fail %d",
+						clk_id, clks_data->lat_clks[j].clk_name, ret);
+			}
 		}
 	} else {
 		mtk_v4l2_err("invalid hw_id %d", hw_id);
@@ -430,7 +449,7 @@ void mtk_vcodec_dec_clock_on(struct mtk_vcodec_pm *pm, int hw_id)
 	time_check_end(MTK_FMT_DEC, hw_id, 50);
 #endif
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 	time_check_start(MTK_FMT_DEC, hw_id);
 	if (hw_id == MTK_VDEC_CORE) {
 		larb_port_num = SMI_LARB4_PORT_NUM;
@@ -504,7 +523,8 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 		if (clks_data->soc_clks_len > 0) {
 			for (i = clks_data->soc_clks_len - 1; i >= 0; i--) {
 				clk_id = clks_data->soc_clks[i].clk_id;
-				clk_disable_unprepare(pm->vdec_clks[clk_id]);
+				if (clk_id >= 0)
+					clk_disable_unprepare(pm->vdec_clks[clk_id]);
 			}
 		}
 	}
@@ -513,7 +533,8 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 		if (clks_data->core_clks_len > 0) {
 			for (i = clks_data->core_clks_len - 1; i >= 0; i--) {
 				clk_id = clks_data->core_clks[i].clk_id;
-				clk_disable_unprepare(pm->vdec_clks[clk_id]);
+				if (clk_id >= 0)
+					clk_disable_unprepare(pm->vdec_clks[clk_id]);
 			}
 		}
 	} else if (hw_id == MTK_VDEC_LAT) {
@@ -521,7 +542,8 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 		if (clks_data->lat_clks_len > 0) {
 			for (i = clks_data->lat_clks_len - 1; i >= 0; i--) {
 				clk_id = clks_data->lat_clks[i].clk_id;
-				clk_disable_unprepare(pm->vdec_clks[clk_id]);
+				if (clk_id >= 0)
+					clk_disable_unprepare(pm->vdec_clks[clk_id]);
 			}
 		}
 	} else
@@ -530,7 +552,8 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 	if (clks_data->main_clks_len > 0) {
 		for (i = clks_data->main_clks_len - 1; i >= 0; i--) {
 			clk_id = clks_data->main_clks[i].clk_id;
-			clk_disable_unprepare(pm->vdec_clks[clk_id]);
+			if (clk_id >= 0)
+				clk_disable_unprepare(pm->vdec_clks[clk_id]);
 		}
 	}
 
@@ -542,6 +565,7 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 #endif
 }
 
+#if IS_ENABLED(CONFIG_MTK_IOMMU_MISC_DBG)
 static void mtk_vdec_dump_addr_reg(
 	struct mtk_vcodec_dev *dev, int hw_id, enum mtk_dec_dump_addr_type type)
 {
@@ -554,6 +578,7 @@ static void mtk_vdec_dump_addr_reg(
 	void __iomem *lat_vld_addr = dev->dec_reg_base[VDEC_LAT_VLD];
 	void __iomem *lat_wdma_addr = dev->dec_reg_base[VDEC_LAT_MISC] + 0x800;
 	void __iomem *rctrl_addr = dev->dec_reg_base[VDEC_RACING_CTRL];
+	void __iomem *misc_addr = dev->dec_reg_base[VDEC_MISC];
 	enum mtk_vcodec_ipm vdec_hw_ipm;
 	unsigned long value, values[6];
 	bool is_ufo = false;
@@ -592,6 +617,9 @@ static void mtk_vdec_dump_addr_reg(
 		mtk_v4l2_err("hw_id %d not support !!", hw_id);
 		return;
 	}
+	if (vdec_hw_ipm == VCODEC_IPM_V1)
+		lat_vld_addr = vld_addr; // for ipm v1 input buffer
+
 	ctx = dev->curr_dec_ctx[hw_id];
 	if (ctx)
 		fourcc = ctx->q_data[MTK_Q_DATA_SRC].fmt->fourcc;
@@ -605,8 +633,7 @@ static void mtk_vdec_dump_addr_reg(
 		return;
 	}
 
-	if (hw_id == MTK_VDEC_CORE && fourcc != V4L2_PIX_FMT_AV1 &&
-			dev->dec_reg_base[VDEC_BASE] != NULL)
+	if (hw_id == MTK_VDEC_CORE && fourcc != V4L2_PIX_FMT_AV1 && (ufo_addr - 0x800) != NULL)
 		is_ufo = (readl(ufo_addr + 0x08C) & 0x1) == 0x1;
 
 	switch (type) {
@@ -617,6 +644,26 @@ static void mtk_vdec_dump_addr_reg(
 			value = readl(lat_vld_addr + input_lat_vld_reg[i]);
 			mtk_v4l2_err("[LAT][VLD] 0x%x(%d) = 0x%lx",
 				input_lat_vld_reg[i], input_lat_vld_reg[i]/4, value);
+		}
+		if (fourcc == V4L2_PIX_FMT_VP8) {
+			for (i = 41; i < 68; i++) {
+				value = readl(misc_addr + 0x2800 + i*4);
+				mtk_v4l2_err("[VP8_VLD] 0x%x(%d) = 0x%lx",
+					i*4, i, value);
+			}
+			for (i = 72; i < 97; i++) {
+				value = readl(misc_addr + 0x2800 + i*4);
+				mtk_v4l2_err("[VP8_VLD] 0x%x(%d) = 0x%lx",
+					i*4, i, value);
+			}
+			for (i = 66; i < 79; i++) {
+				value = readl(misc_addr + i*4);
+				mtk_v4l2_err("[MISC] 0x%x(%d) = 0x%lx",
+					i*4, i, value);
+			}
+			value = readl(vld_addr + 0x800 + 15*4);
+			mtk_v4l2_err("[VLD_TOP] 0x%x(%d) = 0x%lx",
+				15*4, 15, value);
 		}
 		break;
 	case DUMP_VDEC_OUT_BUF:
@@ -633,6 +680,8 @@ static void mtk_vdec_dump_addr_reg(
 				mtk_v4l2_err("[CORE][MC] 0x%x(%d) = 0x%lx",
 					output_ufo_mc_reg[i], output_ufo_mc_reg[i]/4, value);
 			}
+			if ((ufo_addr - 0x800) == NULL)
+				break;
 			for (i = 0; i < OUTPUT_UFO_NUM; i++) {
 				value = readl(ufo_addr + output_ufo_reg[i]);
 				mtk_v4l2_err("[CORE][UFO] 0x%x(%d) = 0x%lx",
@@ -709,27 +758,31 @@ static void mtk_vdec_dump_addr_reg(
 		break;
 	case DUMP_VDEC_UBE_BUF:
 		if (hw_id == MTK_VDEC_LAT) {
-			if (lat_wdma_addr == NULL || rctrl_addr == NULL)
-				break;
-			value = readl(lat_wdma_addr + 0x50);
-			mtk_v4l2_err("[LAT][WDMA] 0x%x(%d) = 0x%lx",
-				0x50, 0x50/4, value);
-			value = readl(lat_wdma_addr + 0x44);
-			mtk_v4l2_err("[LAT][WDMA] 0x%x(%d) = 0x%lx",
-				0x44, 0x44/4, value);
-			value = readl(rctrl_addr + 0x78);
-			mtk_v4l2_err("[RACING_CTRL] 0x%x(%d) = 0x%lx",
-				0x78, 0x78/4, value);
+			if ((lat_wdma_addr - 0x800) != NULL) {
+				value = readl(lat_wdma_addr + 0x50);
+				mtk_v4l2_err("[LAT][WDMA] 0x%x(%d) = 0x%lx",
+					0x50, 0x50/4, value);
+				value = readl(lat_wdma_addr + 0x44);
+				mtk_v4l2_err("[LAT][WDMA] 0x%x(%d) = 0x%lx",
+					0x44, 0x44/4, value);
+			}
+			if (rctrl_addr != NULL) {
+				value = readl(rctrl_addr + 0x78);
+				mtk_v4l2_err("[RACING_CTRL] 0x%x(%d) = 0x%lx",
+					0x78, 0x78/4, value);
+			}
 		} else {
-			if (vld_addr == NULL || rctrl_addr == NULL)
-				break;
-			value = readl(rctrl_addr + 0x7C);
-			mtk_v4l2_err("[RACING_CTRL] 0x%x(%d) = 0x%lx",
-				0x7C, 0x7C/4, value);
-			for (i = 0; i < UBE_CORE_VLD_NUM; i++) {
-				value = readl(vld_addr + ube_core_vld_reg[i]);
-				mtk_v4l2_err("[CORE][VLD] 0x%x(%d) = 0x%lx",
-					ube_core_vld_reg[i], ube_core_vld_reg[i]/4, value);
+			if (rctrl_addr != NULL) {
+				value = readl(rctrl_addr + 0x7C);
+				mtk_v4l2_err("[RACING_CTRL] 0x%x(%d) = 0x%lx",
+					0x7C, 0x7C/4, value);
+			}
+			if (vld_addr != NULL) {
+				for (i = 0; i < UBE_CORE_VLD_NUM; i++) {
+					value = readl(vld_addr + ube_core_vld_reg[i]);
+					mtk_v4l2_err("[CORE][VLD] 0x%x(%d) = 0x%lx",
+					    ube_core_vld_reg[i], ube_core_vld_reg[i]/4, value);
+				}
 			}
 		}
 		break;
@@ -740,7 +793,6 @@ static void mtk_vdec_dump_addr_reg(
 	spin_unlock_irqrestore(&dev->dec_power_lock[hw_id], flags);
 }
 
-#if IS_ENABLED(CONFIG_MTK_IOMMU_MISC_DBG)
 static int mtk_vdec_translation_fault_callback(
 	int port, dma_addr_t mva, void *data)
 {
@@ -832,6 +884,62 @@ static int mtk_vdec_translation_fault_callback(
 
 	return 0;
 }
+
+static int mtk_vdec_uP_translation_fault_callback(
+	int port, dma_addr_t mva, void *data)
+{
+#if IS_ENABLED(CONFIG_MTK_TINYSYS_VCP_SUPPORT)
+	struct mtk_vcodec_dev *dev = (struct mtk_vcodec_dev *)data;
+	struct mtk_vcodec_ctx *ctx, *dec_ctx[MTK_VDEC_HW_NUM];
+	u32 dec_fourcc[MTK_VDEC_HW_NUM];
+	char dec_codec_name[MTK_VDEC_HW_NUM][5];
+	int dec_ctx_id[MTK_VDEC_HW_NUM];
+	enum mtk_vcodec_ipm vdec_hw_ipm;
+	int hw_id, i;
+	struct list_head *list_ptr, *tmp;
+
+	if (dev->pm.mtkdev == NULL) {
+		mtk_v4l2_err("fail to get vdec_hw_ipm");
+		vdec_hw_ipm = VCODEC_IPM_V2;
+	} else {
+		vdec_hw_ipm = dev->pm.mtkdev->vdec_hw_ipm;
+	}
+
+	for (hw_id = 0; hw_id < MTK_VDEC_HW_NUM; hw_id++) {
+		dec_ctx[hw_id] = dev->curr_dec_ctx[hw_id];
+		if (dec_ctx[hw_id]) {
+			dec_ctx_id[hw_id] = dec_ctx[hw_id]->id;
+			dec_fourcc[hw_id] = dec_ctx[hw_id]->q_data[MTK_Q_DATA_SRC].fmt->fourcc;
+			for (i = 0; i < 4; i++)
+				dec_codec_name[hw_id][i] = (dec_fourcc[hw_id] >> (i * 8)) & 0xFF;
+		} else {
+			dec_ctx_id[hw_id] = 0;
+			dec_fourcc[hw_id] = 0;
+			if (sprintf(dec_codec_name[hw_id], "NULL") < 0)
+				mtk_v4l2_err("dec_codec_name fail");
+		}
+		dec_codec_name[hw_id][4] = '\0';
+	}
+
+	mtk_v4l2_err("larb %d port VIDEO_uP(%x) translation fault, mva 0x%llx",
+		MTK_M4U_TO_LARB(port), port, (u64)mva);
+	mtk_v4l2_err("current dec ctx: LAT ctx_id %d codec:%s(0x%08x), CORE ctx_id %d codec:%s(0x%08x) (ipm v%d)",
+		dec_ctx_id[MTK_VDEC_LAT], dec_codec_name[MTK_VDEC_LAT], dec_fourcc[MTK_VDEC_LAT],
+		dec_ctx_id[MTK_VDEC_CORE], dec_codec_name[MTK_VDEC_CORE],
+		dec_fourcc[MTK_VDEC_CORE], vdec_hw_ipm);
+
+	mtk_v4l2_err("dec working buffer:");
+	mutex_lock(&dev->ctx_mutex);
+	list_for_each_safe(list_ptr, tmp, &dev->ctx_list) {
+		ctx = list_entry(list_ptr, struct mtk_vcodec_ctx, list);
+		if (ctx != NULL && ctx->state != MTK_STATE_ABORT)
+			vdec_dump_mem_buf(ctx->drv_handle);
+	}
+	mutex_unlock(&dev->ctx_mutex);
+#endif
+
+	return 0;
+}
 #endif
 
 int mtk_vdec_m4u_port_name_to_index(const char *name)
@@ -880,6 +988,14 @@ int mtk_vdec_m4u_port_name_to_index(const char *name)
 		return VDEC_M4U_PORT_LAT0_UFO;
 	else if (!strcmp(MTK_VDEC_M4U_PORT_NAME_LAT0_UFO_ENC_C, name))
 		return VDEC_M4U_PORT_LAT0_UFO_C;
+	else if (!strcmp(MTK_VDEC_M4U_PORT_NAME_UP_1, name))
+		return VDEC_M4U_PORT_UP_1;
+	else if (!strcmp(MTK_VDEC_M4U_PORT_NAME_UP_2, name))
+		return VDEC_M4U_PORT_UP_2;
+	else if (!strcmp(MTK_VDEC_M4U_PORT_NAME_UP_3, name))
+		return VDEC_M4U_PORT_UP_3;
+	else if (!strcmp(MTK_VDEC_M4U_PORT_NAME_UP_4, name))
+		return VDEC_M4U_PORT_UP_4;
 	else
 		return -1;
 }
@@ -891,9 +1007,12 @@ void mtk_vdec_translation_fault_callback_setting(
 	int i;
 
 	for (i = 0; i < NUM_MAX_VDEC_M4U_PORT; i++) {
-		if (dev->dec_m4u_ports[i] != 0)
+		if (dev->dec_m4u_ports[i] != 0 && i < VDEC_M4U_PORT_UP_1)
 			mtk_iommu_register_fault_callback(dev->dec_m4u_ports[i],
 				mtk_vdec_translation_fault_callback, (void *)dev, false);
+		if (dev->dec_m4u_ports[i] != 0 && i >= VDEC_M4U_PORT_UP_1)
+			mtk_iommu_register_fault_callback(dev->dec_m4u_ports[i],
+				mtk_vdec_uP_translation_fault_callback, (void *)dev, false);
 	}
 #endif
 }

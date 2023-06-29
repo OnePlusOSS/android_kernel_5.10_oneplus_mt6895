@@ -48,7 +48,7 @@ int dump_all_attach;
 #define DMA_HEAP_CMDLINE_LEN      (30)
 #define DMA_HEAP_DUMP_ALLOC_GFP   (GFP_ATOMIC)
 #define OOM_DUMP_INTERVAL         (2000)  /* unit: ms */
-
+#define SET_PID_CMDLINE_LEN       (16)
 
 /* Bit map for error */
 #define DBG_ALLOC_MEM_FAIL        (1 << 0)
@@ -299,7 +299,7 @@ int add_pid_map_entry(struct dump_fd_data *fddata, pid_t num, const char *comm)
 
 	if (map[idx].id == 0) {
 		map[idx].id = num;
-		strncpy(map[idx].name, comm, TASK_COMM_LEN);
+		strncpy(map[idx].name, comm, TASK_COMM_LEN - 1);
 		/* update idx */
 		fddata->cache_idx_w++;
 	}
@@ -342,10 +342,12 @@ unsigned long long get_current_time_ms(void)
 static int is_dmabuf_from_dma_heap(const struct dma_buf *dmabuf)
 {
 	if (is_mtk_mm_heap_dmabuf(dmabuf) ||
-	    is_system_heap_dmabuf(dmabuf) ||
-	    is_mtk_sec_heap_dmabuf(dmabuf))
+	    is_system_heap_dmabuf(dmabuf))
 		return 1;
-
+#if IS_ENABLED(CONFIG_MTK_TRUSTED_MEMORY_SUBSYSTEM)
+	if (is_mtk_sec_heap_dmabuf(dmabuf))
+		return 1;
+#endif
 	return 0;
 }
 
@@ -565,7 +567,7 @@ dmabuf_rbtree_dbg_add_return(struct dump_fd_data *fd_data, const struct dma_buf 
 	if (dmabuf_rb_check) {
 		spin_lock((spinlock_t *)&dmabuf->name_lock);
 		dmabuf_dump(fd_data->constd.s,
-			    "add2rbtree done| inode:%d, sz:%zu, cnt:%d, name:%s\n",
+			    "add2rbtree done| inode:%lu, sz:%zu, cnt:%ld, name:%s\n",
 			    file_inode(dmabuf->file)->i_ino,
 			    dmabuf->size,
 			    file_count(dmabuf->file),
@@ -781,7 +783,7 @@ static int dmabuf_rbtree_add_vmas(struct dump_fd_data *fd_data)
 		dbg_node = dmabuf_rbtree_dbg_find(fd_data, file_inode(dmabuf->file)->i_ino);
 		dma_buf_put(dmabuf);
 		if (!dbg_node) {
-			dmabuf_dump(s, "%s#%d err:%d\n", __func__, __LINE__, PTR_ERR(dbg_node));
+			dmabuf_dump(s, "%s#%d err:%ld\n", __func__, __LINE__, PTR_ERR(dbg_node));
 			goto out;
 		}
 		pid_res = dmabuf_rbtree_pidres_add_return(fd_data, dbg_node, t);
@@ -870,7 +872,7 @@ static int dma_heap_buf_dump_cb(const struct dma_buf *dmabuf, void *priv)
 		delta = 1;
 
 	spin_lock((spinlock_t *)&dmabuf->name_lock);
-	dmabuf_dump(s, "inode:%-8d size(Byte):%-10zu count:%-2ld cache_sg:%d  exp:%s\tname:%s\n",
+	dmabuf_dump(s, "inode:%-8lu size(Byte):%-10zu count:%-2ld cache_sg:%d  exp:%s\tname:%s\n",
 		    file_inode(dmabuf->file)->i_ino,
 		    dmabuf->size,
 		    file_count(dmabuf->file) - delta,
@@ -956,7 +958,7 @@ static int dmabuf_rbtree_add_fd_cb(const void *data, struct file *file,
 	fd_data->ret = 1;
 
 	if (dmabuf_rb_check)
-		dmabuf_dump(s, "\tpid:%-8d\t%-8d\t%-14zu\t%-8d\t%-8ld%s\n",
+		dmabuf_dump(s, "\tpid:%-8d\t%-8d\t%-14zu\t%-8lu\t%-8ld%s\n",
 			    p->pid, fd, dmabuf->size, inode,
 			    file_count(dmabuf->file),
 			    dmabuf->exp_name);
@@ -1003,7 +1005,7 @@ int dmabuf_rbtree_dbg_add_cb(const struct dma_buf *dmabuf, void *priv)
 
 	node = dmabuf_rbtree_dbg_add_return(fd_data, dmabuf);
 	if (IS_ERR_OR_NULL(node))
-		dmabuf_dump(s, "%s #%d:get err:%d\n",
+		dmabuf_dump(s, "%s #%d:get err:%ld\n",
 			    __func__, __LINE__, PTR_ERR(node));
 	return 0;
 }
@@ -1371,9 +1373,9 @@ static void mtk_dmabuf_dump_heap(struct dma_heap *heap,
 			    get_current_time_ms());
 
 		show_help_info(heap, s);
-		dmabuf_dump(s, "freelist: %d KB\n", get_freelist_nr_pages() * 4);
+		dmabuf_dump(s, "freelist: %lu KB\n", get_freelist_nr_pages() * 4);
 		dmabuf_sz = get_dma_heap_buffer_total(heap);
-		dmabuf_dump(s, "dmabuf buffer total:%d KB\n", (dmabuf_sz * 4) / PAGE_SIZE);
+		dmabuf_dump(s, "dmabuf buffer total:%ld KB\n", (dmabuf_sz * 4) / PAGE_SIZE);
 		dmabuf_dump(s, "\t|-normal dma_heap buffer total:%ld KB\n\n",
 			    (atomic64_read(&dma_heap_normal_total) * 4) / PAGE_SIZE);
 
@@ -1388,7 +1390,7 @@ static void mtk_dmabuf_dump_heap(struct dma_heap *heap,
 				heap_sz += get_dma_heap_buffer_total(heap);
 			}
 		}
-		dmabuf_dump(s, "\nnon-dma_heap buffer total:%d KB\n",
+		dmabuf_dump(s, "\nnon-dma_heap buffer total:%ld KB\n",
 			    (dmabuf_sz - heap_sz) * 4 / PAGE_SIZE);
 
 		dma_heap_default_show(NULL, s, flag | HEAP_DUMP_HEAP_SKIP_POOL);
@@ -1610,14 +1612,24 @@ static ssize_t heap_stat_pid_proc_write(struct file *file, const char *buf,
 					size_t count, loff_t *data)
 {
 	int pid = 0;
-	char line[64] = {0};
-	size_t size = (count > sizeof(line)) ? sizeof(line) : count;
+	char line[SET_PID_CMDLINE_LEN];
 
-	if (copy_from_user(line, buf, size))
-		return 0;
+	if (count <= (strlen("pid:\n")) || count >= SET_PID_CMDLINE_LEN)
+		return -EINVAL;
 
-	if (sscanf(line, "pid:%d\n", &pid) != 1)
-		return 0;
+	if (copy_from_user(line, buf, count))
+		return -EFAULT;
+
+	line[count] = '\0';
+
+	if (!strstarts(line, "pid:"))
+		return -EINVAL;
+
+	if (sscanf(line, "pid:%u\n", &pid) != 1)
+		return -EINVAL;
+
+	if (pid < 0)
+		return -EINVAL;
 
 	g_stat_pid = pid;
 	return count;
@@ -1707,6 +1719,8 @@ static int dma_buf_init_procfs(void)
 {
 	struct proc_dir_entry *proc_file;
 	int ret = 0;
+	kuid_t uid;
+	kgid_t gid;
 
 	dma_heap_proc_root = proc_mkdir("dma_heap", NULL);
 	if (!dma_heap_proc_root) {
@@ -1749,7 +1763,7 @@ static int dma_buf_init_procfs(void)
 	pr_info("create debug file for stats\n");
 
 	dma_heaps_stat_pid = proc_create_data("rss_pid",
-					      S_IFREG | 0666,
+					      S_IFREG | 0660,
 					      dma_heap_proc_root,
 					      &heap_stat_pid_proc_fops,
 					      NULL);
@@ -1759,6 +1773,11 @@ static int dma_buf_init_procfs(void)
 		return -1;
 	}
 	pr_info("create debug file for stats_pid\n");
+
+	/* set group of proc file rss_pid to system */
+	uid = make_kuid(&init_user_ns, 0);
+	gid = make_kgid(&init_user_ns, 1000);
+	proc_set_user(dma_heaps_stat_pid, uid, gid);
 
 	return ret;
 }

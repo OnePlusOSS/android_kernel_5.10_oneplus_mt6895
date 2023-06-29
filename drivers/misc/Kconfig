@@ -471,6 +471,13 @@ config PVPANIC
 	  a paravirtualized device provided by QEMU; it lets a virtual machine
 	  (guest) communicate panic events to the host.
 
+#change 'y' to 'n', if you want fo close this controller
+config OPLUS_GPIO
+    tristate "oplus gpio controller"
+    default n
+    help
+      define this config to control oplus gpio.
+
 config HISI_HIKEY_USB
 	tristate "USB GPIO Hub on HiSilicon Hikey 960/970 Platform"
 	depends on (OF && GPIOLIB) || COMPILE_TEST
@@ -480,6 +487,21 @@ config HISI_HIKEY_USB
 	  found on HiKey 960/970 boards, which is necessary to support
 	  switching between the dual-role USB-C port and the USB-A host ports
 	  using only one USB controller.
+
+#ifdef OPLUS_FEATURE_TP_BASIC
+config HAPTIC_FEEDBACK
+    tristate "Haptic driver feedback for awinic aw8697 series"
+    help
+      This option enables support for aw8697 series Haptic Driver Feedback.
+#endif /* OPLUS_FEATURE_TP_BASIC */
+
+#ifdef OPLUS_FEATURE_SIM_DETECT
+config SIM_DETECT
+	tristate "SIM_DETECT system"
+	default n
+	help
+	  Say Y here to enable sim detect system support
+#endif /* OPLUS_FEATURE_SIM_DETECT */
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
@@ -497,4 +519,10 @@ source "drivers/misc/ocxl/Kconfig"
 source "drivers/misc/cardreader/Kconfig"
 source "drivers/misc/habanalabs/Kconfig"
 source "drivers/misc/uacce/Kconfig"
+#ifdef CONFIG_OPLUS_TRIKEY_HALL
+source "drivers/misc/tri_state_key/Kconfig"
+#endif CONFIG_OPLUS_TRIKEY_HALL
+#ifdef OPLUS_FEATURE_CHG_BASIC
+source "drivers/misc/aw8697_haptic/Kconfig"
+#endif
 endmenu

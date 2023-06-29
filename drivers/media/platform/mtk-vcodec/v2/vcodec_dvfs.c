@@ -353,6 +353,21 @@ u32 match_avail_freq(struct mtk_vcodec_dev *dev, int codec_type, u32 freq)
 	return match_freq;
 }
 
+u32 get_inst_count_by_codec(struct mtk_vcodec_dev *dev, u32 codec_fmt)
+{
+	struct list_head *item;
+	struct vcodec_inst *inst;
+	u32 codec_instance_count = 0;
+
+	list_for_each(item, &dev->vdec_dvfs_inst) {
+		inst = list_entry(item, struct vcodec_inst, list);
+		if (inst && inst->codec_fmt == codec_fmt)
+			codec_instance_count++;
+	}
+	mtk_v4l2_debug(6, "[VDVFS] codec(%u) has %u intances",  codec_fmt, codec_instance_count);
+	return codec_instance_count;
+}
+
 /**
  * Calculate single instance freqency.
  * inst: target instance
@@ -375,8 +390,9 @@ u32 calc_freq(struct vcodec_inst *inst, struct mtk_vcodec_dev *dev)
 				inst->width, inst->height, inst->op_rate, perf->cy_per_mb_1);
 		} else
 			freq = 100000000;
-		/* AV1 boost for 720P180 test */
-		if (((inst->priority > 0 && inst->op_rate <= 0) || inst->op_rate >= 135) &&
+		/* AV1 boost for 720P180 and 6*720P30(multi instances) test */
+		if (((inst->priority > 0 && inst->op_rate <= 0) || inst->op_rate >= 135 ||
+		get_inst_count_by_codec(dev, 808539713) >= 6) &&
 		perf != 0 && inst->codec_fmt == 808539713 &&
 		(inst->width * inst->height <= 1280 * 736)) {
 
@@ -399,6 +415,7 @@ u32 calc_freq(struct vcodec_inst *inst, struct mtk_vcodec_dev *dev)
 
 			if (inst->priority < 0) {
 				inst->op_rate = 30;
+#if IS_ENABLED(CONFIG_MTK_TINYSYS_VCP_SUPPORT)
 				if (inst->codec_fmt == 808996950) {
 					/* performance class WA for VP8 */
 					inst->op_rate = 60;
@@ -407,6 +424,7 @@ u32 calc_freq(struct vcodec_inst *inst, struct mtk_vcodec_dev *dev)
 					(inst->width * inst->height <= 1920 * 1088)) {
 					inst->op_rate = 174;
 				}
+#endif
 			} else
 				inst->op_rate = dflt_op_rate;
 
@@ -477,13 +495,13 @@ void update_freq(struct mtk_vcodec_dev *dev, int codec_type)
 		list_for_each(item, &dev->vdec_dvfs_inst) {
 			inst = list_entry(item, struct vcodec_inst, list);
 			if (inst) {
-				freq = calc_freq(inst, dev);
+			freq = calc_freq(inst, dev);
 
-				if (freq > dev->vdec_dvfs_params.normal_max_freq)
-					dev->vdec_dvfs_params.allow_oc = 1;
+			if (freq > dev->vdec_dvfs_params.normal_max_freq)
+				dev->vdec_dvfs_params.allow_oc = 1;
 
-				freq_sum += freq;
-				op_rate_sum += inst->op_rate;
+			freq_sum += freq;
+			op_rate_sum += inst->op_rate;
 			} else
 				mtk_v4l2_debug(6, "[VDVFS] %s no inst, skip", __func__);
 
@@ -492,12 +510,8 @@ void update_freq(struct mtk_vcodec_dev *dev, int codec_type)
 			freq_sum, op_rate_sum);
 
 		if (dev->vdec_dvfs_params.allow_oc == 0) { /* normal max */
-			if (freq_sum > dev->vdec_dvfs_params.normal_max_freq ||
-				no_op_rate_max_freq == 1)
+			if (freq_sum > dev->vdec_dvfs_params.normal_max_freq)
 				freq_sum = dev->vdec_dvfs_params.normal_max_freq;
-		} else { /* allow oc */
-			if (no_op_rate_max_freq == true)
-				freq_sum = MAX_VCODEC_FREQ;
 		}
 
 		if (op_rate_sum < dev->vdec_dvfs_params.per_frame_adjust_op_rate)

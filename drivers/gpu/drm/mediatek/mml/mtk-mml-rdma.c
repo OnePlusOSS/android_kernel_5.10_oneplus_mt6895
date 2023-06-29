@@ -313,8 +313,13 @@ static s32 rdma_write(struct cmdq_pkt *pkt, phys_addr_t base_pa, u8 hw_pipe,
 static s32 rdma_write_ofst(struct cmdq_pkt *pkt, phys_addr_t base_pa, u8 hw_pipe,
 			   enum cpr_reg_idx lsb_idx, u64 value, bool write_sec)
 {
-	enum cpr_reg_idx msb_idx = lsb_to_msb[lsb_idx];
+	enum cpr_reg_idx msb_idx;
 	s32 ret;
+
+	if (unlikely(lsb_idx >= CPR_RDMA_COUNT))
+		return -EFAULT;
+
+	msb_idx = lsb_to_msb[lsb_idx];
 
 	ret = rdma_write(pkt, base_pa, hw_pipe,
 			 lsb_idx, value & GENMASK_ULL(31, 0), write_sec);
@@ -348,8 +353,13 @@ static s32 rdma_write_addr(struct cmdq_pkt *pkt, phys_addr_t base_pa, u8 hw_pipe
 			   struct mml_pipe_cache *cache,
 			   u16 *label_idx, bool write_sec)
 {
-	enum cpr_reg_idx msb_idx = lsb_to_msb[lsb_idx];
+	enum cpr_reg_idx msb_idx;
 	s32 ret;
+
+	if (unlikely(lsb_idx >= CPR_RDMA_COUNT))
+		return -EFAULT;
+
+	msb_idx = lsb_to_msb[lsb_idx];
 
 	ret = rdma_write_reuse(pkt, base_pa, hw_pipe,
 			       lsb_idx, value & GENMASK_ULL(31, 0),
@@ -378,6 +388,7 @@ enum rdma_golden_fmt {
 
 struct rdma_data {
 	u32 tile_width;
+	u8 rb_swap;	/* version for rb channel swap behavior */
 	bool write_sec_reg;
 
 	/* threshold golden setting for racing mode */
@@ -386,10 +397,12 @@ struct rdma_data {
 
 static const struct rdma_data mt6893_rdma_data = {
 	.tile_width = 640,
+	.rb_swap = 1,
 };
 
 static const struct rdma_data mt6983_rdma_data = {
 	.tile_width = 1696,
+	.rb_swap = 1,
 	.write_sec_reg = true,
 	.golden = {
 		[GOLDEN_FMT_ARGB] = {
@@ -409,11 +422,13 @@ static const struct rdma_data mt6983_rdma_data = {
 
 static const struct rdma_data mt6879_rdma_data = {
 	.tile_width = 1440,
+	.rb_swap = 1,
 	.write_sec_reg = true,
 };
 
 static const struct rdma_data mt6895_rdma0_data = {
-	.tile_width = 1344,
+	.tile_width = 1320,
+	.rb_swap = 1,
 	.write_sec_reg = true,
 	.golden = {
 		[GOLDEN_FMT_ARGB] = {
@@ -433,6 +448,7 @@ static const struct rdma_data mt6895_rdma0_data = {
 
 static const struct rdma_data mt6895_rdma1_data = {
 	.tile_width = 896,
+	.rb_swap = 1,
 	.write_sec_reg = true,
 	.golden = {
 		[GOLDEN_FMT_ARGB] = {
@@ -485,6 +501,8 @@ struct rdma_frame_data {
 	u32 vdo_blk_shift_h;
 	u32 pixel_acc;		/* pixel accumulation */
 	u32 datasize;		/* qos data size in bytes */
+	u16 crop_off_l;		/* crop offset left */
+	u16 crop_off_t;		/* crop offset top */
 
 	/* array of indices to one of entry in cache entry list,
 	 * use in reuse command
@@ -597,6 +615,7 @@ static s32 rdma_tile_prepare(struct mml_comp *comp, struct mml_task *task,
 		     sizeof(struct mml_crop))) {
 		struct mml_frame_dest *dest = &cfg->info.dest[0];
 		u32 in_crop_w, in_crop_h;
+		struct rdma_frame_data *rdma_frm = rdma_frm_data(ccfg);
 
 		data->rdma.crop = dest->crop.r;
 
@@ -612,6 +631,9 @@ static s32 rdma_tile_prepare(struct mml_comp *comp, struct mml_task *task,
 			func->full_size_x_out = in_crop_w;
 			func->full_size_y_out = in_crop_h;
 		}
+
+		rdma_frm->crop_off_l = data->rdma.crop.left;
+		rdma_frm->crop_off_t = data->rdma.crop.top;
 	} else {
 		data->rdma.crop.left = 0;
 		data->rdma.crop.top = 0;
@@ -1017,6 +1039,7 @@ static s32 rdma_config_frame(struct mml_comp *comp, struct mml_task *task,
 	const phys_addr_t base_pa = comp->base_pa;
 	const u8 hw_pipe = cfg->path[ccfg->pipe]->hw_pipe;
 	const bool write_sec = mml_slt ? false : rdma->data->write_sec_reg;
+	const u32 dst_fmt = cfg->info.dest[ccfg->node->out_idx].data.format;
 	u8 simple_mode = 1;
 	u8 filter_mode;
 	u8 loose = 0;
@@ -1037,6 +1060,7 @@ static s32 rdma_config_frame(struct mml_comp *comp, struct mml_task *task,
 	u32 u4pic_size_bs = 0;
 	u32 u4pic_size_y_bs = 0;
 	u32 gmcif_con;
+	u8 in_swap;
 
 	mml_msg("use config %p rdma %p", cfg, rdma);
 
@@ -1068,7 +1092,7 @@ static s32 rdma_config_frame(struct mml_comp *comp, struct mml_task *task,
 	rdma_write(pkt, base_pa, hw_pipe, CPR_RDMA_DITHER_CON, 0x0, write_sec);
 
 	gmcif_con = BIT(0) |		/* COMMAND_DIV */
-		    GENMASK(6, 4) |	/* READ_REQUEST_TYPE */
+		    GENMASK(7, 4) |	/* READ_REQUEST_TYPE */
 		    GENMASK(9, 8) |	/* WRITE_REQUEST_TYPE */
 		    BIT(16);		/* PRE_ULTRA_EN */
 	/* racing case also enable urgent/ultra to not blocking disp */
@@ -1098,12 +1122,35 @@ static s32 rdma_config_frame(struct mml_comp *comp, struct mml_task *task,
 	if (MML_FMT_10BIT(src->format))
 		bit_number = 1;
 
+	in_swap = rdma_frm->swap;
+
+	if (MML_FMT_COMPRESS(dst_fmt) &&
+	    MML_FMT_10BIT(dst_fmt)) {
+		if (rdma->data->rb_swap == 1) {
+			if (cfg->alpharot) {
+				if ((MML_FMT_COMPRESS(src->format) &&
+				    MML_FMT_SWAP(dst_fmt)) ||
+				    (!MML_FMT_COMPRESS(src->format) &&
+				    !MML_FMT_SWAP(dst_fmt)))
+					in_swap = in_swap ? 0 : 1;
+			} else {
+				if (MML_FMT_IS_RGB(src->format) &&
+				    !MML_FMT_SWAP(dst_fmt))
+					in_swap = in_swap ? 0 : 1;
+			}
+		} else if (rdma->data->rb_swap == 2) {
+			if (MML_FMT_IS_RGB(src->format) &&
+			    !MML_FMT_SWAP(dst_fmt))
+				in_swap = in_swap ? 0 : 1;
+		}
+	}
+
 	rdma_write(pkt, base_pa, hw_pipe, CPR_RDMA_SRC_CON,
 		   (rdma_frm->hw_fmt << 0) +
 		   (filter_mode << 9) +
 		   (loose << 11) +
 		   (rdma_frm->field << 12) +
-		   (rdma_frm->swap << 14) +
+		   (in_swap << 14) +
 		   (rdma_frm->blk << 15) +
 		   (1 << 17) +	/* UNIFORM_CONFIG */
 		   (bit_number << 18) +
@@ -1350,7 +1397,7 @@ static s32 rdma_config_tile(struct mml_comp *comp, struct mml_task *task,
 
 		/* Set 10bit UFO mode */
 		if (MML_FMT_10BIT_PACKED(src->format) && rdma_frm->enable_ufo)
-			src_offset_wp = (src_offset_0 << 2) / 5;
+			src_offset_wp = DO_COMMON_DIV((src_offset_0 << 2), 5);
 
 		/* Set U pixel offset */
 		src_offset_1 = ((in_xs >> rdma_frm->hor_shift_uv) *
@@ -1377,8 +1424,8 @@ static s32 rdma_config_tile(struct mml_comp *comp, struct mml_task *task,
 		mf_clip_h = (out_ye - out_ys + 1) << rdma_frm->field;
 
 		/* Set crop offset */
-		mf_offset_w_1 = out_xs - in_xs;
-		mf_offset_h_1 = (out_ys - in_ys) << rdma_frm->field;
+		mf_offset_w_1 = out_xs + rdma_frm->crop_off_l - in_xs;
+		mf_offset_h_1 = (out_ys + rdma_frm->crop_off_t - in_ys) << rdma_frm->field;
 	}
 
 	rdma_write_ofst(pkt, base_pa, hw_pipe, CPR_RDMA_SRC_OFFSET_0,
@@ -1605,31 +1652,25 @@ static void rdma_debug_dump(struct mml_comp *comp)
 	u32 value[30];
 	u32 mon[29];
 	u32 state, greq;
-	u32 shadow_ctrl;
 	u32 i;
 
 	mml_err("rdma component %u dump:", comp->id);
 
-	/* Enable shadow read working */
-	shadow_ctrl = readl(base + RDMA_SHADOW_CTRL);
-	shadow_ctrl |= 0x4;
-	writel(shadow_ctrl, base + RDMA_SHADOW_CTRL);
-
 	if (rdma->data->write_sec_reg)
 		cmdq_util_prebuilt_dump(0, CMDQ_TOKEN_PREBUILT_MML_WAIT);
+	else {
+		u32 shadow_ctrl;
+
+		/* Enable shadow read working */
+		shadow_ctrl = readl(base + RDMA_SHADOW_CTRL);
+		shadow_ctrl |= 0x4;
+		writel(shadow_ctrl, base + RDMA_SHADOW_CTRL);
+	}
 
 	value[0] = readl(base + RDMA_EN);
 	value[1] = readl(base + RDMA_RESET);
 	value[2] = readl(base + RDMA_SRC_CON);
 	value[3] = readl(base + RDMA_COMP_CON);
-	/* for afbc case enable more debug info */
-	if (value[3] & BIT(22)) {
-		u32 debug_con = readl(base + RDMA_DEBUG_CON);
-
-		debug_con |= 0xe000;
-		writel(debug_con, base + RDMA_DEBUG_CON);
-	}
-
 	value[4] = readl(base + RDMA_MF_BKGD_SIZE_IN_BYTE);
 	value[5] = readl(base + RDMA_MF_BKGD_SIZE_IN_PXL);
 	value[6] = readl(base + RDMA_MF_SRC_SIZE);
@@ -1879,11 +1920,11 @@ static s32 dbg_get(char *buf, const struct kernel_param *kp)
 			struct mml_comp *comp = &dbg_probed_components[i]->comp;
 
 			length += snprintf(buf + length, PAGE_SIZE - length,
-				"  - [%d] mml comp_id: %d.%d @%08x name: %s bound: %d\n", i,
+				"  - [%d] mml comp_id: %d.%d @%llx name: %s bound: %d\n", i,
 				comp->id, comp->sub_idx, comp->base_pa,
 				comp->name ? comp->name : "(null)", comp->bound);
 			length += snprintf(buf + length, PAGE_SIZE - length,
-				"  -         larb_port: %d @%08x pw: %d clk: %d\n",
+				"  -         larb_port: %d @%llx pw: %d clk: %d\n",
 				comp->larb_port, comp->larb_base,
 				comp->pw_cnt, comp->clk_cnt);
 		}

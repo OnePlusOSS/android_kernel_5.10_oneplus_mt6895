@@ -48,8 +48,10 @@ mcDrvModule-y := \
 ccflags-y += -DNDEBUG
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += $(KBUILD_CFLAGS_TRUSTONIC)
-
 ccflags-$(CONFIG_TRUSTONIC_TEE_DEBUG) += -DDEBUG
+
+#ccflags-y += -DBIG_CORE_SWITCH_AFFINITY_MASK=0xE0
+ccflags-y += -DPLAT_DEFAULT_TEE_AFFINITY_MASK=0xE0
 
 # VLX Driver includes
 KBUILD_CFLAGS += -I${VLM_VDRIVERS}/drivers/vlx

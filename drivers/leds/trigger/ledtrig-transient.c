@@ -20,6 +20,11 @@
 #include <linux/leds.h>
 #include "../leds.h"
 
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*BSP.CHG.Basic 2022/10/21 add for delay the vibration time to 30ms*/
+#define VIBR_TIME 30 /*ms*/
+/*#endif*/
+
 struct transient_trig_data {
 	int activate;
 	int state;
@@ -38,7 +43,7 @@ static void transient_timer_function(struct timer_list *t)
 	transient_data->activate = 0;
 	led_set_brightness_nosleep(led_cdev, transient_data->restore_state);
 }
-
+#if (defined(CONFIG_OPLUS_CHARGER_MTK6895S) || defined (CONFIG_OPLUS_CHARGER_MTK6789S))
 static ssize_t transient_activate_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -66,6 +71,12 @@ static ssize_t transient_activate_store(struct device *dev,
 
 	/* cancel the running timer */
 	if (state == 0 && transient_data->activate == 1) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*BSP.CHG.Basic 2022/10/21 add for delay the vibration time to 30ms*/
+		if (transient_data->duration == VIBR_TIME) {
+			return size;
+		}
+/*#endif*/
 		del_timer(&transient_data->timer);
 		transient_data->activate = state;
 		led_set_brightness_nosleep(led_cdev,
@@ -111,7 +122,13 @@ static ssize_t transient_duration_store(struct device *dev,
 	ret = kstrtoul(buf, 10, &state);
 	if (ret)
 		return ret;
-
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*BSP.CHG.Basic 2022/10/21 add for delay the vibration time to 30ms*/
+	if (state < VIBR_TIME) {
+		printk("vibr transient_duration_store time %u\n", state);
+		state = VIBR_TIME;
+	}
+/*#endif*/
 	transient_data->duration = state;
 	return size;
 }
@@ -159,7 +176,7 @@ static struct attribute *transient_trig_attrs[] = {
 	NULL
 };
 ATTRIBUTE_GROUPS(transient_trig);
-
+#endif
 static int transient_trig_activate(struct led_classdev *led_cdev)
 {
 	struct transient_trig_data *tdata;
@@ -189,7 +206,9 @@ static struct led_trigger transient_trigger = {
 	.name     = "transient",
 	.activate = transient_trig_activate,
 	.deactivate = transient_trig_deactivate,
-	.groups = transient_trig_groups,
+#if (defined(CONFIG_OPLUS_CHARGER_MTK6895S) || defined (CONFIG_OPLUS_CHARGER_MTK6789S))
+        .groups = transient_trig_groups,
+#endif
 };
 module_led_trigger(transient_trigger);
 

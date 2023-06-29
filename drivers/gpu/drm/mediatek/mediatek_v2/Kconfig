@@ -1,5 +1,6 @@
 config DRM_MEDIATEK_V2
 	bool "Version 2 of DRM Support for Mediatek SoCs"
+	select FONT_SUPPORT
 	help
 	  Choose this option if you have a phone Mediatek
 	  SoCs. The module will be called mediatek-drm v2
@@ -28,7 +29,14 @@ config MTK_DRE30_SUPPORT
 	  Decide whether to support ambient-light adaptive luma and
 	  display visual enhancement ver.3.
 	  This feature requires the cowork of AAL user-space algorithm process.
-
+config MTK_ROUND_CORNER_SUPPORT
+        bool "enable medietak display round corner"
+        default n
+        help
+          define CONFIG_MTK_ROUND_CORNER_SUPPORT to enable Mediatek Round Corner on display.
+          If you want to use Meditek Round Corner on display, please make sure it is Y in xxx_defconfig.mk.
+          This feature require round corner pattern provided in lcm driver folder.
+          If unsure, set N.
 config MTK_DISP_LOGGER
 	bool "Default enable display logger function"
 	help
@@ -38,3 +46,23 @@ config MTK_DISP_LOGGER
 	  initial display loggger during driver probe
 	  stage, but can still manual disable this function
 	  through debugfs or procfs.
+
+config MTK_RECU_FENCE_LOCK
+	bool "enable fence deadlock workarond for img_gpu"
+	help
+	  For IMG GPU, it will attach to display fence
+	  by callback, and it maybe occur deadlock when fence ref is
+	  reduced to zero in fence signal flow because of linux fence
+	  limitation. So the option will control whether display run
+	  workaround flow.
+
+config PXLW_IRIS
+	bool "Insert extra checks and debug info into the DRM range managers"
+	default n
+	depends on DRM=y
+	depends on STACKTRACE_SUPPORT
+config MTK_FB_MMDVFS_SUPPORT
+       bool "No HRT hardware is required to support MMDVFS"
+       help
+         If HRT hardware is not in the platform, then support for
+         MMDVFS needs to be added through software.

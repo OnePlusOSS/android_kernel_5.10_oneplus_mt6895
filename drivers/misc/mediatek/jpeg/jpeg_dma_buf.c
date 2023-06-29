@@ -33,8 +33,8 @@ int jpg_dmabuf_get_iova(struct dma_buf *dbuf, u64 *iova,
 void jpg_dmabuf_free_iova(struct dma_buf *dbuf,
 	struct dma_buf_attachment *attach, struct sg_table *sgt)
 {
-	if (attach == NULL || sgt == NULL) {
-		JPEG_LOG(0, "attach or sgt null, not need to free iova");
+	if (dbuf == NULL || attach == NULL || sgt == NULL) {
+		JPEG_LOG(0, "dbuf or attach or sgt null, not need to free iova");
 		return;
 	}
 	dma_buf_unmap_attachment(attach, sgt, DMA_TO_DEVICE);
@@ -57,6 +57,11 @@ struct dma_buf *jpg_dmabuf_get(int fd)
 	}
 
 	return dbuf;
+}
+
+void jpg_get_dmabuf(struct dma_buf *dbuf)
+{
+	get_dma_buf(dbuf);
 }
 
 void jpg_dmabuf_put(struct dma_buf *dbuf)
@@ -100,6 +105,7 @@ struct dma_buf *jpg_dmabuf_alloc(size_t size, size_t align, unsigned int flags)
 
 	dbuf = dma_heap_buffer_alloc(dma_heap, size,
 		O_CLOEXEC | O_RDWR, DMA_HEAP_VALID_HEAP_FLAGS);
+	dma_heap_put(dma_heap);
 	if(IS_ERR(dbuf)) {
 		JPEG_LOG(0, "buffer alloc fail");
 		return NULL;

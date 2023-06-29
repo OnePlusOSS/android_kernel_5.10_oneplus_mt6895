@@ -12,6 +12,13 @@
 #include <linux/seq_file.h>
 #include <linux/types.h>
 
+//bsp.storage.ufs 2021.10.14 add for /proc/devinfo/ufs
+#define OPLUS_DEVINFO_UFS
+
+#ifdef OPLUS_DEVINFO_UFS
+#include <soc/oplus/device_info.h>
+#endif
+
 /*
  * snprintf may return a value of size or "more" to indicate
  * that the output was truncated, thus be careful of "more"

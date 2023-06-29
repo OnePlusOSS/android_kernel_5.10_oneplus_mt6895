@@ -76,6 +76,7 @@
 #define SDC_BLK_NUM      0x50
 #define SDC_VOL_CHG      0x54
 #define SDC_ADV_CFG0     0x64
+#define MSDC_NEW_RX_CFG  0x68
 #define EMMC_IOCON       0x7c
 #define SDC_ACMD_RESP    0x80
 #define DMA_SA_H4BIT     0x8c
@@ -122,6 +123,8 @@
 #define EMMC50_PAD_DAT5_TUNE	0x24
 #define EMMC50_PAD_DAT6_TUNE	0x28
 #define EMMC50_PAD_DAT7_TUNE	0x2c
+#define LOOP_TEST_CONTROL	0x30
+#define MSDC_TOP_NEW_RX_CFG	0x38
 
 /*--------------------------------------------------------------------------*/
 /* Register Mask                                                            */
@@ -239,6 +242,10 @@
 #define SDC_DAT1_IRQ_TRIGGER	(0x1 << 19)	/* RW */
 /* SDC_ADV_CFG0 mask */
 #define SDC_RX_ENHANCE_EN	(0x1 << 20)	/* RW */
+#define SDC_NEW_TX_EN		(0x1 << 31)	/* RW */
+
+/* MSDC_NEW_RX_CFG mask */
+#define MSDC_NEW_RX_PATH_SEL	(0x1 << 0)	/* RW */
 
 /* DMA_SA_H4BIT mask */
 #define DMA_ADDR_HIGH_4BIT      (0xf << 0)	/* RW */
@@ -440,6 +447,12 @@
 #define DCC_SEL                 (0x1 << 1)	/* RW */
 #define PAD_CLK_TXDLY           (0x1f << 10)	/* RW */
 
+/* LOOP_TEST_CONTROL mask */
+#define TEST_LOOP_DSCLK_MUX_SEL	(0x1 << 0)	/* RW */
+#define TEST_LOOP_LATCH_MUX_SEL	(0x1 << 1)	/* RW */
+#define LOOP_EN_SEL_CLK		(0x1 << 20)	/* RW */
+#define TEST_HS400_CMD_LOOP_MUX_SEL	(0x1 << 31)	/* RW */
+
 #define REQ_CMD_EIO  (0x1 << 0)
 #define REQ_CMD_TMO  (0x1 << 1)
 #define REQ_DAT_ERR  (0x1 << 2)
@@ -546,6 +559,8 @@ struct msdc_save_para {
 	/* msdc top reg  */
 	u32 top_emmc50_pad_ctl0;
 	u32 top_emmc50_pad_dat_tune[8];
+	u32 top_loop_test_control;
+	u32 top_new_rx_cfg;
 };
 
 struct mtk_mmc_compatible {
@@ -561,6 +576,15 @@ struct mtk_mmc_compatible {
 	bool support_64g;
 	bool use_internal_cd;
 	bool need_gate_cg;
+	u8 new_tx_ver;
+#define MSDC_NEW_TX_V1		(1)
+#define MSDC_NEW_TX_V2		(2)
+#define support_new_tx(x)	((x) != 0)
+	u8 new_rx_ver;
+#define MSDC_NEW_RX_V1		(1)
+#define MSDC_NEW_RX_V2		(2)
+#define support_new_rx(x)	((x) != 0)
+	bool set_crypto_enable_in_sw;
 };
 
 struct msdc_tune_para {
@@ -588,6 +612,9 @@ struct msdc_host {
 	int cmd_rsp;
 
 	spinlock_t lock;
+#if IS_ENABLED(CONFIG_MMC_DEBUG)
+	spinlock_t log_lock;
+#endif
 	struct mmc_request *mrq;
 	struct mmc_command *cmd;
 	struct mmc_data *data;
@@ -605,6 +632,8 @@ struct msdc_host {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *pins_default;
 	struct pinctrl_state *pins_uhs;
+	struct pinctrl_state *pins_evt_on;
+	struct pinctrl_state *pins_evt_off;
 	struct delayed_work req_timeout;
 	int irq;		/* host interrupt */
 	int eint_irq;	        /* device interrupt */
@@ -659,6 +688,8 @@ struct msdc_host {
 	bool qos_enable;
 	struct icc_path *bw_path;
 	unsigned int peak_bw;
+	u32 filter_enable;/*explorer not support cmd52*/
+	u32 explorer_support;/*explorer support or not*/
 };
 
 /*--------------------------------------------------------------------------*/
@@ -680,21 +711,21 @@ struct msdc_host {
 /* we take it as bad sd when the bad sd condition occurs
  * out of tolerance
  */
-u32 bad_sd_tolerance[BAD_SD_DETECTER_COUNT] = {10};
+static u32 bad_sd_tolerance[BAD_SD_DETECTER_COUNT] = {10};
 
 /* bad sd condition occur times
  */
-u32 bad_sd_detecter[BAD_SD_DETECTER_COUNT] = {0};
+static u32 bad_sd_detecter[BAD_SD_DETECTER_COUNT] = {0};
 
 /* bad sd condition occur times will reset to zero by self
  * when reach the forget time (when set to 0, means not
  * reset to 0 by self), unit:s
  */
-u32 bad_sd_forget[BAD_SD_DETECTER_COUNT] = {3};
+static u32 bad_sd_forget[BAD_SD_DETECTER_COUNT] = {3};
 
 /* the latest occur time of the bad sd condition,
  * unit: clock
  */
-unsigned long bad_sd_timer[BAD_SD_DETECTER_COUNT] = {0};
+static unsigned long bad_sd_timer[BAD_SD_DETECTER_COUNT] = {0};
 
 #endif  /* _MTK_MMC_H_ */

@@ -107,7 +107,18 @@ static unsigned int ma_to_mw(unsigned int bat_cur)
 		return 0;
 	}
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/*BSP.CHG.BASIC, 2022/05/20, Add for convert the vol to mV*/
+	/*check if the bat_vol unit is uV.*/
+	if (prop.intval/1000/1000) {
+		bat_vol = prop.intval / 1000; /*voltage unit: mV*/
+	} else {
+		bat_vol = prop.intval;  /*voltage unit: mV*/
+	}
+#else
 	bat_vol = prop.intval / 1000;
+#endif
+
 	ret_val = (bat_vol * bat_cur) / 1000;
 	pr_info("[%s] %d(mV) * %d(mA) = %d(mW)\n",
 		__func__, bat_vol, bat_cur, ret_val);
@@ -783,7 +794,7 @@ static int mt_pbm_manual_mode_proc_show(struct seq_file *m, void *v)
 static ssize_t mt_pbm_manual_mode_proc_write
 (struct file *file, const char __user *buffer, size_t count, loff_t *data)
 {
-	char desc[64], cmd[20];
+	char desc[64], cmd[21];
 	int len = 0, manual_mode = 0;
 	int loading_dlpt, loading_md1;
 	int loading_cpu, loading_gpu, loading_flash;
@@ -827,7 +838,7 @@ static int mt_pbm_stop_proc_show(struct seq_file *m, void *v)
 static ssize_t mt_pbm_stop_proc_write
 (struct file *file, const char __user *buffer, size_t count, loff_t *data)
 {
-	char desc[64], cmd[20];
+	char desc[64], cmd[21];
 	int len = 0, stop = 0;
 
 	len = (count < (sizeof(desc) - 1)) ? count : (sizeof(desc) - 1);

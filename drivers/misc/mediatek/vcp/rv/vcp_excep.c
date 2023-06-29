@@ -15,6 +15,7 @@
 #include <linux/ratelimit.h>
 #include <linux/delay.h>
 #include <linux/of_reserved_mem.h>
+#include <linux/slab.h>
 #include "vcp.h"
 #include "vcp_ipi_pin.h"
 #include "vcp_helper.h"
@@ -108,6 +109,8 @@ uint32_t memorydump_size_probe(struct platform_device *pdev)
 
 void vcp_dump_last_regs(int mmup_enable)
 {
+	uint32_t *out, *out_end;
+
 	if (mmup_enable == 0) {
 		pr_notice("[VCP] power off, do not vcp_dump_last_regs\n");
 		return;
@@ -150,43 +153,43 @@ void vcp_dump_last_regs(int mmup_enable)
 	pr_notice("[VCP] c0_status = %08x\n", c0_m->status);
 	pr_notice("[VCP] c0_pc = %08x\n", c0_m->pc);
 	pr_notice("[VCP] c0_pc2 = %08x\n", readl(R_CORE0_MON_PC));
-	pr_debug("[VCP] c0_lr = %08x\n", c0_m->lr);
-	pr_debug("[VCP] c0_sp = %08x\n", c0_m->sp);
+	pr_notice("[VCP] c0_lr = %08x\n", c0_m->lr);
+	pr_notice("[VCP] c0_sp = %08x\n", c0_m->sp);
 	pr_notice("[VCP] c0_pc_latch = %08x\n", c0_m->pc_latch);
-	pr_debug("[VCP] c0_lr_latch = %08x\n", c0_m->lr_latch);
-	pr_debug("[VCP] c0_sp_latch = %08x\n", c0_m->sp_latch);
+	pr_notice("[VCP] c0_lr_latch = %08x\n", c0_m->lr_latch);
+	pr_notice("[VCP] c0_sp_latch = %08x\n", c0_m->sp_latch);
 	if (vcpreg.twohart) {
 		pr_notice("[VCP] c0_t1_pc = %08x\n", c0_t1_m->pc);
 		pr_notice("[VCP] c0_t1_pc2 = %08x\n", readl(R_CORE0_T1_MON_PC));
-		pr_debug("[VCP] c0_t1_lr = %08x\n", c0_t1_m->lr);
-		pr_debug("[VCP] c0_t1_sp = %08x\n", c0_t1_m->sp);
+		pr_notice("[VCP] c0_t1_lr = %08x\n", c0_t1_m->lr);
+		pr_notice("[VCP] c0_t1_sp = %08x\n", c0_t1_m->sp);
 		pr_notice("[VCP] c0_t1_pc_latch = %08x\n", c0_t1_m->pc_latch);
-		pr_debug("[VCP] c0_t1_lr_latch = %08x\n", c0_t1_m->lr_latch);
-		pr_debug("[VCP] c0_t1_sp_latch = %08x\n", c0_t1_m->sp_latch);
+		pr_notice("[VCP] c0_t1_lr_latch = %08x\n", c0_t1_m->lr_latch);
+		pr_notice("[VCP] c0_t1_sp_latch = %08x\n", c0_t1_m->sp_latch);
 	}
 	if (vcpreg.core_nums == 2) {
 		pr_notice("[VCP] c1_status = %08x\n", c1_m->status);
 		pr_notice("[VCP] c1_pc = %08x\n", c1_m->pc);
 		pr_notice("[VCP] c1_pc2 = %08x\n", readl(R_CORE1_MON_PC));
-		pr_debug("[VCP] c1_lr = %08x\n", c1_m->lr);
-		pr_debug("[VCP] c1_sp = %08x\n", c1_m->sp);
+		pr_notice("[VCP] c1_lr = %08x\n", c1_m->lr);
+		pr_notice("[VCP] c1_sp = %08x\n", c1_m->sp);
 		pr_notice("[VCP] c1_pc_latch = %08x\n", c1_m->pc_latch);
-		pr_debug("[VCP] c1_lr_latch = %08x\n", c1_m->lr_latch);
-		pr_debug("[VCP] c1_sp_latch = %08x\n", c1_m->sp_latch);
+		pr_notice("[VCP] c1_lr_latch = %08x\n", c1_m->lr_latch);
+		pr_notice("[VCP] c1_sp_latch = %08x\n", c1_m->sp_latch);
 	}
 	if (vcpreg.core_nums == 2 && vcpreg.twohart) {
 		pr_notice("[VCP] c1_t1_pc = %08x\n", c1_t1_m->pc);
 		pr_notice("[VCP] c1_t1_pc2 = %08x\n", readl(R_CORE1_T1_MON_PC));
-		pr_debug("[VCP] c1_t1_lr = %08x\n", c1_t1_m->lr);
-		pr_debug("[VCP] c1_t1_sp = %08x\n", c1_t1_m->sp);
+		pr_notice("[VCP] c1_t1_lr = %08x\n", c1_t1_m->lr);
+		pr_notice("[VCP] c1_t1_sp = %08x\n", c1_t1_m->sp);
 		pr_notice("[VCP] c1_t1_pc_latch = %08x\n", c1_t1_m->pc_latch);
-		pr_debug("[VCP] c1_t1_lr_latch = %08x\n", c1_t1_m->lr_latch);
-		pr_debug("[VCP] c1_t1_sp_latch = %08x\n", c1_t1_m->sp_latch);
+		pr_notice("[VCP] c1_t1_lr_latch = %08x\n", c1_t1_m->lr_latch);
+		pr_notice("[VCP] c1_t1_sp_latch = %08x\n", c1_t1_m->sp_latch);
 	}
 
 	/* bus tracker reg dump */
-	pr_debug("BUS DBG CON: %x\n", readl(VCP_BUS_DBG_CON));
-	pr_debug("R %08x %08x %08x %08x %08x %08x %08x %08x\n",
+	pr_notice("BUS DBG CON: %x\n", readl(VCP_BUS_DBG_CON));
+	pr_notice("R %08x %08x %08x %08x %08x %08x %08x %08x\n",
 			readl(VCP_BUS_DBG_AR_TRACK0_L),
 			readl(VCP_BUS_DBG_AR_TRACK1_L),
 			readl(VCP_BUS_DBG_AR_TRACK2_L),
@@ -196,7 +199,7 @@ void vcp_dump_last_regs(int mmup_enable)
 			readl(VCP_BUS_DBG_AR_TRACK6_L),
 			readl(VCP_BUS_DBG_AR_TRACK7_L)
 		   );
-	pr_debug("W %08x %08x %08x %08x %08x %08x %08x %08x\n",
+	pr_notice("W %08x %08x %08x %08x %08x %08x %08x %08x\n",
 			readl(VCP_BUS_DBG_AW_TRACK0_L),
 			readl(VCP_BUS_DBG_AW_TRACK1_L),
 			readl(VCP_BUS_DBG_AW_TRACK2_L),
@@ -206,6 +209,15 @@ void vcp_dump_last_regs(int mmup_enable)
 			readl(VCP_BUS_DBG_AW_TRACK6_L),
 			readl(VCP_BUS_DBG_AW_TRACK7_L)
 		   );
+
+	out = kmalloc(0x400 * sizeof(uint32_t), GFP_DMA|GFP_ATOMIC);
+	if (!out)
+		return;
+
+	out_end = out + 0x400;
+	pr_notice("%s at %d out:%p, out_end:%p\n", __func__, __LINE__, out, out_end);
+	vcp_do_tbufdump(out, out_end);
+	kfree(out);
 }
 
 void vcp_do_regdump(uint32_t *out, uint32_t *out_end)
@@ -434,7 +446,7 @@ static unsigned int vcp_crash_dump(enum vcp_core_id id)
 static void vcp_prepare_aed_dump(char *aed_str, enum vcp_core_id id)
 {
 	char *vcp_A_log = NULL;
-	size_t offset = 0;
+	int offset = 0;
 
 	pr_debug("[VCP] %s begins:%s\n", __func__, aed_str);
 	vcp_dump_last_regs(mmup_enable_count());
@@ -448,38 +460,49 @@ static void vcp_prepare_aed_dump(char *aed_str, enum vcp_core_id id)
 		memset(vcp_dump.detail_buff, 0, VCP_AED_STR_LEN);
 
 		offset = snprintf(vcp_dump.detail_buff + offset,
-		VCP_AED_STR_LEN - offset, "%s\n", aed_str);
+			VCP_AED_STR_LEN - offset, "%s\n", aed_str);
+		if (offset < 0)
+			pr_notice("%s line %d error\n", __func__, __LINE__);
 		offset = snprintf(vcp_dump.detail_buff + offset,
-		VCP_AED_STR_LEN - offset,
-		"core0 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
-		c0_m->pc, c0_m->lr, c0_m->sp);
+			VCP_AED_STR_LEN - offset,
+			"core0 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
+			c0_m->pc, c0_m->lr, c0_m->sp);
+		if (offset < 0)
+			pr_notice("%s line %d error\n", __func__, __LINE__);
 
 		if (!vcpreg.twohart)
 			goto core1;
 
 		offset = snprintf(vcp_dump.detail_buff + offset,
-		VCP_AED_STR_LEN - offset,
-		"hart1 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
-		c0_t1_m->pc, c0_t1_m->lr, c0_t1_m->sp);
+			VCP_AED_STR_LEN - offset,
+			"hart1 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
+			c0_t1_m->pc, c0_t1_m->lr, c0_t1_m->sp);
+		if (offset < 0)
+			pr_notice("%s line %d error\n", __func__, __LINE__);
 core1:
 		if (vcpreg.core_nums == 1)
 			goto end;
 
 		offset = snprintf(vcp_dump.detail_buff + offset,
-		VCP_AED_STR_LEN - offset,
-		"core1 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
-		c1_m->pc, c1_m->lr, c1_m->sp);
+			VCP_AED_STR_LEN - offset,
+			"core1 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
+			c1_m->pc, c1_m->lr, c1_m->sp);
+		if (offset < 0)
+			pr_notice("%s line %d error\n", __func__, __LINE__);
 
 		if (!vcpreg.twohart)
 			goto end;
 
 		offset = snprintf(vcp_dump.detail_buff + offset,
-		VCP_AED_STR_LEN - offset,
-		"hart1 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
-		c1_t1_m->pc, c1_t1_m->lr, c1_t1_m->sp);
+			VCP_AED_STR_LEN - offset,
+			"hart1 pc=0x%08x, lr=0x%08x, sp=0x%08x\n",
+			c1_t1_m->pc, c1_t1_m->lr, c1_t1_m->sp);
+		if (offset < 0)
+			pr_notice("%s line %d error\n", __func__, __LINE__);
 end:
-		snprintf(vcp_dump.detail_buff + offset,
-		VCP_AED_STR_LEN - offset, "last log:\n%s", vcp_A_log);
+		if (snprintf(vcp_dump.detail_buff + offset,
+				VCP_AED_STR_LEN - offset, "last log:\n%s", vcp_A_log) < 0)
+			pr_notice("%s line %d error\n", __func__, __LINE__);
 
 		vcp_dump.detail_buff[VCP_AED_STR_LEN - 1] = '\0';
 	}
@@ -574,7 +597,7 @@ static ssize_t vcp_A_dump_show(struct file *filep,
 		memset(vcp_dump.ramdump + offset, 0x0, size);
 		/* log for the first and latest cleanup */
 		if (offset == 0 || size == (vcp_dump.ramdump_length - offset))
-			pr_notice("[VCP] %s ramdump cleaned of:0x%x sz:0x%x\n", __func__,
+			pr_notice("[VCP] %s ramdump cleaned of:0x%llx sz:0x%zx\n", __func__,
 				offset, size);
 #ifdef VCP_DEBUG_REMOVED
 		/* the last time read vcp_dump buffer has done

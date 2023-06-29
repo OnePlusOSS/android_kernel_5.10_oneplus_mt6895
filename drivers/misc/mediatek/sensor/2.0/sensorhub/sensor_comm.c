@@ -107,6 +107,8 @@ int sensor_comm_ctrl_send(struct sensor_comm_ctrl *ctrl, unsigned int size)
 	return ret;
 }
 
+EXPORT_SYMBOL_GPL(sensor_comm_ctrl_send);
+
 int sensor_comm_notify(struct sensor_comm_notify *notify)
 {
 	if (!READ_ONCE(scp_status)) {

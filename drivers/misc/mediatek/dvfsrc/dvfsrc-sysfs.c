@@ -108,9 +108,13 @@ static ssize_t dvfsrc_force_vcore_dvfs_opp_store(struct device *dev,
 	u32 val = 0;
 	struct mtk_dvfsrc *dvfsrc = dev_get_drvdata(dev);
 
+	if (!(dvfsrc->force_en == 9595))
+		return -EINVAL;
+
 	if (kstrtou32(buf, 10, &val))
 		return -EINVAL;
 
+	pr_info("[dvfsrc] force opp = %d, pid: %d, comm: %s\n", val, current->pid, current->comm);
 	if (dvfsrc->force_opp)
 		dvfsrc->force_opp(dvfsrc, val);
 
@@ -288,6 +292,29 @@ static inline ssize_t dvfsrc_qos_mode_store(struct device *dev,
 }
 DEVICE_ATTR_RW(dvfsrc_qos_mode);
 
+static inline ssize_t dvfsrc_enable_force_mode_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct mtk_dvfsrc *dvfsrc = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n", dvfsrc->force_en);
+}
+
+static inline ssize_t dvfsrc_enable_force_mode_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	unsigned int mode = 0;
+	struct mtk_dvfsrc *dvfsrc = dev_get_drvdata(dev);
+
+	if (kstrtouint(buf, 0, &mode) != 0)
+		return -EINVAL;
+
+	dvfsrc->force_en = mode;
+
+	return count;
+}
+DEVICE_ATTR_RW(dvfsrc_enable_force_mode);
+
 
 static struct attribute *dvfsrc_sysfs_attrs[] = {
 	&dev_attr_dvfsrc_req_bw.attr,
@@ -303,6 +330,7 @@ static struct attribute *dvfsrc_sysfs_attrs[] = {
 	&dev_attr_spm_cmd_dump.attr,
 	&dev_attr_spm_timer_latch_dump.attr,
 	&dev_attr_dvfsrc_qos_mode.attr,
+	&dev_attr_dvfsrc_enable_force_mode.attr,
 	NULL,
 };
 

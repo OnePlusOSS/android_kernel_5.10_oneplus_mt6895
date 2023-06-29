@@ -73,7 +73,11 @@
 #define PE_DBG_RESET_VDM_DIS	1
 
 /* sender response timer will sub delta between transmit & tx_success */
+#if IS_ENABLED(CONFIG_USB_POWER_DELIVERY)
 #define PD_DYNAMIC_SENDER_RESPONSE	1
+#else
+#define PD_DYNAMIC_SENDER_RESPONSE	0
+#endif /* CONFIG_USB_POWER_DELIVERY */
 
 #define PD_BUG_ON(x)	WARN_ON(x)
 
@@ -181,23 +185,32 @@ struct tcpc_desc {
 #define TCPC_FLAGS_SBU_POLLING			(1<<16)
 #define TCPC_FLAGS_WD_POLLING_ONLY		(1<<17)
 
+#define TYPEC_CC_PULL(rp_lvl, res)	((rp_lvl & 0x03) << 3 | (res & 0x07))
+
+enum tcpc_rp_lvl {
+	TYPEC_RP_DFT,
+	TYPEC_RP_1_5,
+	TYPEC_RP_3_0,
+	TYPEC_RP_RSV,
+};
+
 enum tcpc_cc_pull {
 	TYPEC_CC_RA = 0,
 	TYPEC_CC_RP = 1,
 	TYPEC_CC_RD = 2,
 	TYPEC_CC_OPEN = 3,
-	TYPEC_CC_DRP = 4,	/* from Rd */
+	TYPEC_CC_DRP = 4,		/* from Rd */
 
-	TYPEC_CC_RP_DFT = 1,		/* 0x00 + 1 */
-	TYPEC_CC_RP_1_5 = 9,		/* 0x08 + 1*/
-	TYPEC_CC_RP_3_0 = 17,		/* 0x10 + 1 */
+	TYPEC_CC_RP_DFT = TYPEC_CC_PULL(TYPEC_RP_DFT, TYPEC_CC_RP),
+	TYPEC_CC_RP_1_5 = TYPEC_CC_PULL(TYPEC_RP_1_5, TYPEC_CC_RP),
+	TYPEC_CC_RP_3_0 = TYPEC_CC_PULL(TYPEC_RP_3_0, TYPEC_CC_RP),
 
-	TYPEC_CC_DRP_DFT = 4,		/* 0x00 + 4 */
-	TYPEC_CC_DRP_1_5 = 12,		/* 0x08 + 4 */
-	TYPEC_CC_DRP_3_0 = 20,		/* 0x10 + 4 */
+	TYPEC_CC_DRP_DFT = TYPEC_CC_PULL(TYPEC_RP_DFT, TYPEC_CC_DRP),
+	TYPEC_CC_DRP_1_5 = TYPEC_CC_PULL(TYPEC_RP_1_5, TYPEC_CC_DRP),
+	TYPEC_CC_DRP_3_0 = TYPEC_CC_PULL(TYPEC_RP_3_0, TYPEC_CC_DRP),
 };
 
-#define TYPEC_CC_PULL_GET_RES(pull)		(pull & 0x07)
+#define TYPEC_CC_PULL_GET_RES(pull)	(pull & 0x07)
 #define TYPEC_CC_PULL_GET_RP_LVL(pull)	((pull & 0x18) >> 3)
 
 enum tcpm_rx_cap_type {
@@ -348,6 +361,9 @@ struct tcpc_device {
 	struct semaphore timer_enable_mask_lock;
 	spinlock_t timer_tick_lock;
 	atomic_t pending_event;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	atomic_t suspend_pending;
+#endif
 	uint64_t timer_tick;
 	uint64_t timer_enable_mask;
 	wait_queue_head_t event_wait_que;
@@ -365,7 +381,9 @@ struct tcpc_device {
 	/* For TCPC TypeC */
 	uint8_t typec_state;
 	uint8_t typec_role;
+#ifdef OPLUS_FEATURE_CHG_BASIC
 	uint8_t typec_role_new;
+#endif /*OPLUS_FEATURE_CHG_BASIC*/
 	uint8_t typec_attach_old;
 	uint8_t typec_attach_new;
 	uint8_t typec_local_cc;
@@ -518,10 +536,8 @@ struct tcpc_device {
 	u32 boot_mode;
 	u32 boot_type;
 	u32 alert_mask;
-#if CONFIG_USB_PD_CHECK_RX_PENDING_IF_SRTOUT
 	struct completion alert_done;
 	long long alert_max_access_time;
-#endif /* CONFIG_USB_PD_CHECK_RX_PENDING_IF_SRTOUT */
 };
 
 #define to_tcpc_device(obj) container_of(obj, struct tcpc_device, dev)

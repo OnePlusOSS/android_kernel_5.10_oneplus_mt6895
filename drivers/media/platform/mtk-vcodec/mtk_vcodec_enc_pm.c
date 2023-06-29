@@ -20,7 +20,7 @@
 
 #include <mtk_iommu.h>
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 #include <mach/mt_iommu.h>
 #include "mach/pseudo_m4u.h"
 #include "smi_port.h"
@@ -50,7 +50,7 @@ void mtk_venc_init_ctx_pm(struct mtk_vcodec_ctx *ctx)
 	}
 
 	pr_info("slbc_request %d, 0x%x, 0x%llx\n",
-	ctx->use_slbc, ctx->slbc_addr, ctx->sram_data.paddr);
+	ctx->use_slbc, ctx->slbc_addr, (unsigned long long)ctx->sram_data.paddr);
 }
 
 int mtk_vcodec_init_enc_pm(struct mtk_vcodec_dev *mtkdev)
@@ -76,7 +76,7 @@ int mtk_vcodec_init_enc_pm(struct mtk_vcodec_dev *mtkdev)
 
 	node = of_parse_phandle(dev->of_node, "mediatek,larbs", 0);
 	if (!node) {
-		mtk_v4l2_err("no mediatek,larb found");
+		mtk_v4l2_err("no mediatek,larbs found");
 		return -1;
 	}
 	for (larb_index = 0; larb_index < MTK_VENC_MAX_LARB_COUNT; larb_index++) {
@@ -137,16 +137,22 @@ void mtk_vcodec_enc_clock_on(struct mtk_vcodec_ctx *ctx, int core_id)
 	struct mtk_vcodec_pm *pm = &ctx->dev->pm;
 	int ret;
 	int i, larb_port_num, larb_id;
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 	struct M4U_PORT_STRUCT port;
 #endif
 	int larb_index;
-	int j, clk_id;
+	int j;
 	struct mtk_venc_clks_data *clks_data;
 	struct mtk_vcodec_dev *dev = NULL;
+	unsigned int clk_id;
 	unsigned long flags;
 
 	dev = ctx->dev;
+
+	if (core_id < 0) {
+		mtk_v4l2_err("invalid core_id %d", core_id);
+		return;
+	}
 
 #ifndef FPGA_PWRCLK_API_DISABLE
 	time_check_start(MTK_FMT_ENC, core_id);
@@ -218,7 +224,7 @@ void mtk_vcodec_enc_clock_on(struct mtk_vcodec_ctx *ctx, int core_id)
 
 	time_check_end(MTK_FMT_ENC, core_id, 50);
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 	time_check_start(MTK_FMT_ENC, core_id);
 	if (core_id == MTK_VENC_CORE_0) {
 		larb_port_num = SMI_LARB7_PORT_NUM;
@@ -239,16 +245,102 @@ void mtk_vcodec_enc_clock_on(struct mtk_vcodec_ctx *ctx, int core_id)
 #endif
 }
 
+static void mtk_venc_hw_break(struct mtk_vcodec_dev *dev, int core_id)
+{
+	void __iomem *reg_base = NULL;
+	bool timeout_fg = false;
+	struct timespec64 tv_start;
+	struct timespec64 tv_end;
+	s32 usec, timeout = 100000;
+
+	mtk_v4l2_debug(3, "[%s]+", __func__);
+
+	if (core_id == MTK_VENC_CORE_0)
+		reg_base = dev->enc_reg_base[VENC_SYS];
+	if (core_id == MTK_VENC_CORE_1)
+		reg_base = dev->enc_reg_base[VENC_C1_SYS];
+
+
+	if (reg_base != NULL) {
+		if ((readl(reg_base + 0x00EC)) == 0) {
+			mtk_v4l2_debug(3, "[%s] Core %d normal power off\n", __func__, core_id);
+			return;
+		}
+
+		mtk_v4l2_err("[%s] core %d abnormal power off\n", __func__, core_id);
+
+		writel(0xc0000000, (dev->enc_reg_base[VENC_SYS] + 0x5040));
+		writel(1, (reg_base + 0x1228));
+
+		mtk_venc_do_gettimeofday(&tv_start);
+		while ((readl(reg_base + 0x1228) & 0x7FFFFDFC) != 0) {
+			mtk_v4l2_debug(3, "[%s] wait core %d stop value 0x%x\n", __func__,
+					core_id, readl(reg_base + 0x1228));
+			mtk_venc_do_gettimeofday(&tv_end);
+			usec = (tv_end.tv_sec - tv_start.tv_sec) * 1000000
+				+ (tv_end.tv_nsec - tv_start.tv_nsec);
+			if (usec > timeout) {
+				timeout_fg = true;
+				break;
+			}
+		}
+
+		if (!timeout_fg)
+			return;
+
+		mtk_v4l2_err("venc core %d hw break timeout =>\n", core_id);
+		mtk_v4l2_err("0x0: 0x%x, 0x14: 0x%x, 0x24: 0x%x, 0x28: 0x%x, 0x2C: 0x%x, 0x64: 0x%x, 0x6C: 0x%x",
+			readl(reg_base), readl(reg_base + 0x14), readl(reg_base + 0x24),
+			readl(reg_base + 0x28), readl(reg_base + 0x2C),
+			readl(reg_base + 0x64), readl(reg_base + 0x6C));
+		mtk_v4l2_err("0x70: 0x%x, 0x74: 0x%x, 0x78: 0x%x, 0x7C: 0x%x, 0x80: 0x%x, 0x84: 0x%x",
+			readl(reg_base + 0x70), readl(reg_base + 0x74),
+			readl(reg_base + 0x78), readl(reg_base + 0x7C),
+			readl(reg_base + 0x80), readl(reg_base + 0x84));
+		mtk_v4l2_err("0x88: 0x%x, 0x8C: 0x%x, 0x90: 0x%x, 0x94: 0x%x",
+			readl(reg_base + 0x88), readl(reg_base + 0x8C),
+			readl(reg_base + 0x90), readl(reg_base + 0x94));
+		mtk_v4l2_err("0x108: 0x%x",
+			readl(reg_base + 0x108));
+		mtk_v4l2_err("0x200: 0x%x 0x204: 0x%x, 0x208: 0x%x, 0x20C: 0x%x, 0x210: 0x%x, 0x214: 0x%x, 0x218: 0x%x, 0x21C: 0x%x, 0x220: 0x%x",
+			readl(reg_base + 0x200), readl(reg_base + 0x204),
+			readl(reg_base + 0x208), readl(reg_base + 0x20C),
+			readl(reg_base + 0x210), readl(reg_base + 0x214),
+			readl(reg_base + 0x218), readl(reg_base + 0x21C),
+			readl(reg_base + 0x220));
+		mtk_v4l2_err("0xE0: 0x%x, 0x1B0: 0x%x, 0x1B4: 0x%x, 0x1170: 0x%x",
+			readl(reg_base + 0xE0), readl(reg_base + 0x1B0),
+			readl(reg_base + 0x1B4), readl(reg_base + 0x1170));
+		mtk_v4l2_err("0x11B8: 0x%x 0x11BC: 0x%x, 0x1280: 0x%x, 0x1284: 0x%x, 0x1288: 0x%x",
+			readl(reg_base + 0x11B8), readl(reg_base + 0x11BC),
+			readl(reg_base + 0x1280), readl(reg_base + 0x1284),
+			readl(reg_base + 0x1288));
+		mtk_v4l2_err("0x132C: 0x%x 0x1330: 0x%x, 0x1334: 0x%x, 0x1338: 0x%x, 0x133C: 0x%x, 0x1340: 0x%x, 0x1344: 0x%x, 0x1348: 0x%x",
+			readl(reg_base + 0x132C), readl(reg_base + 0x1330),
+			readl(reg_base + 0x1334), readl(reg_base + 0x1338),
+			readl(reg_base + 0x133C), readl(reg_base + 0x1340),
+			readl(reg_base + 0x1344), readl(reg_base + 0x1348));
+		mtk_v4l2_err("0x1420: 0x%x, 0x1424: 0x%x", readl(reg_base + 0x1420),
+			readl(reg_base + 0x1424));
+		mtk_v4l2_err("0x13c: 0x%x, 0x484: 0x%x, 0x568: 0x%x",
+			readl(reg_base + 0x13c), readl(reg_base + 0x484), readl(reg_base + 0x568));
+	}
+	mtk_v4l2_debug(3, "[%s]-", __func__);
+}
+
 void mtk_vcodec_enc_clock_off(struct mtk_vcodec_ctx *ctx, int core_id)
 {
 	struct mtk_vcodec_pm *pm = &ctx->dev->pm;
-	int i, clk_id;
+	int i;
 	int larb_index;
 	struct mtk_venc_clks_data *clks_data;
 	struct mtk_vcodec_dev *dev = NULL;
+	unsigned int clk_id;
 	unsigned long flags;
 
 	dev = ctx->dev;
+
+	mtk_venc_hw_break(dev, core_id);
 
 	if (ctx->use_slbc == 1)
 		slbc_power_off(&ctx->sram_data);

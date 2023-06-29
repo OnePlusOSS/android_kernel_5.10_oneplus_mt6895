@@ -52,7 +52,7 @@ void cmdq_helper_set_fp(struct cmdq_util_helper_fp *cust_cmdq_util);
 #define CMDQ_EVENT_MAX			0x3FF
 #define SUBSYS_NO_SUPPORT		99
 
-#define GCE_CPR_COUNT			1312
+/* #define GCE_CPR_COUNT			1312 */
 #define CMDQ_CPR_STRAT_ID		0x8000
 #define CMDQ_CPR_TPR_MASK		0x8000
 #define CMDQ_CPR_DISP_CNT		0x8001
@@ -95,6 +95,7 @@ enum {CMDQ_PREBUILT_MDP, CMDQ_PREBUILT_MML, CMDQ_PREBUILT_VFMT,
 extern int gce_shift_bit;
 extern int gce_mminfra;
 extern bool gce_in_vcp;
+extern bool cpr_not_support_cookie;
 extern bool skip_poll_sleep;
 
 #define CMDQ_REG_SHIFT_ADDR(addr) (((addr) + gce_mminfra) >> gce_shift_bit)
@@ -302,6 +303,8 @@ s32 cmdq_pkt_readback(struct cmdq_pkt *pkt, enum CMDQ_VCP_ENG_ENUM engine,
 	u32 buf_offset, u16 size, u16 reg_gpr,
 	struct cmdq_reuse *reuse,
 	struct cmdq_poll_reuse *poll_reuse);
+
+bool cmdq_pkt_is_exec(struct cmdq_pkt *pkt);
 
 void cmdq_mbox_pool_set_limit(struct cmdq_client *cl, u32 limit);
 void cmdq_mbox_pool_create(struct cmdq_client *cl);

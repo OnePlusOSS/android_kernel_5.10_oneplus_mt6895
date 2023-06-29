@@ -6,6 +6,7 @@
 #include <linux/kernel.h>
 #include <linux/io.h>
 #include <linux/debugfs.h>
+#include <linux/proc_fs.h>
 #include <linux/dma-mapping.h>
 #include <linux/sched/clock.h>
 #include <linux/soc/mediatek/mtk-cmdq-ext.h>
@@ -21,7 +22,7 @@
 #if IS_ENABLED(CONFIG_MTK_SMI)
 #include <soc/mediatek/smi.h>
 #endif
-#ifdef CONFIG_MTK_DEVAPC
+#if IS_ENABLED(CONFIG_MTK_DEVAPC)
 #include <linux/soc/mediatek/devapc_public.h>
 #endif
 
@@ -57,9 +58,9 @@ struct cmdq_util_error {
 };
 
 struct cmdq_util_dentry {
-	struct dentry	*status;
-	struct dentry	*record;
-	struct dentry	*log_feature;
+	struct proc_dir_entry	*status;
+	struct proc_dir_entry	*record;
+	struct dentry		*log_feature;
 	u8		bit_feature;
 };
 
@@ -79,8 +80,6 @@ struct cmdq_record {
 	u64 irq;	/* epoch time of IRQ event */
 	u64 done;	/* epoch time of sw leaving wait and task finish */
 
-	unsigned long start;	/* buffer start address */
-	unsigned long end;	/* command end address */
 	u64 last_inst;	/* last instruction, jump addr */
 
 	u32 exec_begin;	/* task execute time in hardware thread */
@@ -106,7 +105,7 @@ static DEFINE_MUTEX(cmdq_dump_mutex);
 struct cmdq_util_controller_fp controller_fp = {
 	.track_ctrl = cmdq_util_track_ctrl,
 };
-struct cmdq_util_helper_fp helper_fp = {
+static struct cmdq_util_helper_fp helper_fp = {
 	.is_feature_en = cmdq_util_is_feature_en,
 	.dump_lock = cmdq_util_dump_lock,
 	.dump_unlock = cmdq_util_dump_unlock,
@@ -122,6 +121,7 @@ struct cmdq_util_platform_fp *cmdq_platform;
 void cmdq_util_set_fp(struct cmdq_util_platform_fp *cust_cmdq_platform)
 {
 	s32 i;
+
 	if (!cust_cmdq_platform) {
 		cmdq_err("%s cmdq_util_platform_fp is NULL ", __func__);
 		return;
@@ -135,6 +135,23 @@ void cmdq_util_set_fp(struct cmdq_util_platform_fp *cust_cmdq_platform)
 		cmdq_mbox_set_hw_id(util.cmdq_mbox[i]);
 }
 EXPORT_SYMBOL(cmdq_util_set_fp);
+
+void cmdq_util_reset_fp(struct cmdq_util_platform_fp *cust_cmdq_platform)
+{
+	s32 i;
+
+	if (!cust_cmdq_platform) {
+		cmdq_err("%s cmdq_util_platform_fp is NULL ", __func__);
+		return;
+	}
+	controller_fp.thread_ddr_module = NULL;
+	helper_fp.hw_name = NULL;
+	helper_fp.event_module_dispatch = NULL;
+	helper_fp.thread_module_dispatch = NULL;
+	for (i = 0; i < util.mbox_cnt; i++)
+		cmdq_mbox_reset_hw_id(util.cmdq_mbox[i]);
+}
+EXPORT_SYMBOL(cmdq_util_reset_fp);
 
 const char *cmdq_util_event_module_dispatch(phys_addr_t gce_pa, const u16 event, s32 thread)
 {
@@ -300,8 +317,8 @@ static int cmdq_util_status_print(struct seq_file *seq, void *data)
 static int cmdq_util_record_print(struct seq_file *seq, void *data)
 {
 	struct cmdq_record *rec;
-	u32 acq_time, irq_time, begin_wait, exec_time, total_time, hw_time;
-	u64 submit_sec;
+	u32 acq_time, irq_time, begin_wait, exec_time, total_time;
+	u64 submit_sec, hw_time;
 	unsigned long submit_rem, hw_time_rem;
 	s32 i, idx;
 
@@ -309,7 +326,7 @@ static int cmdq_util_record_print(struct seq_file *seq, void *data)
 
 	seq_puts(seq, "index,pkt,task priority,sec,size,gce,thread,");
 	seq_puts(seq,
-		"submit,acq_time(us),irq_time(us),begin_wait(us),exec_time(us),total_time(us),start,end,jump,");
+		"submit,acq_time(us),irq_time(us),begin_wait(us),exec_time(us),total_time(us),jump,");
 	seq_puts(seq, "exec begin,exec end,hw_time(us),\n");
 
 	idx = util.record_idx;
@@ -335,17 +352,16 @@ static int cmdq_util_record_print(struct seq_file *seq, void *data)
 		util_time_to_us(rec->trigger, rec->done, exec_time);
 		util_time_to_us(rec->submit, rec->done, total_time);
 		seq_printf(seq,
-			"%llu.%06lu,%u,%u,%u,%u,%u,%#lx,%#lx,%#llx,",
+			"%llu.%06lu,%u,%u,%u,%u,%u,%#llx,",
 			submit_sec, submit_rem / 1000, acq_time, irq_time,
-			begin_wait, exec_time, total_time,
-			rec->start, rec->end, rec->last_inst);
+			begin_wait, exec_time, total_time, rec->last_inst);
 
 		hw_time = rec->exec_end > rec->exec_begin ?
 			rec->exec_end - rec->exec_begin :
 			~rec->exec_begin + 1 + rec->exec_end;
 		hw_time_rem = (u32)CMDQ_TICK_TO_US(hw_time);
 
-		seq_printf(seq, "%u,%u,%u.%06lu,\n",
+		seq_printf(seq, "%u,%u,%llu.%06lu,\n",
 			rec->exec_begin, rec->exec_end, hw_time, hw_time_rem);
 	}
 
@@ -364,20 +380,18 @@ static int cmdq_util_record_open(struct inode *inode, struct file *file)
 	return single_open(file, cmdq_util_record_print, inode->i_private);
 }
 
-static const struct file_operations cmdq_util_status_fops = {
-	.owner = THIS_MODULE,
-	.open = cmdq_util_status_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
+static const struct proc_ops cmdq_util_status_fops = {
+	.proc_open = cmdq_util_status_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = single_release,
 };
 
-static const struct file_operations cmdq_util_record_fops = {
-	.owner = THIS_MODULE,
-	.open = cmdq_util_record_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
+static const struct proc_ops cmdq_util_record_fops = {
+	.proc_open = cmdq_util_record_open,
+	.proc_read = seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = single_release,
 };
 
 static int cmdq_util_log_feature_get(void *data, u64 *val)
@@ -387,7 +401,7 @@ static int cmdq_util_log_feature_get(void *data, u64 *val)
 	return util.fs.bit_feature;
 }
 
-static int cmdq_util_log_feature_set(void *data, u64 val)
+int cmdq_util_log_feature_set(void *data, u64 val)
 {
 	if (val == CMDQ_LOG_FEAT_NUM) {
 		util.fs.bit_feature = 0;
@@ -407,6 +421,7 @@ static int cmdq_util_log_feature_set(void *data, u64 val)
 		data, val, util.fs.bit_feature);
 	return 0;
 }
+EXPORT_SYMBOL(cmdq_util_log_feature_set);
 
 DEFINE_SIMPLE_ATTRIBUTE(cmdq_util_log_feature_fops,
 	cmdq_util_log_feature_get, cmdq_util_log_feature_set, "%llu");
@@ -438,7 +453,7 @@ void cmdq_util_enable_disp_va(void)
 {
 	struct arm_smccc_res res;
 
-	cmdq_msg("%s", __func__);
+	cmdq_log("%s", __func__);
 	arm_smccc_smc(MTK_SIP_CMDQ_CONTROL, CMDQ_ENABLE_DISP_VA,
 		0, 0, 0, 0, 0, 0, &res);
 }
@@ -549,12 +564,10 @@ void cmdq_util_track(struct cmdq_pkt *pkt)
 
 	if (!list_empty(&pkt->buf)) {
 		buf = list_first_entry(&pkt->buf, typeof(*buf), list_entry);
-		record->start = CMDQ_BUF_ADDR(buf);
 
 		buf = list_last_entry(&pkt->buf, typeof(*buf), list_entry);
 		offset = CMDQ_CMD_BUFFER_SIZE - (pkt->buf_size -
 			pkt->cmd_buf_size);
-		record->end = CMDQ_BUF_ADDR(buf) + offset;
 		record->last_inst = *(u64 *)(buf->va_base + offset -
 			CMDQ_INST_SIZE);
 
@@ -594,25 +607,10 @@ void cmdq_util_devapc_dump(void)
 }
 EXPORT_SYMBOL(cmdq_util_devapc_dump);
 
-#ifdef CONFIG_MTK_DEVAPC
-static void cmdq_util_handle_devapc_vio(void)
-{
-	u32 i;
-
-	cmdq_util_msg("%s mbox cnt:%u", __func__, util.mbox_cnt);
-	for (i = 0; i < util.mbox_cnt; i++)
-		cmdq_thread_dump_all(util.cmdq_mbox[i], true, true, false);
-
-#ifdef CMDQ_SECURE_SUPPORT
-	cmdq_util_msg("%s mbox sec cnt:%u", __func__, util.mbox_sec_cnt);
-	for (i = 0; i < util.mbox_sec_cnt; i++)
-		cmdq_sec_dump_thread_all(util.cmdq_sec_mbox[i]);
-#endif
-}
-
+#if IS_ENABLED(CONFIG_MTK_DEVAPC)
 static struct devapc_vio_callbacks devapc_vio_handle = {
 	.id = INFRA_SUBSYS_GCE,
-	.debug_dump = cmdq_util_handle_devapc_vio,
+	.debug_dump = cmdq_util_devapc_dump,
 };
 #endif
 
@@ -646,6 +644,7 @@ EXPORT_SYMBOL(cmdq_util_get_first_err_mod);
 
 int cmdq_util_init(void)
 {
+	struct proc_dir_entry	*proc_dir;
 	struct dentry	*dir;
 	bool exists = false;
 
@@ -658,6 +657,28 @@ int cmdq_util_init(void)
 	if (!util.err.buffer)
 		return -ENOMEM;
 
+	proc_dir = proc_mkdir("cmdq", NULL);
+	if (!proc_dir) {
+		cmdq_err("proc_mkdir cmdq failed");
+		return -EINVAL;
+	}
+
+	util.fs.status = proc_create(
+		"cmdq-status", 0444, proc_dir, &cmdq_util_status_fops);
+	if (IS_ERR(util.fs.status)) {
+		cmdq_err("proc_mkdir cmdq-status failed:%ld",
+			PTR_ERR(util.fs.status));
+		return PTR_ERR(util.fs.status);
+	}
+
+	util.fs.record = proc_create(
+		"cmdq-record", 0444, proc_dir, &cmdq_util_record_fops);
+	if (IS_ERR(util.fs.record)) {
+		cmdq_err("proc_mkdir cmdq-record failed:%ld",
+			PTR_ERR(util.fs.record));
+		return PTR_ERR(util.fs.record);
+	}
+
 	dir = debugfs_lookup("cmdq", NULL);
 	if (!dir) {
 		dir = debugfs_create_dir("cmdq", NULL);
@@ -667,22 +688,6 @@ int cmdq_util_init(void)
 		}
 	} else
 		exists = true;
-
-	util.fs.status = debugfs_create_file(
-		"cmdq-status", 0444, dir, &util, &cmdq_util_status_fops);
-	if (IS_ERR(util.fs.status)) {
-		cmdq_err("debugfs_create_file cmdq-status failed:%ld",
-			PTR_ERR(util.fs.status));
-		return PTR_ERR(util.fs.status);
-	}
-
-	util.fs.record = debugfs_create_file(
-		"cmdq-record", 0444, dir, &util, &cmdq_util_record_fops);
-	if (IS_ERR(util.fs.record)) {
-		cmdq_err("debugfs_create_file cmdq-record failed:%ld",
-			PTR_ERR(util.fs.record));
-		return PTR_ERR(util.fs.record);
-	}
 
 	util.fs.log_feature = debugfs_create_file("cmdq-log-feature",
 		0444, dir, &util, &cmdq_util_log_feature_fops);
@@ -695,7 +700,7 @@ int cmdq_util_init(void)
 	if (exists)
 		dput(dir);
 
-#ifdef CONFIG_MTK_DEVAPC
+#if IS_ENABLED(CONFIG_MTK_DEVAPC)
 	register_devapc_vio_callback(&devapc_vio_handle);
 #endif
 

@@ -64,6 +64,13 @@ do { \
 	} \
 } while (0)
 
+#define CMDQ_LOG_CLOCK(string, args...) \
+do { \
+	if (cmdq_core_should_clock_log()) { \
+		pr_notice("[MDP]"string, ##args); \
+	} \
+} while (0)
+
 #define CMDQ_LOG(string, args...) \
 do {			\
 	pr_notice("[MDP]"string, ##args); \
@@ -102,8 +109,11 @@ if (status < 0)		\
 {		\
 do {			\
 	char dispatchedTag[50]; \
-	snprintf(dispatchedTag, 50, "CRDISPATCH_KEY:%s", tag); \
-	pr_notice("[MDP][AEE]"string, ##args); \
+	int ret = snprintf(dispatchedTag, 50, "CRDISPATCH_KEY:%s", tag); \
+	if (unlikely(ret < 0)) \
+		pr_notice("CMDQ_AEE snprintf fail"); \
+	else \
+		pr_notice("[MDP][AEE]"string, ##args); \
 	cmdq_core_save_first_dump("[MDP][AEE]"string, ##args); \
 	aee_kernel_warning_api(__FILE__, __LINE__, \
 		DB_OPT_DEFAULT | DB_OPT_PROC_CMDQ_INFO | \
@@ -123,7 +133,9 @@ do { \
 {		\
 do {			\
 	char dispatchedTag[50]; \
-	snprintf(dispatchedTag, 50, "CRDISPATCH_KEY:%s", tag); \
+	int ret = snprintf(dispatchedTag, 50, "CRDISPATCH_KEY:%s", tag); \
+	if (unlikely(ret < 0)) \
+		pr_notice("CMDQ_AEE snprintf fail"); \
 	pr_debug("[MDP][AEE] AEE not READY!!!"); \
 	pr_debug("[MDP][AEE]"string, ##args); \
 	cmdq_core_save_first_dump("[MDP][AEE]"string, ##args); \
@@ -175,19 +187,20 @@ do {if (1) mmprofile_log_ex(args); } while (0);	\
 #endif
 
 /* CMDQ FTRACE */
-#define CMDQ_TRACE_FORCE_BEGIN(fmt, args...) do { \
-	preempt_disable(); \
-	/*event_trace_printk(cmdq_get_tracing_mark(),*/ \
-	/*	"B|%d|"fmt, current->tgid, ##args);*/ \
-	preempt_enable();\
-} while (0)
+#if IS_ENABLED(CONFIG_ARCH_DMA_ADDR_T_64BIT)
+#define TRACE_MSG_LEN 1024
+#else
+#define TRACE_MSG_LEN 896
+#endif
 
-#define CMDQ_TRACE_FORCE_END() do { \
-	preempt_disable(); \
-	/*event_trace_printk(cmdq_get_tracing_mark(), "E\n");*/ \
-	preempt_enable(); \
-} while (0)
+#define CMDQ_TRACE_FORCE_BEGIN_TID(tid, fmt, args...) \
+	tracing_mark_write_cmdq("B|%d|" fmt "\n", tid, ##args)
 
+#define CMDQ_TRACE_FORCE_BEGIN(fmt, args...) \
+	CMDQ_TRACE_FORCE_BEGIN_TID(current->tgid, fmt, ##args)
+
+#define CMDQ_TRACE_FORCE_END() \
+	tracing_mark_write_cmdq("E\n")
 
 #define CMDQ_SYSTRACE_BEGIN(fmt, args...) do { \
 	if (cmdq_core_ftrace_enabled()) { \
@@ -329,6 +342,7 @@ enum CMDQ_LOG_LEVEL_ENUM {
 	CMDQ_LOG_LEVEL_PMQOS = 4,
 	CMDQ_LOG_LEVEL_SECURE = 5,
 	CMDQ_LOG_LEVEL_PQ_READBACK = 6,
+	CMDQ_LOG_LEVEL_CLOCK = 7,
 
 	CMDQ_LOG_LEVEL_MAX	/* ALWAYS keep at the end */
 };
@@ -655,6 +669,7 @@ struct mdp_readback_engine {
 struct cmdqRecStruct {
 	struct list_head list_entry;
 	struct cmdq_pkt *pkt;
+	struct cmdq_pkt *pkt_rb; /* pkt for readback command */
 	u32 *cmd_end;
 	u64 engineFlag;
 	s32 scenario;
@@ -690,6 +705,7 @@ struct cmdqRecStruct {
 	atomic_t exec;
 	enum TASK_STATE_ENUM state;	/* task life cycle */
 	s32 thread;
+	s32 thread_rb; /* pkt for readback command */
 	enum cmdq_thread_dispatch thd_dispatch;
 	/* work item when auto release is used */
 	struct work_struct auto_release_work;
@@ -809,6 +825,7 @@ bool cmdq_core_should_full_error(void);
 bool cmdq_core_should_pmqos_log(void);
 bool cmdq_core_should_secure_log(void);
 bool cmdq_core_should_pqrb_log(void);
+bool cmdq_core_should_clock_log(void);
 bool cmdq_core_aee_enable(void);
 void cmdq_core_set_aee(bool enable);
 
@@ -993,6 +1010,7 @@ void cmdq_core_initialize(void);
 void cmdq_core_late_init(void);
 void cmdq_core_deinitialize(void);
 unsigned long cmdq_get_tracing_mark(void);
+int tracing_mark_write_cmdq(char *fmt, ...);
 void cmdq_helper_ext_deinit(void);
 
 struct cmdqSecSharedMemoryStruct *cmdq_core_get_secure_shared_memory(void);

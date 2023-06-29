@@ -90,7 +90,7 @@
 
 #include "inc/cam_qos.h"
 #include "inc/camera_isp.h"
-#include "inc/cam_common.h"
+#include "cam_common.h"
 
 #ifdef ENABLE_TIMESYNC_HANDLE
 #include <archcounter_timesync.h>
@@ -537,15 +537,9 @@ struct ISP_IRQ_ERR_WAN_CNT_STRUCT {
 };
 
 static int FirstUnusedIrqUserKey = 1;
-#define USERKEY_USERNAME_STR_LEN 128
 
-struct UserKeyInfo {
-	/* name for the user that register a userKey */
-	char userName[USERKEY_USERNAME_STR_LEN];
-	int userKey; /* the user key for that user */
-};
 /* array for recording the user name for a specific user key */
-static struct UserKeyInfo IrqUserKey_UserInfo[IRQ_USER_NUM_MAX];
+static struct ISP_REGISTER_USERKEY_STRUCT IrqUserKey_UserInfo[IRQ_USER_NUM_MAX];
 
 struct ISP_IRQ_INFO_STRUCT {
 	/* Add an extra index for status type -> signal or dma */
@@ -932,7 +926,7 @@ struct _isp_bk_reg_t {
 static struct _isp_bk_reg_t g_BkReg[ISP_IRQ_TYPE_AMOUNT];
 
 /* CAM_REG_TG_INTER_ST 0x3b3c, CAMSV_REG_TG_INTER_ST 0x016C */
-void __iomem *CAMX_REG_TG_INTER_ST(int reg_module)
+void __iomem *CAMX_REG_TG_INTER_ST(unsigned int reg_module)
 {
 	void __iomem *_regVal;
 
@@ -959,7 +953,7 @@ void __iomem *CAMX_REG_TG_INTER_ST(int reg_module)
 }
 
 /* CAM_REG_TG_VF_CON 0x3b04, CAMSV_REG_TG_VF_CON 0x0134 */
-void __iomem *CAMX_REG_TG_VF_CON(int reg_module)
+void __iomem *CAMX_REG_TG_VF_CON(unsigned int reg_module)
 {
 	void __iomem *_regVal;
 
@@ -986,7 +980,7 @@ void __iomem *CAMX_REG_TG_VF_CON(int reg_module)
 }
 
 /* CAM_REG_TG_SEN_MODE 0x3b00, CAMSV_REG_TG_SEN_MODE 0x0130 */
-void __iomem *CAMX_REG_TG_SEN_MODE(int reg_module)
+void __iomem *CAMX_REG_TG_SEN_MODE(unsigned int reg_module)
 {
 	void __iomem *_regVal;
 
@@ -1014,7 +1008,7 @@ void __iomem *CAMX_REG_TG_SEN_MODE(int reg_module)
 
 /* if isp has been suspend, frame cnt needs to add previous value*/
 /* CAM_REG_TG_INTER_ST 0x3b3c, CAMSV_REG_TG_INTER_ST 0x016C */
-unsigned int ISP_RD32_TG_CAMX_FRM_CNT(unsigned int IrqType, int reg_module)
+unsigned int ISP_RD32_TG_CAMX_FRM_CNT(unsigned int IrqType, unsigned int reg_module)
 {
 	unsigned int _regVal;
 
@@ -1766,7 +1760,8 @@ void dumpAllRegs(enum ISP_DEV_NODE_ENUM module)
 		irq_type = ISP_IRQ_TYPE_INT_CAM_C_ST;
 		break;
 	default:
-		break;
+		LOG_NOTICE("%s: Unknown module(0x%x)\n", __func__, module);
+		return;
 	}
 
 	g_is_dumping[module] = MTRUE;
@@ -1805,7 +1800,8 @@ int STT_FBC_Reset(unsigned int reg_module)
 		irq_type = ISP_IRQ_TYPE_INT_CAM_C_ST;
 		break;
 	default:
-		break;
+		LOG_NOTICE("Unknown reg_module(0x%x)\n", reg_module);
+		return -1;
 	}
 
 	ISP_GetDmaPortsStatus(reg_module, &DmaEnStatus[0]);
@@ -2725,7 +2721,7 @@ static void ISP_EnableClock(enum ISP_DEV_NODE_ENUM module, bool En)
 			}
 		}
 
-		 G_u4EnableClockCount[module]++;
+		G_u4EnableClockCount[module]++;
 		spin_unlock(&(IspInfo.SpinLockClock));
 		LOG_INF("camsyscg org:0x%x,%x,%x,%x new:0x%x,%x,%x,%x cnt:%d\n",
 			cg_con1,
@@ -2738,6 +2734,15 @@ static void ISP_EnableClock(enum ISP_DEV_NODE_ENUM module, bool En)
 		G_u4EnableClockCount[module]++;
 		spin_unlock(&(IspInfo.SpinLockClock));
 		Prepare_Enable_ccf_clock(module); /* !!cannot be used in spinlock!! */
+#if defined(ISP_IRQ_CONTROLLER)
+		LOG_INF("ISP_IRQ_CONTROLLER enable_irq E\n");
+		if (G_u4EnableClockCount[module] == 1) {
+			enable_irq(isp_devs[module].irq);
+			LOG_INF(
+				"enable_irq cam %d\n", module);
+		}
+		LOG_INF("ISP_IRQ_CONTROLLER enable_irq X\n");
+#endif
 #endif
 	} else { /* Disable clock. */
 #if defined(EP_NO_CLKMGR)
@@ -2773,6 +2778,15 @@ static void ISP_EnableClock(enum ISP_DEV_NODE_ENUM module, bool En)
 		G_u4EnableClockCount[module]--;
 		spin_unlock(&(IspInfo.SpinLockClock));
 		/* !!cannot be used in spinlock!! */
+#if defined(ISP_IRQ_CONTROLLER)
+		LOG_INF("ISP_IRQ_CONTROLLER disable_irq E\n");
+		if (G_u4EnableClockCount[module] == 0) {
+			disable_irq(isp_devs[module].irq);
+			LOG_INF(
+				"disable_irq cam %d\n", module);
+		}
+		LOG_INF("ISP_IRQ_CONTROLLER disable_irq X\n");
+#endif
 		Disable_Unprepare_ccf_clock(module);
 #endif
 	}
@@ -3447,6 +3461,7 @@ static int ISP_REGISTER_IRQ_USERKEY(char *userName)
 			if (strcmp((void *)IrqUserKey_UserInfo[i].userName,
 				"DefaultUserNametoAllocMem") != 0) {
 				LOG_INF("userName was not initialized.\n");
+				spin_unlock((spinlock_t *)(&SpinLock_UserKey));
 				return key;
 			}
 
@@ -3455,7 +3470,7 @@ static int ISP_REGISTER_IRQ_USERKEY(char *userName)
 			       sizeof(IrqUserKey_UserInfo[i].userName));
 
 			strncpy((void *)IrqUserKey_UserInfo[i].userName,
-				userName, USERKEY_USERNAME_STR_LEN - 1);
+				userName, USERKEY_STR_LEN - 1);
 
 			IrqUserKey_UserInfo[i].userKey = FirstUnusedIrqUserKey;
 			key = FirstUnusedIrqUserKey;
@@ -3579,6 +3594,12 @@ static int ISP_WaitIrq(struct ISP_WAIT_IRQ_STRUCT *WaitIrq)
 	struct timespec64 time_getrequest;
 	struct timespec64 time_ready2return;
 	bool freeze_passbysigcnt = false;
+
+	if ((idx > 31) || (idx < 0)) {
+		LOG_NOTICE("Error: Invalid idx(%d),Status(0x%x)\n",
+			idx, WaitIrq->EventInfo.Status);
+		return -EFAULT;
+	}
 
 	ktime_get_ts64(&time_getrequest);
 
@@ -3939,7 +3960,7 @@ EXIT:
 /*******************************************************************************
  *
  ******************************************************************************/
-static inline void ISP_StopHW(int module)
+static inline void ISP_StopHW(unsigned int module)
 {
 	unsigned int regTGSt = 0, loopCnt = 3;
 	int ret = 0;
@@ -3971,8 +3992,8 @@ static inline void ISP_StopHW(int module)
 		waitirq.Type = ISP_IRQ_TYPE_INT_CAM_C_ST;
 		break;
 	default:
-		strncpy(moduleName, "CAMC", 5);
-		goto RESET;
+		LOG_NOTICE("Unknown module(0x%x)\n", module);
+		return;
 	}
 	waitirq.EventInfo.Clear = ISP_IRQ_CLEAR_WAIT;
 	waitirq.EventInfo.Status = VS_INT_ST;
@@ -4030,7 +4051,6 @@ static inline void ISP_StopHW(int module)
 		}
 	}
 
-RESET:
 	LOG_INF("%s: reset\n", moduleName);
 	/* timer */
 	time = ktime_get();
@@ -4109,7 +4129,7 @@ RESET:
 /*******************************************************************************
  *
  ******************************************************************************/
-static inline void ISP_StopSVHW(int module)
+static inline void ISP_StopSVHW(unsigned int module)
 {
 	unsigned int regTGSt = 0, loopCnt = 3;
 	int ret = 0;
@@ -4155,9 +4175,8 @@ static inline void ISP_StopSVHW(int module)
 		waitirq.Type = ISP_IRQ_TYPE_INT_CAMSV_7_ST;
 		break;
 	default:
-		strncpy(moduleName, "CAMSV7", 7);
-		waitirq.Type = ISP_IRQ_TYPE_INT_CAMSV_7_ST;
-		break;
+		LOG_NOTICE("Unknown camsv module(0x%x)\n", module);
+		return;
 	}
 	waitirq.EventInfo.Clear = ISP_IRQ_CLEAR_WAIT;
 	waitirq.EventInfo.Status = VS_INT_ST;
@@ -6118,7 +6137,7 @@ static int ISP_open(struct inode *pInode, struct file *pFile)
 		FirstUnusedIrqUserKey = 1;
 
 		strncpy((void *)IrqUserKey_UserInfo[i].userName,
-			"DefaultUserNametoAllocMem", USERKEY_USERNAME_STR_LEN);
+			"DefaultUserNametoAllocMem", USERKEY_STR_LEN);
 
 		IrqUserKey_UserInfo[i].userKey = -1;
 	}
@@ -6271,7 +6290,6 @@ static int ISP_release(struct inode *pInode, struct file *pFile)
 		for (j = 0; j < clkcnt; j++)
 			ISP_EnableClock(i, MFALSE);
 	}
-
 	for (i = RUNTIME_ISP_CAMSV_START_IDX; i <= ISP_CAMSV_END_IDX; i++) {
 		int clkcnt = 0;
 		int j = 0;
@@ -6289,9 +6307,13 @@ static int ISP_release(struct inode *pInode, struct file *pFile)
 		Reg &= 0xfffffffE; /* close Vfinder */
 		ISP_WR32(CAMSV_REG_TG_VF_CON(i), Reg);
 
-		LOG_INF("dev(%d): Disable all clk, cnt(%d)\n", i, clkcnt);
+		LOG_INF("CAMSV_%d_REG_TG_VF_CON 0x%08x\n",
+					   (i - ISP_CAMSV_START_IDX),
+					   ISP_RD32(CAMSV_REG_TG_VF_CON(i)));
+		LOG_INF("dev(%d): Disable all clk, cnt(%d) +\n", i, clkcnt);
 		for (j = 0; j < clkcnt; j++)
 			ISP_EnableClock(i, MFALSE);
+		LOG_INF("dev(%d): Disable all clk, cnt(%d) -\n", i, clkcnt);
 	}
 
 	/* why i add this wake_unlock here, */
@@ -6314,7 +6336,7 @@ static int ISP_release(struct inode *pInode, struct file *pFile)
 		FirstUnusedIrqUserKey = 1;
 
 		strncpy((void *)IrqUserKey_UserInfo[i].userName,
-			"DefaultUserNametoAllocMem", USERKEY_USERNAME_STR_LEN);
+			"DefaultUserNametoAllocMem", USERKEY_STR_LEN);
 
 		IrqUserKey_UserInfo[i].userKey = -1;
 	}
@@ -6599,7 +6621,7 @@ static int ISP_probe(struct platform_device *pDev)
 	/*    struct resource *pRes = NULL; */
 	int i = 0, j = 0;
 	unsigned char n;
-	unsigned int irq_info[3]; /* Record interrupts info from device tree */
+	unsigned int irq_info[3] = {0}; /* Record interrupts info from device tree */
 	unsigned int dev_idx = (unsigned int)ISP_DEV_NODE_NUM;
 
 #ifdef CONFIG_OF
@@ -7320,13 +7342,13 @@ static int ISP_pm_event_suspend(void)
 			IrqType = ISP_IRQ_TYPE_INT_CAMSV_7_ST;
 			break;
 		default:
-			IrqType = ISP_IRQ_TYPE_AMOUNT;
-			break;
+			LOG_NOTICE("Invalid module(0x%x). Do nothing\n", i);
+			continue;
 		}
 
 		regVal = ISP_RD32(CAMX_REG_TG_VF_CON(i));
 		if (regVal & 0x01) {
-			LOG_INF("dev(%d) suspend,disable VF,wakelock:%d,clk:%d,devct:%d\n",
+			LOG_INF("dev(%d) suspend,disable VF,wakelock:%d,EnableClkCnt:%d\n",
 				i, g_WaitLockCt, G_u4EnableClockCount[i]);
 
 			SuspnedRecord[i] = 1;
@@ -7394,7 +7416,7 @@ static int ISP_pm_event_suspend(void)
 			regVal = ISP_RD32(CAMX_REG_TG_SEN_MODE(i));
 			ISP_WR32(CAMX_REG_TG_SEN_MODE(i), (regVal & (~0x01)));
 		} else {
-			LOG_INF("dev(%d) suspend,wakelock:%d,clk:%d,devct:%d\n", i,
+			LOG_INF("dev(%d) suspend,wakelock:%d,EnableClkCnt:%d\n", i,
 				g_WaitLockCt, G_u4EnableClockCount[i]);
 
 			SuspnedRecord[i] = 0;
@@ -7404,7 +7426,7 @@ static int ISP_pm_event_suspend(void)
 		loopCnt = G_u4EnableClockCount[i];
 		spin_unlock(&(IspInfo.SpinLockClock));
 
-		LOG_INF("dev(%d) - X. wakelock:%d, last dev node,disable clk:%d\n",
+		LOG_INF("dev(%d) - X. wakelock:%d, last dev node,EnableClkCnt:%d\n",
 			i, g_WaitLockCt, loopCnt);
 		while (loopCnt > 0) {
 			ISP_EnableClock(i, MFALSE);

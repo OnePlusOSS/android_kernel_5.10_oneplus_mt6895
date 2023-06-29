@@ -58,6 +58,11 @@ struct vcu_pa_pages {
 	struct list_head list;
 };
 
+struct vcu_page_info {
+	struct vcu_pa_pages *page;
+	struct list_head list;
+};
+
 /**
  * struct mtk_vcu_queue - the allocated buffer queue
  *
@@ -68,11 +73,13 @@ struct vcu_pa_pages {
  * @mem_ops:    the file operation of memory allocated
  * @bufs:       store the information of allocated buffers
  * @map_buf_pa: store map pa and it's flag
+ * @map_buf_type the type of mmap, 0: reserved; 1: MM_BASE; 2: MM_CACHEABLE_BASE; 3: PA_BASE
  */
 struct mtk_vcu_queue {
 	void *vcu;
 	struct mutex mmap_lock;
 	struct device *dev;
+	struct mutex dev_lock;
 	struct cmdq_client *cmdq_clt;
 	unsigned int num_buffers;
 	const struct vb2_mem_ops *mem_ops;
@@ -80,6 +87,7 @@ struct mtk_vcu_queue {
 	uint64_t map_buf_pa;
 	struct vcu_pa_pages pa_pages;
 	int enable_vcu_dbg_log;
+	uint32_t map_buf_type;
 };
 
 /**

@@ -330,10 +330,23 @@ struct mtk_sensor_static_param {
 	__u32 pixelrate;
 	__u32 cust_pixelrate;
 };
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+enum mtk_mbus_frame_desc_dt_remap_type {
+	MTK_MBUS_FRAME_DESC_REMAP_NONE = 0,
+	MTK_MBUS_FRAME_DESC_REMAP_TO_RAW10,
+	MTK_MBUS_FRAME_DESC_REMAP_TO_RAW12,
+	MTK_MBUS_FRAME_DESC_REMAP_TO_RAW14,
+};
+#endif
+
 struct mtk_mbus_frame_desc_entry_csi2 {
 	u8 channel;
 	u8 data_type;
 	u8 enable;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	u8 dt_remap_to_type;
+#endif
 	u16 hsize;
 	u16 vsize;
 	u16 user_data_desc;
@@ -394,6 +407,25 @@ struct mtk_fine_integ_line {
 	__u32 fine_integ_line;
 };
 
+//Renjianlin add for camerasn
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+struct oplus_get_camera_sn
+{
+	int len;
+	char data[40];
+};
+
+struct oplus_calc_eeprom_info {
+	int size;
+	__u16 *p_buf;
+};
+
+struct oplus_distortion_data {
+	int size;
+	__u8 *p_buf;
+};
+
+#endif
 /* GET */
 
 #define VIDIOC_MTK_G_DEF_FPS_BY_SCENARIO \
@@ -507,6 +539,20 @@ struct mtk_fine_integ_line {
 #define VIDIOC_MTK_G_MAX_EXPOSURE_LINE \
 	_IOWR('M', BASE_VIDIOC_PRIVATE + 39, struct mtk_max_exp_line)
 
+//Renjianlin add for camerasn
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define VIDIOC_MTK_G_CAMERA_SN \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 40, struct oplus_get_camera_sn)
+
+#define VIDIOC_MTK_G_STEREO_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 41, struct oplus_calc_eeprom_info)
+
+#define VIDIOC_MTK_G_OTP_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 42, struct oplus_calc_eeprom_info)
+
+#define VIDIOC_MTK_G_DISTORTIONPARAMS_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 43, struct oplus_distortion_data)
+#endif
 /* SET */
 
 #define VIDIOC_MTK_S_VIDEO_FRAMERATE \
@@ -539,4 +585,14 @@ struct mtk_fine_integ_line {
 #define VIDIOC_MTK_S_TG \
 	_IOW('M', BASE_VIDIOC_PRIVATE + 110, int)
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define VIDIOC_MTK_S_CALIBRATION_EEPROM \
+	_IOW('M', BASE_VIDIOC_PRIVATE + 111, ACDK_SENSOR_ENGMODE_STEREO_STRUCT)
+
+#define VIDIOC_MTK_S_AON_HE_POWER_UP 0x5000
+
+#define VIDIOC_MTK_S_AON_HE_POWER_DOWN 0x5001
+
+#define VIDIOC_MTK_S_AON_HE_QUERY_INFO 0x5002
+#endif
 #endif

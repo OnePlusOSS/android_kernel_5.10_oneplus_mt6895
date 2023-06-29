@@ -40,8 +40,11 @@ void fmt_init_pm(struct mtk_vdec_fmt *fmt)
 int32_t fmt_clock_on(struct mtk_vdec_fmt *fmt)
 {
 	int ret = 0;
+	s32 cmdq_ret = 0;
 
-	cmdq_mbox_enable(fmt->clt_fmt[0]->chan);
+	cmdq_ret = cmdq_mbox_enable(fmt->clt_fmt[0]->chan);
+	while (cmdq_ret > 1)
+		cmdq_ret = cmdq_mbox_disable(fmt->clt_fmt[0]->chan);
 	if (fmt->fmtLarb) {
 		ret = mtk_smi_larb_get(fmt->fmtLarb);
 		if (ret) {
@@ -66,13 +69,17 @@ int32_t fmt_clock_on(struct mtk_vdec_fmt *fmt)
 
 int32_t fmt_clock_off(struct mtk_vdec_fmt *fmt)
 {
+	s32 cmdq_ret = 0;
+
 	if (fmt->clk_MINI_MDP)
 		clk_disable_unprepare(fmt->clk_MINI_MDP);
 	if (fmt->clk_VDEC)
 		clk_disable_unprepare(fmt->clk_VDEC);
 	if (fmt->fmtLarb)
 		mtk_smi_larb_put(fmt->fmtLarb);
-	cmdq_mbox_disable(fmt->clt_fmt[0]->chan);
+	cmdq_ret = cmdq_mbox_disable(fmt->clt_fmt[0]->chan);
+	while (cmdq_ret > 0)
+		cmdq_ret = cmdq_mbox_disable(fmt->clt_fmt[0]->chan);
 	atomic_set(&fmt->fmt_error, 0);
 	return 0;
 }
@@ -113,8 +120,8 @@ void fmt_prepare_dvfs_emi_bw(struct mtk_vdec_fmt *fmt)
 
 	i = 0;
 	fmt->fmt_qos_req[i++] = of_mtk_icc_get(fmt->dev, "path_mini_mdp_r0");
-	fmt->fmt_qos_req[i++] = of_mtk_icc_get(fmt->dev, "path_mini_mdp_w0");
 	fmt->fmt_qos_req[i++] = of_mtk_icc_get(fmt->dev, "path_mini_mdp_r1");
+	fmt->fmt_qos_req[i++] = of_mtk_icc_get(fmt->dev, "path_mini_mdp_w0");
 	fmt->fmt_qos_req[i++] = of_mtk_icc_get(fmt->dev, "path_mini_mdp_w1");
 
 }
@@ -142,7 +149,7 @@ void fmt_start_dvfs_emi_bw(struct mtk_vdec_fmt *fmt, struct fmt_pmqos pmqos_para
 			pmqos_param.wdma_datasize);
 
 	ktime_get_real_ts64(&curr_time);
-	fmt_debug(1, "curr time tv_sec %d tv_nsec %d", curr_time.tv_sec, curr_time.tv_nsec);
+	fmt_debug(1, "curr time tv_sec %ld tv_nsec %ld", curr_time.tv_sec, curr_time.tv_nsec);
 
 	FMT_TIMER_GET_DURATION_IN_MS(curr_time, pmqos_param, duration);
 	request_freq64 = (u64)pmqos_param.pixel_size * 1000 / duration;
@@ -173,23 +180,26 @@ void fmt_start_dvfs_emi_bw(struct mtk_vdec_fmt *fmt, struct fmt_pmqos pmqos_para
 			pmqos_param.rdma_datasize,
 			pmqos_param.pixel_size,
 			request_freq);
-
-	FMT_BANDWIDTH(pmqos_param.rdma_datasize, pmqos_param.pixel_size, request_freq, bandwidth);
-	if (fmt->fmt_qos_req[id] != 0) {
-		mtk_icc_set_bw(fmt->fmt_qos_req[id],
+	if (id >= 0 && id < fmt->gce_th_num) {
+		FMT_BANDWIDTH(pmqos_param.rdma_datasize, pmqos_param.pixel_size,
+			request_freq, bandwidth);
+		if (fmt->fmt_qos_req[id] != 0) {
+			mtk_icc_set_bw(fmt->fmt_qos_req[id],
 			MBps_to_icc(bandwidth), 0);
-	}
-	fmt_debug(1, "rdma bandwidth %d", bandwidth);
-	fmt_debug(1, "wdma cal MMqos (%d, %d, %d)",
+		}
+		fmt_debug(1, "rdma bandwidth %d", bandwidth);
+		fmt_debug(1, "wdma cal MMqos (%d, %d, %d)",
 			pmqos_param.wdma_datasize,
 			pmqos_param.pixel_size,
 			request_freq);
-	FMT_BANDWIDTH(pmqos_param.wdma_datasize, pmqos_param.pixel_size, request_freq, bandwidth);
-	if (fmt->fmt_qos_req[id+2] != 0) {
-		mtk_icc_set_bw(fmt->fmt_qos_req[id+2],
+		FMT_BANDWIDTH(pmqos_param.wdma_datasize, pmqos_param.pixel_size,
+			request_freq, bandwidth);
+		if (fmt->fmt_qos_req[id+2] != 0) {
+			mtk_icc_set_bw(fmt->fmt_qos_req[id+2],
 			MBps_to_icc(bandwidth), 0);
+		}
+		fmt_debug(1, "wdma bandwidth %d", bandwidth);
 	}
-	fmt_debug(1, "wdma bandwidth %d", bandwidth);
 }
 
 void fmt_end_dvfs_emi_bw(struct mtk_vdec_fmt *fmt, int id)
@@ -199,7 +209,7 @@ void fmt_end_dvfs_emi_bw(struct mtk_vdec_fmt *fmt, int id)
 	int ret = 0;
 
 	if (fmt->fmt_reg != 0) {
-		fmt_debug(1, "request freq %d", fmt->fmt_freqs[0]);
+		fmt_debug(1, "request freq %lu", fmt->fmt_freqs[0]);
 		opp = dev_pm_opp_find_freq_ceil(fmt->dev,
 					&fmt->fmt_freqs[0]);
 		volt = dev_pm_opp_get_voltage(opp);
@@ -211,14 +221,15 @@ void fmt_end_dvfs_emi_bw(struct mtk_vdec_fmt *fmt, int id)
 			volt);
 		}
 	}
-
-	if (fmt->fmt_qos_req[id] != 0) {
-		mtk_icc_set_bw(fmt->fmt_qos_req[id],
-			MBps_to_icc(0), 0);
-	}
-	if (fmt->fmt_qos_req[id+2] != 0) {
-		mtk_icc_set_bw(fmt->fmt_qos_req[id+2],
-			MBps_to_icc(0), 0);
+	if (id >= 0 && id < fmt->gce_th_num) {
+		if (fmt->fmt_qos_req[id] != 0) {
+			mtk_icc_set_bw(fmt->fmt_qos_req[id],
+				MBps_to_icc(0), 0);
+		}
+		if (fmt->fmt_qos_req[id+2] != 0) {
+			mtk_icc_set_bw(fmt->fmt_qos_req[id+2],
+				MBps_to_icc(0), 0);
+		}
 	}
 }
 

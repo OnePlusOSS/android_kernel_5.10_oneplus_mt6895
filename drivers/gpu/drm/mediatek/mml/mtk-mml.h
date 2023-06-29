@@ -121,6 +121,8 @@ struct mml_pq_param {
 	uint32_t metadata_mem_id;
 	struct mml_pq_video_param video_param;
 	uint32_t user_info;
+	uint32_t app_hint;
+	uint32_t connector_id;
 };
 
 struct mml_frame_data {
@@ -168,6 +170,7 @@ struct mml_frame_info {
 	uint8_t dest_cnt;	/* should be < MML_MAX_OUTPUTS */
 	int8_t mode;	/* one of mml_mode */
 	uint8_t layer_id;
+	bool alpha;	/* alpha channel preserve */
 };
 
 struct mml_frame_size {

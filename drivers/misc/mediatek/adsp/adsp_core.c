@@ -446,27 +446,11 @@ void adsp_core_stop(u32 cid)
 	adsp_smc_send(MTK_ADSP_KERNEL_OP_CORE_STOP, cid, 0);
 }
 
-static void adsp_set_dram_remap(void)
-{
-	u32 size = 0, cid = 0;
-
-	if (!adsp_cores[ADSP_A_ID])
-		return;
-
-	for (cid = 0; cid < get_adsp_core_total(); cid++) {
-		if (!adsp_cores[cid])
-			continue;
-		size += adsp_cores[cid]->sysram_size;
-	}
-
-	adsp_smc_send(MTK_ADSP_KERNEL_OP_CFG_REMAP,
-		      adsp_cores[ADSP_A_ID]->sysram_phys, size);
-}
-
 int adsp_reset(void)
 {
 #ifdef CFG_RECOVERY_SUPPORT
-	int ret = 0, cid = 0;
+	int ret = 0;
+	unsigned int cid = 0;
 	struct adsp_priv *pdata;
 
 	if (!is_adsp_axibus_idle()) {
@@ -561,9 +545,6 @@ static int adsp_system_init(void)
 			    adspsys->desc->semaphore_ctrl,
 			    adspsys->desc->semaphore_retry);
 
-	/* dram remap of adsp */
-	adsp_set_dram_remap();
-
 	/* exception init */
 	adspsys->workq = alloc_workqueue("adsp_wq", WORK_CPU_UNBOUND | WQ_HIGHPRI, 0);
 	init_waitqueue_head(&adspsys->waitq);
@@ -592,7 +573,8 @@ static int adsp_system_init(void)
 
 int adsp_system_bootup(void)
 {
-	int ret = 0, cid = 0;
+	int ret = 0;
+	unsigned int cid = 0;
 	struct adsp_priv *pdata;
 
 	ret = adsp_system_init();

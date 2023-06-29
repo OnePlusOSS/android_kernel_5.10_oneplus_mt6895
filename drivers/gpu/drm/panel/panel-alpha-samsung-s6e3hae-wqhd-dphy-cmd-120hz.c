@@ -30,7 +30,7 @@
 #endif
 
 #ifdef CONFIG_MTK_ROUND_CORNER_SUPPORT
-#include "../mediatek/mtk_corner_pattern/mtk_data_hw_roundedpattern.h"
+#include "../mediatek/mediatek_v2/mtk_corner_pattern/mtk_data_hw_roundedpattern.h"
 #endif
 
 #include "../../../misc/mediatek/gate_ic/gate_i2c.h"
@@ -92,7 +92,6 @@ static struct i2c_driver _lcm_i2c_driver = {
  *****************************************************************************/
 
 #ifdef VENDOR_EDIT
-// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 extern void lcd_queue_load_tp_fw(void);
 #endif /*VENDOR_EDIT*/
 
@@ -365,6 +364,9 @@ static struct LCM_setting_table mode_wqhd_setting[] = {
 	{0xF7, 01, {0x0F}},
 	{0xF0, 02, {0xA5, 0xA5}},
 
+	/* set TE event @ line 0x3E8(1000) */
+	{0x44, 02, {0x03, 0xE8}},
+
 	/* FFC setting */
 	{0xFC, 02, {0x5A, 0x5A}},
 	{0xB0, 03, {0x00, 0x2A, 0xC5}},
@@ -486,10 +488,7 @@ static void push_table(struct lcm *ctx, struct LCM_setting_table *table, unsigne
 		memset(temp, 0, sizeof(temp));
 		switch (cmd) {
 		case REGFLAG_DELAY:
-			if (table[i].count <= 10)
-				msleep(table[i].count);
-			else
-				msleep(table[i].count);
+			msleep(table[i].count);
 			break;
 		case REGFLAG_END_OF_TABLE:
 			break;
@@ -980,6 +979,10 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	struct mtk_panel_ext *ext = find_panel_ext(panel);
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id(connector, mode);
+	if (!m) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return ret;
+	}
 
 	pr_info("%s thh drm_mode_vrefresh = %d, m->hdisplay = %d\n",
 		__func__, drm_mode_vrefresh(m), m->hdisplay);
@@ -1100,7 +1103,10 @@ static int mode_switch(struct drm_panel *panel,
 
 	if (cur_mode == dst_mode)
 		return ret;
-
+	if (!m_dst || !m_cur) {
+		pr_info("%s m_dst or m_cur is NULL\n", __func__);
+		return ret;
+	}
 	isFpsChange = drm_mode_vrefresh(m_dst) == drm_mode_vrefresh(m_cur) ? false : true;
 	isResChange = m_dst->vdisplay == m_cur->vdisplay ? false : true;
 

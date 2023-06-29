@@ -31,6 +31,7 @@ struct mml_dle_ctx {
 	struct mutex config_mutex;
 	struct mml_dev *mml;
 	const struct mml_task_ops *task_ops;
+	const struct mml_config_ops *cfg_ops;
 	atomic_t job_serial;
 	struct workqueue_struct *wq_config;
 	struct workqueue_struct *wq_destroy;
@@ -74,11 +75,9 @@ static struct mml_frame_config *frame_config_find_reuse(
 	mml_trace_ex_begin("%s", __func__);
 
 	list_for_each_entry(cfg, &ctx->configs, entry) {
-		if (submit->update && cfg->last_jobid == submit->job->jobid)
-			goto done;
-
 		if (check_frame_change(&submit->info, cfg) &&
-		    check_dle_frame_change(dle_info, cfg))
+		    check_dle_frame_change(dle_info, cfg) &&
+		    !cfg->err)
 			goto done;
 
 		idx++;
@@ -194,6 +193,7 @@ static struct mml_frame_config *frame_config_create(
 	cfg->ctx = ctx;
 	cfg->mml = ctx->mml;
 	cfg->task_ops = ctx->task_ops;
+	cfg->cfg_ops = ctx->cfg_ops;
 	cfg->ctx_kt_done = &ctx->kt_done;
 	INIT_WORK(&cfg->work_destroy, frame_config_destroy_work);
 	kref_init(&cfg->ref);
@@ -201,16 +201,17 @@ static struct mml_frame_config *frame_config_create(
 	return cfg;
 }
 
-static void frame_buf_to_task_buf(struct mml_file_buf *fbuf,
+static s32 frame_buf_to_task_buf(struct mml_file_buf *fbuf,
 				  struct mml_buffer *user_buf,
 				  const char *name)
 {
 	u8 i;
+	s32 ret = 0;
 
 	if (user_buf->use_dma)
 		mml_buf_get(fbuf, user_buf->dmabuf, user_buf->cnt, name);
 	else
-		mml_buf_get_fd(fbuf, user_buf->fd, user_buf->cnt, name);
+		ret = mml_buf_get_fd(fbuf, user_buf->fd, user_buf->cnt, name);
 
 	/* also copy size for later use */
 	for (i = 0; i < user_buf->cnt; i++)
@@ -218,6 +219,8 @@ static void frame_buf_to_task_buf(struct mml_file_buf *fbuf,
 	fbuf->cnt = user_buf->cnt;
 	fbuf->flush = user_buf->flush;
 	fbuf->invalid = user_buf->invalid;
+
+	return ret;
 }
 
 static void task_move_to_running(struct mml_task *task)
@@ -253,6 +256,17 @@ static void task_move_to_running(struct mml_task *task)
 		task->config->done_task_cnt);
 }
 
+static void task_move_to_destroy(struct kref *kref)
+{
+	struct mml_task *task = container_of(kref,
+		struct mml_task, ref);
+
+	if (task->config)
+		kref_put(&task->config->ref, frame_config_queue_destroy);
+
+	mml_core_destroy_task(task);
+}
+
 static void task_move_to_idle(struct mml_task *task)
 {
 	/* Must lock ctx->config_mutex before call */
@@ -271,25 +285,26 @@ static void task_move_to_idle(struct mml_task *task)
 
 	list_del_init(&task->entry);
 	task->state = MML_TASK_IDLE;
-	list_add_tail(&task->entry, &task->config->done_tasks);
-	task->config->done_task_cnt++;
 
-	mml_msg("[dle]%s task cnt (%u %u %hhu)",
-		__func__,
-		task->config->await_task_cnt,
-		task->config->run_task_cnt,
-		task->config->done_task_cnt);
-}
+	if (unlikely(task->err)) {
+		mml_err("[dle]%s task cnt (%u %u %u) before error put",
+			__func__,
+			task->config->await_task_cnt,
+			task->config->run_task_cnt,
+			task->config->done_task_cnt);
 
-static void task_move_to_destroy(struct kref *kref)
-{
-	struct mml_task *task = container_of(kref,
-		struct mml_task, ref);
+		/* do not reuse this one, it error before */
+		kref_put(&task->ref, task_move_to_destroy);
+	} else {
+		list_add_tail(&task->entry, &task->config->done_tasks);
+		task->config->done_task_cnt++;
 
-	if (task->config)
-		kref_put(&task->config->ref, frame_config_queue_destroy);
-
-	mml_core_destroy_task(task);
+		mml_msg("[dle]%s task cnt (%u %u %hhu)",
+			__func__,
+			task->config->await_task_cnt,
+			task->config->run_task_cnt,
+			task->config->done_task_cnt);
+	}
 }
 
 static void task_config_done(struct mml_task *task)
@@ -388,8 +403,8 @@ static void task_frame_err(struct mml_task *task)
 
 	mml_trace_ex_begin("%s", __func__);
 
-	mml_msg("[dle]config err task %p state %u job %u",
-		task, task->state, task->job.jobid);
+	mml_err("[dle]config %p err task %p state %u job %u",
+		cfg, task, task->state, task->job.jobid);
 
 	/* clean up */
 	task_buf_put(task);
@@ -403,7 +418,9 @@ static void task_frame_err(struct mml_task *task)
 		cfg->run_task_cnt,
 		cfg->done_task_cnt,
 		task->state);
-	kref_put(&task->ref, task_move_to_destroy);
+
+	task->err = true;
+	cfg->err = true;
 
 	mutex_unlock(&ctx->config_mutex);
 
@@ -508,7 +525,7 @@ s32 mml_dle_config(struct mml_dle_ctx *ctx, struct mml_submit *submit,
 {
 	struct mml_frame_config *cfg;
 	struct mml_task *task;
-	s32 result;
+	s32 result = 0;
 	u32 i;
 
 	mml_trace_begin("%s", __func__);
@@ -592,12 +609,22 @@ s32 mml_dle_config(struct mml_dle_ctx *ctx, struct mml_submit *submit,
 
 	/* copy per-frame info */
 	task->ctx = ctx;
-	frame_buf_to_task_buf(&task->buf.src, &submit->buffer.src, "mml_rdma");
+	result = frame_buf_to_task_buf(&task->buf.src, &submit->buffer.src, "mml_rdma");
+	if (result) {
+		mml_err("[dle]%s get dma buf fail", __func__);
+		goto err_buf_exit;
+	}
+
 	task->buf.dest_cnt = submit->buffer.dest_cnt;
-	for (i = 0; i < submit->buffer.dest_cnt; i++)
-		frame_buf_to_task_buf(&task->buf.dest[i],
+	for (i = 0; i < submit->buffer.dest_cnt; i++) {
+		result = frame_buf_to_task_buf(&task->buf.dest[i],
 				      &submit->buffer.dest[i],
 				      "mml_wrot");
+		if (result) {
+			mml_err("[dle]%s get dma buf fail", __func__);
+			goto err_buf_exit;
+		}
+	}
 
 	/* no fence for dle task */
 	task->job.fence = -1;
@@ -617,12 +644,15 @@ s32 mml_dle_config(struct mml_dle_ctx *ctx, struct mml_submit *submit,
 
 	/* get config from core */
 	mml_core_config_task(cfg, task);
+	if (cfg->err)
+		result = -EINVAL;
 
 	mml_trace_end();
-	return 0;
+	return result;
 
 err_unlock_exit:
 	mutex_unlock(&ctx->config_mutex);
+err_buf_exit:
 	mml_trace_end();
 	mml_log("%s fail result %d", __func__, result);
 	return result;
@@ -775,6 +805,19 @@ const static struct mml_task_ops dle_task_ops = {
 	.kt_setsched = kt_setsched,
 };
 
+static void config_get(struct mml_frame_config *cfg)
+{
+}
+
+static void config_put(struct mml_frame_config *cfg)
+{
+}
+
+static const struct mml_config_ops dle_config_ops = {
+	.get = config_get,
+	.put = config_put,
+};
+
 static struct mml_dle_ctx *dle_ctx_create(struct mml_dev *mml,
 					  struct mml_dle_param *dl)
 {
@@ -801,6 +844,7 @@ static struct mml_dle_ctx *dle_ctx_create(struct mml_dev *mml,
 	mutex_init(&ctx->config_mutex);
 	ctx->mml = mml;
 	ctx->task_ops = &dle_task_ops;
+	ctx->cfg_ops = &dle_config_ops;
 	ctx->wq_destroy = alloc_ordered_workqueue("mml_destroy_dl", 0, 0);
 	ctx->dl_dual = dl->dual;
 	ctx->config_cb = dl->config_cb;

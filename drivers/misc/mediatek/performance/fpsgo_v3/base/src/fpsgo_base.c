@@ -599,16 +599,22 @@ struct hwui_info *fpsgo_search_and_add_hwui_info(int pid, int force)
 			p = &(*p)->rb_left;
 		else if (pid > tmp->pid)
 			p = &(*p)->rb_right;
-		else
+		else {
+			fpsgo_main_trace("%s pid:%d, force:%d, found", __func__, pid, force);
 			return tmp;
+		}
 	}
 
-	if (!force)
+	if (!force) {
+		fpsgo_main_trace("%s pid:%d not found", __func__, pid);
 		return NULL;
+	}
 
 	tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
 	if (!tmp)
 		return NULL;
+
+	fpsgo_main_trace("%s pid:%d, force:%d add", __func__, pid, force);
 
 	tmp->pid = pid;
 
@@ -733,6 +739,7 @@ void fpsgo_check_thread_status(void)
 	struct render_info *iter;
 	int temp_max_pid = 0;
 	unsigned long long temp_max_bufid = 0;
+	int rb_tree_empty = 0;
 
 	if (ts < TIME_100MS)
 		return;
@@ -749,7 +756,7 @@ void fpsgo_check_thread_status(void)
 
 		fpsgo_thread_lock(&iter->thr_mlock);
 		expire_ts = iter->hwui == RENDER_INFO_HWUI_TYPE ?
-		 expire_ts_hwui : expire_ts_non_hwui;
+		expire_ts_hwui : expire_ts_non_hwui;
 
 		if (iter->t_enqueue_start < expire_ts) {
 			if (iter->pid == temp_max_pid &&
@@ -802,7 +809,12 @@ void fpsgo_check_thread_status(void)
 
 	if (check_max_blc)
 		fpsgo_base2fbt_check_max_blc();
-	if (RB_EMPTY_ROOT(&render_pid_tree))
+
+	fpsgo_render_tree_lock(__func__);
+	rb_tree_empty = RB_EMPTY_ROOT(&render_pid_tree);
+	fpsgo_render_tree_unlock(__func__);
+
+	if (rb_tree_empty)
 		fpsgo_base2fbt_no_one_render();
 	else if (only_bypass)
 		fpsgo_base2fbt_only_bypass();
@@ -1371,6 +1383,72 @@ static ssize_t stop_boost_store(struct kobject *kobj,
 
 static KOBJ_ATTR_RW(stop_boost);
 
+static ssize_t render_loading_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	struct rb_node *n;
+	struct render_info *iter;
+	struct task_struct *tsk;
+	char temp[FPSGO_SYSFS_MAX_BUFF_SIZE];
+	int pos = 0, i;
+	int length;
+
+	fpsgo_render_tree_lock(__func__);
+	rcu_read_lock();
+
+	for (n = rb_first(&render_pid_tree); n != NULL; n = rb_next(n)) {
+		iter = rb_entry(n, struct render_info, render_key_node);
+		tsk = find_task_by_vpid(iter->tgid);
+		if (tsk) {
+			get_task_struct(tsk);
+
+			length = scnprintf(temp + pos, FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"PID  NAME  TGID  BufferID\n");
+			pos += length;
+
+			length = scnprintf(temp + pos,
+					FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"%d %4s %4d 0x%llx\n", iter->pid, tsk->comm,
+					iter->tgid, iter->buffer_id);
+			pos += length;
+
+			length = scnprintf(temp + pos, FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"AVG FREQ\n");
+			pos += length;
+
+			length = scnprintf(temp + pos,
+					FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"%d\n", iter->avg_freq);
+			pos += length;
+
+			length = scnprintf(temp + pos, FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"DEP LOADING\n");
+			pos += length;
+
+			for (i = 0; i < iter->dep_valid_size; i++) {
+				length = scnprintf(temp + pos,
+					FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"%d(%d) ", iter->dep_arr[i].pid, iter->dep_arr[i].loading);
+				pos += length;
+			}
+
+			length = scnprintf(temp + pos, FPSGO_SYSFS_MAX_BUFF_SIZE - pos,
+					"\n");
+			pos += length;
+
+			put_task_struct(tsk);
+		}
+	}
+
+	rcu_read_unlock();
+	fpsgo_render_tree_unlock(__func__);
+
+	return scnprintf(buf, PAGE_SIZE, "%s", temp);
+}
+
+static KOBJ_ATTR_RO(render_loading);
+
 int init_fpsgo_common(void)
 {
 	render_pid_tree = RB_ROOT;
@@ -1387,6 +1465,7 @@ int init_fpsgo_common(void)
 		fpsgo_sysfs_create_file(base_kobj, &kobj_attr_BQid);
 		fpsgo_sysfs_create_file(base_kobj, &kobj_attr_perfserv_ta);
 		fpsgo_sysfs_create_file(base_kobj, &kobj_attr_stop_boost);
+		fpsgo_sysfs_create_file(base_kobj, &kobj_attr_render_loading);
 	}
 
 	fpsgo_update_tracemark();

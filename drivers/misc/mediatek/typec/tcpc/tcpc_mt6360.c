@@ -1138,7 +1138,7 @@ static int mt6360_fault_status_clear(struct tcpc_device *tcpc, u8 status)
 static int mt6360_get_alert_mask(struct tcpc_device *tcpc, u32 *mask)
 {
 	int ret;
-	u16 data;
+	u16 data = 0;
 
 	ret = mt6360_i2c_read16(tcpc, TCPC_V10_REG_ALERT_MASK, &data);
 	if (ret < 0)
@@ -1151,7 +1151,7 @@ static int mt6360_get_alert_mask(struct tcpc_device *tcpc, u32 *mask)
 static int mt6360_get_alert_status(struct tcpc_device *tcpc, u32 *alert)
 {
 	int ret;
-	u16 data;
+	u16 data = 0;
 
 	ret = mt6360_i2c_read16(tcpc, TCPC_V10_REG_ALERT, &data);
 	if (ret < 0)
@@ -1294,9 +1294,7 @@ static int mt6360_set_cc(struct tcpc_device *tcpc, int pull)
 
 		pull1 = pull2 = pull;
 
-		if ((pull == TYPEC_CC_RP_DFT || pull == TYPEC_CC_RP_1_5 ||
-			pull == TYPEC_CC_RP_3_0) &&
-			tcpc->typec_is_attached_src) {
+		if (pull == TYPEC_CC_RP && tcpc->typec_is_attached_src) {
 			if (tcpc->typec_polarity)
 				pull1 = TYPEC_CC_RD;
 			else
@@ -2099,7 +2097,7 @@ static int mt6360_transmit(struct tcpc_device *tcpc,
 			   const u32 *data)
 {
 	int ret, data_cnt, packet_cnt;
-	u8 temp[MT6360_TRANSMIT_MAX_SIZE];
+	u8 temp[MT6360_TRANSMIT_MAX_SIZE + 1];
 
 	if (type < TCPC_TX_HARD_RESET) {
 		data_cnt = sizeof(u32) * PD_HEADER_CNT(header);
@@ -2215,7 +2213,7 @@ static int mt6360_parse_dt(struct mt6360_chip *chip, struct device *dev,
 	struct of_phandle_args irq;
 
 	pr_info("%s\n", __func__);
-#if (!IS_ENABLED(CONFIG_MTK_GPIO)) || IS_ENABLED(CONFIG_MTK_GPIOLIB_STAND)
+#if !IS_ENABLED(CONFIG_MTK_GPIO) || IS_ENABLED(CONFIG_MTK_GPIOLIB_STAND)
 	ret = of_get_named_gpio(np, "mt6360pd,intr_gpio", 0);
 	if (ret < 0) {
 		dev_err(dev, "%s no intr_gpio info(gpiolib)\n", __func__);
@@ -2355,26 +2353,18 @@ static int mt6360_tcpcdev_init(struct mt6360_chip *chip, struct device *dev)
 		desc->role_def = TYPEC_ROLE_DRP;
 	}
 
-	if (of_property_read_u32(np, "mt-tcpc,notifier_supply_num",
-				 &val) >= 0) {
-		if (val < 0)
-			desc->notifier_supply_num = 0;
-		else
-			desc->notifier_supply_num = val;
-	} else
+	if (of_property_read_u32(np, "mt-tcpc,notifier_supply_num", &val) >= 0)
+		desc->notifier_supply_num = val;
+	else
 		desc->notifier_supply_num = 0;
 
 	if (of_property_read_u32(np, "mt-tcpc,rp_level", &val) >= 0) {
 		switch (val) {
-		case 0: /* RP Default */
-			desc->rp_lvl = TYPEC_CC_RP_DFT;
-			break;
-		case 1: /* RP 1.5V */
-			desc->rp_lvl = TYPEC_CC_RP_1_5;
-			break;
-		case 2: /* RP 3.0V */
-			desc->rp_lvl = TYPEC_CC_RP_3_0;
-			break;
+		case TYPEC_RP_DFT:
+		case TYPEC_RP_1_5:
+		case TYPEC_RP_3_0:
+			desc->rp_lvl = val;
+ 			break;
 		default:
 			break;
 		}
@@ -2392,7 +2382,8 @@ static int mt6360_tcpcdev_init(struct mt6360_chip *chip, struct device *dev)
 	}
 #endif	/* CONFIG_TCPC_VCONN_SUPPLY_MODE */
 
-	of_property_read_string(np, "mt-tcpc,name", (char const **)&name);
+	if (of_property_read_string(np, "mt-tcpc,name", &name) < 0)
+		dev_info(dev, "use default name\n");
 	len = strlen(name);
 	desc->name = kzalloc(len + 1, GFP_KERNEL);
 	if (!desc->name)

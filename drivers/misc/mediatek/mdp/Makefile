@@ -21,6 +21,12 @@ ccflags-y += -I$(srctree)/drivers/misc/mediatek/smi/ \
              -I$(srctree)/drivers/iommu \
              -I$(srctree)/drivers/misc/mediatek/iommu/
 
+ifeq ($(CONFIG_MICROTRUST_TEE_SUPPORT),m)
+ifeq ($(CONFIG_MTK_MDP_MTEE_SUPPORT),m)
+ccflags-y += -I$(srctree)/drivers/dma-buf/heaps
+endif
+endif
+
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/cmdq/mailbox/
 
 ifeq ($(strip $(CONFIG_MTK_PQ_COLOR_MODE)),"MDP")
@@ -57,6 +63,9 @@ endif
 obj-$(CONFIG_MTK_MDP) += cmdq_helper_inf.o
 obj-$(CONFIG_MTK_MDP_MT6873) += mdp_drv_mt6873.o
 obj-$(CONFIG_MTK_MDP_MT6853) += mdp_drv_mt6853.o
+ifeq ($(CONFIG_MTK_MDP), y)
+obj-$(CONFIG_MTK_MDP_MT6768) += mdp_drv_mt6768.o
+else
 ifneq ($(wildcard $(srctree)/$(src)/mdp_mt6893.c),)
 obj-$(CONFIG_MTK_MDP) += mdp_drv_mt6893.o
 endif
@@ -80,6 +89,19 @@ ifneq ($(wildcard $(srctree)/$(src)/mdp_mt6833.c),)
 obj-$(CONFIG_MTK_MDP) += mdp_drv_mt6833.o
 endif
 
+ifneq ($(wildcard $(srctree)/$(src)/mdp_mt6789.c),)
+obj-$(CONFIG_MTK_MDP) += mdp_drv_mt6789.o
+endif
+
+ifneq ($(wildcard $(srctree)/$(src)/mdp_mt6768.c),)
+obj-$(CONFIG_MTK_MDP) += mdp_drv_mt6768.o
+endif
+
+ifneq ($(wildcard $(srctree)/$(src)/mdp_mt6765.c),)
+obj-$(CONFIG_MTK_MDP) += mdp_drv_mt6765.o
+endif
+endif
+
 mdp_drv_mt6873-objs := mdp_drv.o mdp_mt6873.o
 mdp_drv_mt6853-objs := mdp_drv.o mdp_mt6853.o
 mdp_drv_mt6833-objs := mdp_drv.o mdp_mt6833.o
@@ -88,6 +110,9 @@ mdp_drv_mt6983-objs := mdp_drv.o mdp_mt6983.o
 mdp_drv_mt6879-objs := mdp_drv.o mdp_mt6879.o
 mdp_drv_mt6895-objs := mdp_drv.o mdp_mt6895.o
 mdp_drv_mt6855-objs := mdp_drv.o mdp_mt6855.o
+mdp_drv_mt6789-objs := mdp_drv.o mdp_mt6789.o
+mdp_drv_mt6768-objs := mdp_drv.o mdp_mt6768.o
+mdp_drv_mt6765-objs := mdp_drv.o mdp_mt6765.o
 
 mdp_drv-objs := mdp_driver.o \
 	mdp_ioctl_ex.o \

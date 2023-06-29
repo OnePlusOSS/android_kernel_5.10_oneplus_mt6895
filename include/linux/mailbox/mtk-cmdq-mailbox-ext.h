@@ -23,6 +23,8 @@ struct cmdq_util_controller_fp {
 typedef bool (*cmdq_mminfra_power)(void);
 typedef bool (*cmdq_mminfra_gce_cg)(u32);
 
+typedef void (*cmdq_usage_cb)(u32);
+
 void cmdq_controller_set_fp(struct cmdq_util_controller_fp *cust_cmdq_util);
 #endif
 
@@ -33,7 +35,7 @@ void cmdq_controller_set_fp(struct cmdq_util_controller_fp *cust_cmdq_util);
 #define CMDQ_PREDUMP_MS(timeout_ms)	\
 	((timeout_ms == CMDQ_NO_TIMEOUT) ? CMDQ_PREDUMP_DEFAULT_MS : timeout_ms / 5)
 
-#define CMDQ_THR_MAX_COUNT		24
+#define CMDQ_THR_MAX_COUNT		32
 
 #define CMDQ_INST_SIZE			8 /* instruction is 64-bit */
 #define CMDQ_SUBSYS_SHIFT		16
@@ -189,8 +191,11 @@ struct cmdq_thread {
 	bool			occupied;
 	bool			dirty;
 	u64			timer_mod;
+	u64			lock_time;
 	u64			irq_time;
 	u32			irq_task;
+	atomic_t		usage;
+	cmdq_usage_cb usage_cb;
 };
 
 extern int mtk_cmdq_log;
@@ -287,8 +292,8 @@ void cmdq_thread_dump_all(void *mbox_cmdq, const bool lock, const bool dump_pkt,
 void cmdq_thread_dump_all_seq(void *mbox_cmdq, struct seq_file *seq);
 void cmdq_mbox_thread_remove_task(struct mbox_chan *chan,
 	struct cmdq_pkt *pkt);
-void cmdq_mbox_enable(void *chan);
-void cmdq_mbox_disable(void *chan);
+s32 cmdq_mbox_enable(void *chan);
+s32 cmdq_mbox_disable(void *chan);
 s32 cmdq_mbox_get_usage(void *chan);
 void *cmdq_mbox_get_base(void *chan);
 phys_addr_t cmdq_mbox_get_base_pa(void *chan);
@@ -320,6 +325,7 @@ unsigned long cmdq_get_tracing_mark(void);
 u32 cmdq_thread_timeout_backup(struct cmdq_thread *thread, const u32 ms);
 void cmdq_thread_timeout_restore(struct cmdq_thread *thread, const u32 ms);
 s32 cmdq_mbox_set_hw_id(void *cmdq);
+s32 cmdq_mbox_reset_hw_id(void *cmdq);
 
 #if IS_ENABLED(CONFIG_MMPROFILE)
 void cmdq_mmp_wait(struct mbox_chan *chan, void *pkt);
@@ -328,6 +334,7 @@ void cmdq_mmp_wait(struct mbox_chan *chan, void *pkt);
 s32 cmdq_sec_insert_backup_cookie(struct cmdq_pkt *pkt);
 void cmdq_mbox_dump_dbg(void *mbox_cmdq, void *chan, const bool lock);
 void cmdq_chan_dump_dbg(void *chan);
+void cmdq_get_usage_cb(struct mbox_chan *chan, cmdq_usage_cb usage_cb);
 void cmdq_get_mminfra_cb(cmdq_mminfra_power cb);
 void cmdq_get_mminfra_gce_cg_cb(cmdq_mminfra_gce_cg cb);
 void cmdq_dump_usage(void);

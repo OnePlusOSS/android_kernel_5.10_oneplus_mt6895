@@ -15,6 +15,7 @@
 #define TRACE_NUM		8
 #define TRACE_P_NUM		4
 #define RC_BC_SUPPORT		"mediatek,srclken-rc-broadcast"
+#define CFGID_NOT_FOUND     "UNSUPPORT_CFGID"
 
 static bool srclken_rc_bc_support;
 
@@ -91,7 +92,7 @@ const char *srclken_rc_get_cfg_name(u32 idx)
 {
 	if ((!srclken_rc_bc_support && idx >= RC_CFG_NON_BC_MAX)
 			|| (srclken_rc_bc_support && idx >= RC_CFG_MAX))
-		return NULL;
+		return CFGID_NOT_FOUND;
 
 	return rc_cfg_name[idx];
 }
@@ -572,10 +573,7 @@ int __srclken_rc_subsys_ctrl(struct srclken_rc_subsys *subsys,
 	if (cmd <= CLKBUF_CMD_SW) {
 		val &= (~(SW_SRCLKEN_RC_EN_MASK << SW_SRCLKEN_RC_EN_SHIFT));
 		val |= (SW_SRCLKEN_RC_EN_MASK << SW_SRCLKEN_RC_EN_SHIFT);
-		if (rc_req == RC_BBLPM_REQ) {
-			val &= (~(SW_RC_REQ_MASK << SW_RC_REQ_SHIFT));
-			val |= (SW_BBLPM_EN_MASK << SW_BBLPM_EN_SHIFT);
-		} else if (rc_req == RC_FPM_REQ) {
+		if (rc_req == RC_FPM_REQ) {
 			val &= (~(SW_RC_REQ_MASK << SW_RC_REQ_SHIFT));
 			val |= (SW_FPM_EN_MASK << SW_FPM_EN_SHIFT);
 		} else if (rc_req == RC_LPM_VOTE_REQ) {
@@ -701,7 +699,7 @@ static int srclken_rc_broadcast_hw_shift(void)
 	rc_sta._trace_lsb.ofs = BC_TRACE_0_LSB;
 	rc_sta._trace_msb.ofs = BC_TRACE_0_MSB;
 	rc_sta._timer_lsb.ofs = BC_TIMER_0_LSB;
-	rc_sta._timer_lsb.ofs = BC_TIMER_0_MSB;
+	rc_sta._timer_msb.ofs = BC_TIMER_0_MSB;
 
 	return 0;
 }
@@ -717,7 +715,7 @@ static int srclken_rc_dts_base_init(struct platform_device *pdev)
 	rc_cfg.hw.base.addr = devm_ioremap(&pdev->dev,
 			cfg_res->start, resource_size(cfg_res));
 	if (IS_ERR(rc_cfg.hw.base.addr)) {
-		pr_notice("get rc_cfg base failed: %d\n",
+		pr_notice("get rc_cfg base failed: %l\n",
 			PTR_ERR(rc_cfg.hw.base.addr));
 		goto RC_BASE_INIT_FAILED;
 	}

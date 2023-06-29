@@ -308,7 +308,7 @@ void cmdq_core_deinit_group_cb(void)
 static bool cmdq_core_is_valid_group(u32 engGroup)
 {
 	/* check range */
-	if (engGroup < 0 || engGroup >= cmdq_mdp_get_func()->getGroupMax())
+	if (engGroup >= cmdq_mdp_get_func()->getGroupMax())
 		return false;
 
 	return true;
@@ -844,6 +844,11 @@ bool cmdq_core_should_pqrb_log(void)
 	return cmdq_ctx.logLevel & (1 << CMDQ_LOG_LEVEL_PQ_READBACK);
 }
 
+bool cmdq_core_should_clock_log(void)
+{
+	return cmdq_ctx.logLevel & (1 << CMDQ_LOG_LEVEL_CLOCK);
+}
+
 bool cmdq_core_aee_enable(void)
 {
 	return cmdq_ctx.aee;
@@ -907,10 +912,14 @@ void cmdq_long_string(char *buf, u32 *offset, s32 *max_size,
 	va_start(arg_ptr, string);
 	buffer = buf + (*offset);
 	msg_len = vsnprintf(buffer, *max_size, string, arg_ptr);
-	*max_size -= msg_len;
-	if (*max_size < 0)
-		*max_size = 0;
-	*offset += msg_len;
+	if (unlikely(msg_len < 0)) {
+		CMDQ_ERR("%s vsnprintf failed!!!\n", __func__);
+	} else {
+		*max_size -= msg_len;
+		if (*max_size < 0)
+			*max_size = 0;
+		*offset += msg_len;
+	}
 	va_end(arg_ptr);
 }
 
@@ -944,13 +953,21 @@ int cmdq_core_print_record_title(char *_buf, int bufLen)
 
 	length = snprintf(buf, bufLen,
 		"index,pid,scn,flag,task_pri,is_sec,size,thr#,thr_pri,");
-	bufLen -= length;
-	buf += length;
+	if (unlikely(length < 0)) {
+		CMDQ_ERR("%s snprintf (index...) failed!!!\n", __func__);
+	} else {
+		bufLen -= length;
+		buf += length;
+	}
 
 	length = snprintf(buf, bufLen,
 		"submit,acq_thr,irq_time,begin_wait,exec_time,buf_alloc,buf_rec,buf_rel,total_time,start,end,jump\n");
-	bufLen -= length;
-	buf += length;
+	if (unlikely(length < 0)) {
+		CMDQ_ERR("%s snprintf(submit...) failed!!!\n", __func__);
+	} else {
+		bufLen -= length;
+		buf += length;
+	}
 
 	length = (buf - _buf);
 
@@ -1021,8 +1038,12 @@ static int cmdq_core_print_record(const struct RecordStruct *pRecord,
 		pRecord->priority, pRecord->is_secure, pRecord->size,
 		pRecord->thread,
 		cmdq_get_func()->priority(pRecord->scenario));
-	bufLen -= length;
-	buf += length;
+	if (unlikely(length < 0)) {
+		CMDQ_ERR("%s snprintf failed!!!\n", __func__);
+	} else {
+		bufLen -= length;
+		buf += length;
+	}
 
 	length = snprintf(buf, bufLen,
 		"%5llu.%06lu,%4d%s,%4d%s,%4d%s,%4d%s,%dus,%dus,%dus,%4d%s,",
@@ -1030,15 +1051,23 @@ static int cmdq_core_print_record(const struct RecordStruct *pRecord,
 		IRQTime, unit[1], beginWaitTime, unit[2], execTime, unit[3],
 		pRecord->durAlloc, pRecord->durReclaim, pRecord->durRelease,
 		totalTime, unit[4]);
-	bufLen -= length;
-	buf += length;
+	if (unlikely(length < 0)) {
+		CMDQ_ERR("%s snprintf failed!!!\n", __func__);
+	} else {
+		bufLen -= length;
+		buf += length;
+	}
 
 	/* record address */
 	length = snprintf(buf, bufLen,
 		"0x%08x,0x%08x,0x%08x",
 		pRecord->start, pRecord->end, pRecord->jump);
-	bufLen -= length;
-	buf += length;
+	if (unlikely(length < 0)) {
+		CMDQ_ERR("%s snprintf failed!!!\n", __func__);
+	} else {
+		bufLen -= length;
+		buf += length;
+	}
 
 	profileMarkerCount = pRecord->profileMarkerCount;
 	if (profileMarkerCount > CMDQ_MAX_PROFILE_MARKER_IN_TASK)
@@ -1048,13 +1077,21 @@ static int cmdq_core_print_record(const struct RecordStruct *pRecord,
 		length = snprintf(buf, bufLen, ",%s,%lld",
 			pRecord->profileMarkerTag[i],
 			pRecord->profileMarkerTimeNS[i]);
-		bufLen -= length;
-		buf += length;
+		if (unlikely(length < 0)) {
+			CMDQ_ERR("%s snprintf failed!!!\n", __func__);
+		} else {
+			bufLen -= length;
+			buf += length;
+		}
 	}
 
 	length = snprintf(buf, bufLen, "\n");
-	bufLen -= length;
-	buf += length;
+	if (unlikely(length < 0)) {
+		CMDQ_ERR("%s snprintf failed!!!\n", __func__);
+	} else {
+		bufLen -= length;
+		buf += length;
+	}
 
 	length = (buf - _buf);
 	return length;
@@ -1219,7 +1256,7 @@ int cmdq_core_print_status_seq(struct seq_file *m, void *v)
 				buf->va_base, &buf->pa_base);
 		}
 
-		client = cmdq_clients[handle->thread];
+		client = cmdq_clients[(u32)handle->thread];
 		cmdq_task_get_thread_irq(client->chan, &irq);
 
 		seq_printf(m,
@@ -1282,7 +1319,7 @@ static void cmdq_core_dump_thread(const struct cmdqRecStruct *handle,
 
 	CMDQ_LOG(
 		"[%s]===== Error Thread Status index:%d enabled:%d scenario:%d =====\n",
-		tag, thread, value[8], cmdq_ctx.thread[thread].scenario);
+		tag, thread, value[8], cmdq_ctx.thread[(u32)thread].scenario);
 
 	CMDQ_LOG(
 		"[%s]PC:0x%08x End:0x%08x Wait Token:0x%08x IRQ:0x%x IRQ_EN:0x%x cookie:%u\n",
@@ -1434,6 +1471,11 @@ void *cmdq_core_alloc_hw_buffer_clt(struct device *dev, size_t size,
 	s32 alloc_cnt, alloc_max = 1 << 10;
 	void *va = NULL;
 
+	if (unlikely(!mdp_rb_pool)) {
+		CMDQ_ERR("%s mdp_rb_pool is not exist!!!\n", __func__);
+		return NULL;
+	}
+
 	va = mdp_pool_alloc_impl(mdp_rb_pool, dma_handle,
 		&mdp_rb_pool_cnt, mdp_rb_pool_limit);
 
@@ -1513,11 +1555,15 @@ void cmdq_core_free_hw_buffer_clt(struct device *dev, size_t size,
 	atomic_dec(&cmdq_alloc_cnt[CMDQ_CLT_MAX]);
 	atomic_dec(&cmdq_alloc_cnt[clt]);
 
-	if (pool)
-		mdp_pool_free_impl(mdp_rb_pool, cpu_addr, dma_handle,
-			&mdp_rb_pool_cnt);
-	else
-		cmdq_core_free_hw_buffer(dev, size, cpu_addr, dma_handle);
+	if (unlikely(!mdp_rb_pool)) {
+		CMDQ_ERR("%s mdp_rb_pool is not exist!!!\n", __func__);
+	} else {
+		if (pool)
+			mdp_pool_free_impl(mdp_rb_pool, cpu_addr, dma_handle,
+				&mdp_rb_pool_cnt);
+		else
+			cmdq_core_free_hw_buffer(dev, size, cpu_addr, dma_handle);
+	}
 }
 
 void cmdq_core_free_hw_buffer(struct device *dev, size_t size,
@@ -1715,6 +1761,11 @@ int cmdqCoreAllocWriteAddress(u32 count, dma_addr_t *paStart,
 	struct WriteAddrStruct *pWriteAddr = NULL;
 	int status = 0;
 
+	if (unlikely(!cmdq_mbox_dev_get())) {
+		CMDQ_ERR("%s mbox device is not exist!!!\n", __func__);
+		return -EINVAL;
+	}
+
 	do {
 		if (!paStart) {
 			CMDQ_ERR("invalid output argument\n");
@@ -1859,11 +1910,9 @@ void cmdqCoreReadWriteAddressBatch(dma_addr_t *addrs, u32 count, u32 *val_out)
 		else
 			val_out[i] = 0;
 
-		if (i < count) {
-			CMDQ_LOG_PQ("PQ readback ==> va:%#lx, val_out[%d]:%d, pa:%pa\n",
-				(u32 *)(cur_waddr->va + (pa - cur_waddr->pa)),
+		if (cur_waddr && i < count)
+			CMDQ_LOG_PQ("PQ readback ==> val_out[%d]:%d, pa:%pa\n",
 				i, val_out[i], &addrs[i]);
-		}
 	}
 
 	CMDQ_PROF_MMP(mdp_mmp_get_event()->read_reg,
@@ -1922,6 +1971,11 @@ int cmdqCoreFreeWriteAddress(dma_addr_t paStart, enum CMDQ_CLT_ENUM clt)
 	bool foundEntry;
 	unsigned long flags;
 
+	if (unlikely(!cmdq_mbox_dev_get())) {
+		CMDQ_ERR("%s mbox device is not exist!!!\n", __func__);
+		return -EINVAL;
+	}
+
 	foundEntry = false;
 
 	/* search for the entry */
@@ -1968,6 +2022,11 @@ int cmdqCoreFreeWriteAddressByNode(void *fp, enum CMDQ_CLT_ENUM clt)
 	struct list_head free_list;
 	unsigned long flags;
 	u32 pid = 0;
+
+	if (unlikely(!cmdq_mbox_dev_get())) {
+		CMDQ_ERR("%s mbox device is not exist!!!\n", __func__);
+		return -EINVAL;
+	}
 
 	INIT_LIST_HEAD(&free_list);
 
@@ -2398,7 +2457,7 @@ static void cmdq_core_parse_handle_error(const struct cmdqRecStruct *handle,
 		return;
 	}
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 
 	do {
 		/* other cases, use instruction to judge
@@ -2557,7 +2616,7 @@ static void cmdq_core_dump_handle_summary(const struct cmdqRecStruct *handle,
 		return;
 	}
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 
 	/* Do summary ! */
 	cmdq_core_parse_handle_error(handle, thread, &module, &irqFlag,
@@ -2597,12 +2656,24 @@ void cmdq_core_dump_handle_buffer(const struct cmdq_pkt *pkt,
 				pkt->avail_buf_size);
 		else
 			va = (u32 *)(buf->va_base + CMDQ_CMD_BUFFER_SIZE);
-		va -= 4;
 
-		CMDQ_LOG(
-			"[%s]va:0x%p pa:%pa last inst (0x%p) 0x%08x:%08x 0x%08x:%08x\n",
-			tag, buf->va_base, &buf->pa_base,
-			va, va[1], va[0], va[3], va[2]);
+		if (CMDQ_CMD_BUFFER_SIZE - pkt->avail_buf_size >= CMDQ_INST_SIZE * 2) {
+			va -= 4;
+
+			CMDQ_LOG(
+				"[%s]va:0x%p pa:%pa last inst (0x%p) 0x%08x:%08x 0x%08x:%08x\n",
+				tag, buf->va_base, &buf->pa_base,
+				va, va[1], va[0], va[3], va[2]);
+		}
+		else {
+			va -= 2;
+
+			CMDQ_LOG(
+				"[%s]va:0x%p pa:%pa last inst (0x%p) 0x%08x:%08x\n",
+				tag, buf->va_base, &buf->pa_base,
+				va, va[1], va[0]);
+		}
+
 	}
 }
 
@@ -2645,7 +2716,7 @@ u32 *cmdq_core_dump_pc(const struct cmdqRecStruct *handle,
 	if (!handle)
 		return NULL;
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 	cmdq_task_get_thread_pc(client->chan, &curr_pc);
 
 	pcVA = cmdq_core_get_pc_va(curr_pc, handle);
@@ -2833,7 +2904,7 @@ static void cmdq_core_attach_engine_error(
 	u64 print_eng_flag = 0;
 	CmdqMdpGetEngineGroupBits get_engine_group_bit = NULL;
 	struct CmdqCBkStruct *callback = NULL;
-	const char *engine_group_names =
+	const char **engine_group_names =
 		cmdq_mdp_get_func()->getEngineGroupName();
 
 	if (short_log) {
@@ -3032,7 +3103,7 @@ s32 cmdq_core_acquire_thread(enum CMDQ_SCENARIO_ENUM scenario, bool exclusive)
 
 	mutex_lock(&cmdq_thread_mutex);
 	for (idx = CMDQ_DYNAMIC_THREAD_ID_START;
-		idx < cmdq_dev_get_thread_count(); idx++) {
+		idx >= 0 && idx < cmdq_dev_get_thread_count(); idx++) {
 		/* ignore all static thread */
 		if (cmdq_ctx.thread[idx].used)
 			continue;
@@ -3065,9 +3136,9 @@ s32 cmdq_core_acquire_thread(enum CMDQ_SCENARIO_ENUM scenario, bool exclusive)
 
 void cmdq_core_release_thread(s32 scenario, s32 thread)
 {
-	if (thread == CMDQ_INVALID_THREAD) {
-		CMDQ_ERR("release invalid thread by scenario:%d\n",
-			scenario);
+	if (thread < 0) {
+		CMDQ_ERR("%s release invalid thread(%d) by scenario:%d\n",
+			__func__, thread, scenario);
 		return;
 	}
 
@@ -3085,6 +3156,7 @@ void cmdq_core_release_thread(s32 scenario, s32 thread)
 			thread);
 		dump_stack();
 	}
+
 	if (!cmdq_ctx.thread[thread].acquire)
 		CMDQ_MSG("thread:%d released\n", thread);
 	mutex_unlock(&cmdq_thread_mutex);
@@ -3255,8 +3327,8 @@ s32 cmdq_core_suspend_hw_thread(s32 thread)
 {
 	struct cmdq_client *client;
 
-	if (thread == CMDQ_INVALID_THREAD) {
-		CMDQ_ERR("invalid thread to suspend\n");
+	if (thread < 0) {
+		CMDQ_ERR("%s invalid thread(%d) to suspend\n", __func__, thread);
 		return -EINVAL;
 	}
 
@@ -3549,8 +3621,14 @@ void cmdq_core_release_handle_by_file_node(void *file_node)
 		 * The ideal solution is to stop / cancel HW operation
 		 * immediately, but we cannot do so due to SMI hang risk.
 		 */
-		client = cmdq_clients[handle->thread];
-		cmdq_mbox_thread_remove_task(client->chan, handle->pkt);
+		client = cmdq_clients[(u32)handle->thread];
+#if defined(CMDQ_SECURE_PATH_SUPPORT)
+		if (handle->pkt->sec_data)
+			cmdq_sec_mbox_stop(client);
+		else
+#endif
+			cmdq_mbox_thread_remove_task(client->chan, handle->pkt);
+
 		cmdq_pkt_auto_release_task(handle, true);
 	}
 	mutex_unlock(&cmdq_handle_list_mutex);
@@ -3864,13 +3942,7 @@ static s32 cmdq_pkt_lock_handle(struct cmdqRecStruct *handle,
 	struct cmdq_client *client;
 	s32 ref;
 
-	if (handle->thread == CMDQ_INVALID_THREAD) {
-		CMDQ_ERR("invalid thread handle:0x%p scenario:%d\n",
-			handle, handle->scenario);
-		return -EINVAL;
-	}
-
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 	if (!client) {
 		CMDQ_ERR("mbox client not ready for thread:%d\n",
 			handle->thread);
@@ -3887,8 +3959,8 @@ static s32 cmdq_pkt_lock_handle(struct cmdqRecStruct *handle,
 		return -EBUSY;
 	}
 
-	CMDQ_MSG("lock handle:0x%p thread:%d engine:0x%llx scenario:%u\n",
-		handle, handle->thread, handle->res_flag_acquire,
+	CMDQ_MSG("%s lock handle:0x%p thread:%d engine:0x%llx scenario:%u\n",
+		__func__, handle, handle->thread, handle->res_flag_acquire,
 		handle->scenario);
 
 	/* change state to busy */
@@ -3955,7 +4027,7 @@ static s32 cmdq_core_get_pmqos_handle_list(struct cmdqRecStruct *handle,
 	if (!pkt_list)
 		return -ENOMEM;
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 
 	cmdq_task_get_pkt_from_thread(client->chan, pkt_list,
 		handle_list_size, &pkt_count);
@@ -3996,14 +4068,14 @@ void cmdq_pkt_release_handle(struct cmdqRecStruct *handle)
 	cmdq_core_track_handle_record(handle, handle->thread);
 
 	/* TODO: remove is_secure check */
-	if (handle->thread != CMDQ_INVALID_THREAD &&
-		!handle->secData.is_secure) {
+	if (handle->thread != CMDQ_INVALID_THREAD) {
 		ctx = cmdq_core_get_context();
-		mutex_lock(&ctx->thread[handle->thread].thread_mutex);
+
+		mutex_lock(&ctx->thread[(u32)handle->thread].thread_mutex);
 		/* PMQoS Implement */
 		mutex_lock(&cmdq_thread_mutex);
 		handle_count =
-			--ctx->thread[handle->thread].handle_count;
+			--ctx->thread[(u32)handle->thread].handle_count;
 
 		if (handle_count) {
 			pmqos_handle_list = kcalloc(handle_count + 1,
@@ -4021,7 +4093,7 @@ void cmdq_pkt_release_handle(struct cmdqRecStruct *handle)
 
 		kfree(pmqos_handle_list);
 		mutex_unlock(&cmdq_thread_mutex);
-		mutex_unlock(&ctx->thread[handle->thread].thread_mutex);
+		mutex_unlock(&ctx->thread[(u32)handle->thread].thread_mutex);
 	}
 
 	/* protect multi-thread lock/unlock same time */
@@ -4133,7 +4205,7 @@ static void cmdq_pkt_flush_handler(struct cmdq_cb_data data)
 		return;
 	}
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 
 	if (data.err == -ETIMEDOUT) {
 		/* error dump may processed on error handler */
@@ -4221,13 +4293,13 @@ s32 cmdq_pkt_wait_flush_ex_result(struct cmdqRecStruct *handle)
 	CMDQ_PROF_MMP(mdp_mmp_get_event()->wait_task,
 		MMPROFILE_FLAG_PULSE, ((unsigned long)handle), handle->thread);
 
-	if (!cmdq_clients[handle->thread]) {
+	if (!cmdq_clients[(u32)handle->thread]) {
 		CMDQ_ERR("thread:%d cannot use since client is not used\n",
 			handle->thread);
 		return -EINVAL;
 	}
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 	if (!client->chan->mbox || !client->chan->mbox->dev)
 		CMDQ_AEE("CMDQ",
 			"chan:%u mbox:%p or mbox->dev:%p invalid!!",
@@ -4237,7 +4309,7 @@ s32 cmdq_pkt_wait_flush_ex_result(struct cmdqRecStruct *handle)
 	do {
 		/* wait event and pre-dump */
 		waitq = wait_event_timeout(
-			cmdq_wait_queue[handle->thread],
+			cmdq_wait_queue[(u32)handle->thread],
 			handle->pkt->flush_item != NULL,
 			msecs_to_jiffies(CMDQ_PREDUMP_TIMEOUT_MS));
 
@@ -4250,6 +4322,8 @@ s32 cmdq_pkt_wait_flush_ex_result(struct cmdqRecStruct *handle)
 	} while (1);
 
 	status = cmdq_pkt_wait_complete(handle->pkt);
+	if (handle->pkt_rb)
+		status = cmdq_pkt_wait_complete(handle->pkt_rb);
 
 	if (handle->profile_exec) {
 		u32 *va = cmdq_pkt_get_perf_ret(handle->pkt);
@@ -4359,6 +4433,7 @@ static s32 cmdq_pkt_flush_async_ex_impl(struct cmdqRecStruct *handle,
 	struct ContextStruct *ctx;
 	u32 handle_count;
 	static wait_queue_head_t *wait_q;
+	int32_t thread;
 
 	if (!handle->finalized) {
 		CMDQ_ERR("handle not finalized:0x%p scenario:%d\n",
@@ -4384,34 +4459,31 @@ static s32 cmdq_pkt_flush_async_ex_impl(struct cmdqRecStruct *handle,
 	ctx = cmdq_core_get_context();
 
 	/* protect qos and communite with mbox */
-	mutex_lock(&ctx->thread[handle->thread].thread_mutex);
+	mutex_lock(&ctx->thread[(u32)handle->thread].thread_mutex);
 
 	/* TODO: remove pmqos in seure path */
-	if (!handle->secData.is_secure) {
-		/* PMQoS */
-		CMDQ_SYSTRACE_BEGIN("%s_pmqos\n", __func__);
-		mutex_lock(&cmdq_thread_mutex);
-		handle_count = ctx->thread[handle->thread].handle_count;
+	/* PMQoS */
+	CMDQ_SYSTRACE_BEGIN("%s_pmqos\n", __func__);
+	mutex_lock(&cmdq_thread_mutex);
+	handle_count = ctx->thread[(u32)handle->thread].handle_count;
 
-		pmqos_handle_list = kcalloc(handle_count + 1,
-			sizeof(*pmqos_handle_list), GFP_KERNEL);
+	pmqos_handle_list = kcalloc(handle_count + 1,
+	sizeof(*pmqos_handle_list), GFP_KERNEL);
+	if (pmqos_handle_list) {
+		if (handle_count)
+			cmdq_core_get_pmqos_handle_list(handle,
+				pmqos_handle_list, handle_count);
 
-		if (pmqos_handle_list) {
-			if (handle_count)
-				cmdq_core_get_pmqos_handle_list(handle,
-					pmqos_handle_list, handle_count);
-
-			pmqos_handle_list[handle_count] = handle;
-		}
-
-		cmdq_core_group_begin_task(handle, pmqos_handle_list,
-			handle_count + 1);
-
-		kfree(pmqos_handle_list);
-		ctx->thread[handle->thread].handle_count++;
-		mutex_unlock(&cmdq_thread_mutex);
-		CMDQ_SYSTRACE_END();
+		pmqos_handle_list[handle_count] = handle;
 	}
+
+	cmdq_core_group_begin_task(handle, pmqos_handle_list,
+		handle_count + 1);
+
+	kfree(pmqos_handle_list);
+	ctx->thread[(u32)handle->thread].handle_count++;
+	mutex_unlock(&cmdq_thread_mutex);
+	CMDQ_SYSTRACE_END();
 
 	CMDQ_SYSTRACE_BEGIN("%s\n", __func__);
 	cmdq_core_replace_v3_instr(handle, handle->thread);
@@ -4420,19 +4492,23 @@ static s32 cmdq_pkt_flush_async_ex_impl(struct cmdqRecStruct *handle,
 			handle->pkt->cl, client);
 		handle->pkt->cl = client;
 	}
-	wait_q = &cmdq_wait_queue[handle->thread];
+	wait_q = &cmdq_wait_queue[(u32)handle->thread];
+	thread = handle->thread;
 	err = cmdq_pkt_flush_async(handle->pkt, cmdq_pkt_flush_handler,
 		(void *)handle);
 	wake_up(wait_q);
 
+#if defined(CMDQ_SECURE_PATH_SUPPORT)
+	if (handle->pkt_rb)
+		cmdq_pkt_flush_async(handle->pkt_rb, NULL, NULL);
+#endif
 	CMDQ_SYSTRACE_END();
 
-	mutex_unlock(&ctx->thread[handle->thread].thread_mutex);
+	mutex_unlock(&ctx->thread[(u32)thread].thread_mutex);
 
 	if (err < 0) {
-		CMDQ_ERR("pkt flush failed err:%d pkt:0x%p\n",
-			err, handle->pkt);
-		cmdq_pkt_release_handle(handle);
+		CMDQ_ERR("pkt flush failed err:%d handle:%p thread:%d\n",
+			err, handle, thread);
 		return err;
 	}
 
@@ -4508,7 +4584,7 @@ s32 cmdq_pkt_stop(struct cmdqRecStruct *handle)
 		return -EINVAL;
 	}
 
-	client = cmdq_clients[handle->thread];
+	client = cmdq_clients[(u32)handle->thread];
 
 	/* TODO: need way to prevent user destroy handle in callback,
 	 * but before we handle all things, since after callback we still
@@ -4542,14 +4618,14 @@ struct device *cmdq_mbox_dev_get(void)
 	if (mbox_dev)
 		return mbox_dev;
 
-	CMDQ_ERR("mbox device not exist\n");
+	CMDQ_ERR("mbox device is not exist\n");
 	return NULL;
 }
 
 s32 cmdq_helper_mbox_register(struct device *dev)
 {
 	u32 i;
-	s32 chan_id;
+	s32 chan_id = CMDQ_INVALID_THREAD;
 	struct cmdq_client *clt;
 	int thread_cnt;
 
@@ -4582,8 +4658,18 @@ s32 cmdq_helper_mbox_register(struct device *dev)
 			cmdq_entry = clt;
 	}
 
-	mbox_dev = cmdq_clients[chan_id]->chan->mbox->dev;
+	if (unlikely(chan_id < 0)) {
+		CMDQ_ERR("%s chan_id(%d) is invalid\n", __func__, chan_id);
+	} else {
+		mbox_dev = cmdq_clients[chan_id]->chan->mbox->dev;
+		if (unlikely(!mbox_dev))
+			CMDQ_ERR("%s mbox_dev is not exist\n", __func__);
+		else
+			CMDQ_MSG("%s mbox_dev init success\n", __func__);
+	}
+
 	cmdq_client_base = cmdq_register_device(dev);
+
 
 	/* for mm like mdp set large pool count */
 	for (i = CMDQ_DYNAMIC_THREAD_ID_START;
@@ -4694,8 +4780,14 @@ void cmdq_core_initialize(void)
 
 	cmdq_ctx.enableProfile = 1 << CMDQ_PROFILE_EXEC;
 
+	if (unlikely(!cmdq_mbox_dev_get()))
+		CMDQ_ERR("%s mbox device is not exist!!!\n", __func__);
+
 	mdp_rb_pool = dma_pool_create("mdp_rb", cmdq_mbox_dev_get(),
 		CMDQ_BUF_ALLOC_SIZE, 0, 0);
+	if (unlikely(!mdp_rb_pool))
+		CMDQ_ERR("%s mdp_rb_pool is not exist!!!\n", __func__);
+
 	atomic_set(&mdp_rb_pool_cnt, 0);
 
 	mdp_wake_lock = wakeup_source_register(cmdq_dev_get(), "mdp_pm_lock");
@@ -4740,4 +4832,25 @@ unsigned long cmdq_get_tracing_mark(void)
 	 */
 
 	return tracing_mark_write_addr;
+}
+
+noinline int tracing_mark_write_cmdq(char *fmt, ...)
+{
+#if IS_ENABLED(CONFIG_TRACING)
+	char buf[TRACE_MSG_LEN];
+	va_list args;
+	int len;
+
+	va_start(args, fmt);
+	len = vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+
+	if (len >= TRACE_MSG_LEN) {
+		CMDQ_ERR("%s trace size %u exceed limit\n", __func__, len);
+		return -1;
+	}
+
+	trace_puts(buf);
+#endif
+	return 0;
 }

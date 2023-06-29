@@ -9,6 +9,12 @@
 #include <linux/kernel.h>
 #include <linux/sched/clock.h>
 
+#if defined(CONFIG_PXLW_IRIS)
+/* #define MTK_DRM_LOCKTIME_CHECK */
+#else
+#define MTK_DRM_LOCKTIME_CHECK
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
 #include <aee.h>
 #endif
@@ -85,10 +91,12 @@ int mtk_dprec_logger_pr(unsigned int type, char *fmt, ...);
 
 #define DDPIRQ(fmt, arg...)                                                    \
 	do {                                                                   \
+		mtk_dprec_logger_pr(DPREC_LOGGER_DEBUG, fmt, ##arg);   \
 		if (g_irq_log)                                                 \
-			mtk_dprec_logger_pr(DPREC_LOGGER_DEBUG, fmt, ##arg);   \
+			pr_info("[DISP]" pr_fmt(fmt), ##arg);     \
 	} while (0)
 
+#if defined(MTK_DRM_LOCKTIME_CHECK)
 #define DDP_MUTEX_LOCK(lock, name, line)                                       \
 	do {                                                                   \
 		DDPINFO("M_LOCK:%s[%d] +\n", name, line);		   \
@@ -98,7 +106,20 @@ int mtk_dprec_logger_pr(unsigned int type, char *fmt, ...);
 		mutex_time_start = sched_clock();		   \
 		mutex_locker = name;		   \
 	} while (0)
+#else
+#define DDP_MUTEX_LOCK(lock, name, line)           DDP_MUTEX_LOCK_N(lock, name, line)
+#endif
 
+#define DDP_MUTEX_LOCK_N(lock, name, line)                                       \
+	do {                                                                   \
+		DDPINFO("M_LOCK:%s[%d] +\n", name, line);		   \
+		DRM_MMP_EVENT_START(mutex_lock, (unsigned long)lock,	   \
+				line);	   \
+		mutex_lock(lock);		   \
+		mutex_locker = name;		   \
+	} while (0)
+
+#if defined(MTK_DRM_LOCKTIME_CHECK)
 #define DDP_MUTEX_UNLOCK(lock, name, line)                                     \
 	do {                                                                   \
 		mutex_locker = NULL;		   \
@@ -111,6 +132,18 @@ int mtk_dprec_logger_pr(unsigned int type, char *fmt, ...);
 				(unsigned long)mutex_time_period, 0);   \
 			dump_stack();		   \
 		}		   \
+		mutex_unlock(lock);		   \
+		DRM_MMP_EVENT_END(mutex_lock, (unsigned long)lock,	   \
+			line);	   \
+		DDPINFO("M_ULOCK:%s[%d] -\n", name, line);		   \
+	} while (0)
+#else
+#define DDP_MUTEX_UNLOCK(lock, name, line)           DDP_MUTEX_UNLOCK_N(lock, name, line)
+#endif
+
+#define DDP_MUTEX_UNLOCK_N(lock, name, line)                                     \
+	do {                                                                   \
+		mutex_locker = NULL;		   \
 		mutex_unlock(lock);		   \
 		DRM_MMP_EVENT_END(mutex_lock, (unsigned long)lock,	   \
 			line);	   \
@@ -156,6 +189,20 @@ int mtk_dprec_logger_pr(unsigned int type, char *fmt, ...);
 		pr_err("[DDP Error]" string, ##args);                          \
 	} while (0)
 #endif /* CONFIG_MTK_AEE_FEATURE */
+#define DDPAEE_1(string, args...)                                                \
+	do {                                                                   \
+		char str[200];                                                 \
+		int r;	\
+		r = snprintf(str, 199, "DDP:" string, ##args);                     \
+		if (r < 0) {	\
+			pr_err("snprintf error\n");	\
+		}	\
+		aee_kernel_exception_api(__FILE__, __LINE__,                     \
+				       DB_OPT_DEFAULT |                        \
+					       DB_OPT_MMPROFILE_BUFFER,        \
+				       str, string, ##args);                   \
+		DDPPR_ERR("[DDP Error]" string, ##args);                       \
+	} while (0)
 
 extern bool g_mobile_log;
 extern bool g_msync_debug;
@@ -163,4 +210,5 @@ extern bool g_fence_log;
 extern bool g_irq_log;
 extern bool g_detail_log;
 extern bool g_profile_log;
+extern bool enter_idle_flag;
 #endif

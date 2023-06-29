@@ -31,6 +31,20 @@
 #define MTK_FILL_MIPI_IMPEDANCE
 #endif
 
+
+//#ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT
+/*
+* add for fingerprint notify frigger
+*/
+#define MTK_ONSCREENFINGERPRINT_EVENT 20
+//#endif
+
+#if defined(CONFIG_PXLW_IRIS)
+/* #define MTK_DRM_LOCKTIME_CHECK */
+#else
+#define MTK_DRM_LOCKTIME_CHECK
+#endif
+
 struct device;
 struct device_node;
 struct drm_crtc;
@@ -60,6 +74,7 @@ struct mtk_mmsys_driver_data {
 	const struct mtk_crtc_path_data *ext_path_data;
 	const struct mtk_crtc_path_data *ext_alter_path_data;
 	const struct mtk_crtc_path_data *third_path_data;
+	const struct mtk_crtc_path_data *fourth_path_data;
 	enum mtk_mmsys_id mmsys_id;
 	bool shadow_register;
 	const struct mtk_session_mode_tb *mode_tb;
@@ -99,6 +114,7 @@ struct mtk_drm_private {
 	enum MTK_DRM_SESSION_MODE session_mode;
 	atomic_t crtc_present[MAX_CRTC];
 	atomic_t crtc_sf_present[MAX_CRTC];
+	atomic_t crtc_rel_present[MAX_CRTC];
 
 	struct device_node *mutex_node;
 	struct device *mutex_dev;
@@ -175,11 +191,31 @@ struct mtk_drm_private {
 	bool dma_parms_allocated;
 
 	bool already_first_config;
+//#ifdef OPLUS_ADFR
+	struct workqueue_struct *fakeframe_wq;
+	struct hrtimer fakeframe_timer;
+	struct work_struct fakeframe_work;
+	/* add for mux switch control */
+	struct completion switch_te_gate;
+	bool vsync_switch_pending;
+	bool need_vsync_switch;
+	struct workqueue_struct *vsync_switch_wq;
+	struct work_struct vsync_switch_work;
+
+	/* indicate that whether the current frame backlight has been updated */
+	bool oplus_adfr_backlight_updated;
+	/* need qsync mode recovery after backlight status updated */
+	bool osync_mode_recovery;
+	/* set timer to reset qsync after the backlight is no longer updated */
+	struct hrtimer osync_mode_timer;
+	struct workqueue_struct *osync_mode_wq;
+	struct work_struct osync_mode_work;
+//endif
 
 	struct mml_drm_ctx *mml_ctx;
 	atomic_t mml_job_done;
 	wait_queue_head_t signal_mml_job_done_wq;
-
+	unsigned int *dummy_table_backup;
 	unsigned int seg_id;
 };
 
@@ -228,11 +264,19 @@ struct mtk_drm_disp_sec_cb {
 	int (*cb)(int value, struct cmdq_pkt *handle, resource_size_t dummy_larb);
 };
 
+struct mtk_drm_disp_mtee_cb {
+	struct drm_device *dev;
+	int (*cb)(int value, int fd, struct mtk_drm_gem_obj *mtk_gem_obj,
+	struct cmdq_pkt *handle, struct mtk_ddp_comp *comp, u32 crtc_id,
+	u32 regs_addr, u32 lye_addr, u32 offset, u32 size);
+};
+
 enum DISP_SEC_SIGNAL {
 	DISP_SEC_START = 0,
 	DISP_SEC_STOP,
 	DISP_SEC_ENABLE,
 	DISP_SEC_DISABLE,
+	DISP_SEC_FD_TO_SEC_HDL,
 };
 
 static const struct mtk_addon_module_data addon_rsz_data[] = {
@@ -302,6 +346,7 @@ extern struct platform_driver mtk_disp_dli_async_driver;
 extern struct platform_driver mtk_disp_inlinerotate_driver;
 extern struct platform_driver mtk_mmlsys_bypass_driver;
 extern struct mtk_drm_disp_sec_cb disp_sec_cb;
+extern struct mtk_drm_disp_mtee_cb disp_mtee_cb;
 
 void mtk_atomic_state_put_queue(struct drm_atomic_state *state);
 void mtk_drm_fence_update(unsigned int fence_idx, unsigned int index);
@@ -325,8 +370,11 @@ int lcm_fps_ctx_reset(struct drm_crtc *crtc);
 int lcm_fps_ctx_update(unsigned long long cur_ns,
 		unsigned int crtc_id, unsigned int mode);
 int mtk_mipi_clk_change(struct drm_crtc *crtc, unsigned int data_rate);
-bool mtk_drm_lcm_is_connect(void);
-bool mtk_crtc_alloc_sram(struct mtk_drm_crtc *mtk_crtc);
+/*#ifdef OPLUS_FEATURE_DISPLAY*/
+bool mtk_drm_lcm_is_connect(struct mtk_drm_crtc *mtk_crtc);
+/*#endif*/
+size_t mtk_gce_get_dummy_table(unsigned int mmsys_id, struct dummy_mapping **table);
+
 
 int _parse_tag_videolfb(unsigned int *vramsize, phys_addr_t *fb_base,
 	unsigned int *fps);
@@ -337,5 +385,6 @@ void **mtk_aod_scp_ipi_init(void);
 void mtk_free_mml_submit(struct mml_submit *temp);
 int copy_mml_submit(struct mml_submit *src, struct mml_submit *dst);
 void **mtk_drm_disp_sec_cb_init(void);
+void **mtk_drm_disp_mtee_cb_init(void);
 
 #endif /* MTK_DRM_DRV_H */

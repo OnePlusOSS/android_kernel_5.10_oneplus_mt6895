@@ -255,26 +255,28 @@ int md_fsm_exp_info(int md_id, unsigned int channel_id)
 	md = ccci_md_get_modem_by_id(md_id);
 	if (!md)
 		return 0;
+
+	md_info = (struct md_sys1_info *)md->private_data;
 	if (channel_id & (1 << D2H_EXCEPTION_INIT)) {
 		ccci_fsm_recv_md_interrupt(md->index, MD_IRQ_CCIF_EX);
+		md_info->channel_id = channel_id & ~(1 << D2H_EXCEPTION_INIT);
 		return 0;
 	}
-	md_info = (struct md_sys1_info *)md->private_data;
-	md_info->channel_id = channel_id;
-
-	if (md_info->channel_id & (1<<AP_MD_PEER_WAKEUP))
+	if (channel_id & (1<<AP_MD_PEER_WAKEUP)) {
 		__pm_wakeup_event(md_info->peer_wake_lock,
 			jiffies_to_msecs(HZ));
-	if (md_info->channel_id & (1<<AP_MD_SEQ_ERROR)) {
+		channel_id &= ~(1 << AP_MD_PEER_WAKEUP);
+	}
+	if (channel_id & (1<<AP_MD_SEQ_ERROR)) {
 		CCCI_ERROR_LOG(md->index, TAG, "MD check seq fail\n");
 		md->ops->dump_info(md, DUMP_FLAG_CCIF, NULL, 0);
+		channel_id &= ~(1 << AP_MD_SEQ_ERROR);
 	}
-
-	if (md_info->channel_id & (1 << D2H_EXCEPTION_INIT)) {
+	if (channel_id & (1 << D2H_EXCEPTION_INIT)) {
 		/* do not disable IRQ, as CCB still needs it */
 		ccci_fsm_recv_md_interrupt(md->index, MD_IRQ_CCIF_EX);
 	}
-
+	md_info->channel_id |= channel_id;
 	return 0;
 }
 EXPORT_SYMBOL(md_fsm_exp_info);
@@ -707,8 +709,7 @@ static void dump_runtime_data_v2_1(struct ccci_modem *md,
 		ap_feature->tail_pattern);
 }
 
-#if (MD_GENERATION < 6297)
-static void md_cd_smem_sub_region_init(struct ccci_modem *md)
+static void md_cd_smem_sub_region_init_old(struct ccci_modem *md)
 {
 	int i;
 	int __iomem *addr;
@@ -733,11 +734,12 @@ static void md_cd_smem_sub_region_init(struct ccci_modem *md)
 
 #if IS_ENABLED(CONFIG_MTK_PBM)
 	addr += CCCI_SMEM_SIZE_DBM_GUARD;
-#endif
+
 	init_md_section_level(KR_MD1, addr);
+#endif
 }
-#else
-static void md_cd_smem_sub_region_init(struct ccci_modem *md)
+
+static void md_cd_smem_sub_region_init_new(struct ccci_modem *md)
 {
 #if IS_ENABLED(CONFIG_MTK_PBM)
 	int __iomem *addr;
@@ -749,7 +751,6 @@ static void md_cd_smem_sub_region_init(struct ccci_modem *md)
 	init_md_section_level(KR_MD1, addr);
 #endif
 }
-#endif
 
 static void config_ap_runtime_data_v2(struct ccci_modem *md,
 	struct ap_query_md_feature *ap_feature)
@@ -871,7 +872,10 @@ static int md_cd_send_runtime_data_v2(struct ccci_modem *md,
 		dump_runtime_data_v2(md, ap_rt_data);
 	}
 
-	md_cd_smem_sub_region_init(md);
+	if (md->hw_info->plat_val->md_gen < 6297)
+		md_cd_smem_sub_region_init_old(md);
+	else
+		md_cd_smem_sub_region_init_new(md);
 
 	ret = ccci_hif_send_data(CCIF_HIF_ID, H2D_SRAM);
 	return ret;
@@ -1107,9 +1111,9 @@ static ssize_t md_cd_debug_show(struct ccci_modem *md, char *buf)
 	int curr = 0;
 
 	curr = snprintf(buf, 16, "%d\n", ccci_debug_enable);
-	if (curr < 0 || curr >= 16) {
+	if (curr < 0) {
 		CCCI_ERROR_LOG(md->index, TAG,
-			"%s-%d:snprintf fail,curr = %d\n", __func__, __LINE__, curr);
+			"%s-%d:scnprintf fail,curr = %d\n", __func__, __LINE__, curr);
 		return -1;
 	}
 	return curr;
@@ -1127,7 +1131,7 @@ static ssize_t md_cd_dump_show(struct ccci_modem *md, char *buf)
 {
 	int count = 0;
 
-	count = snprintf(buf, 256,
+	count = scnprintf(buf, 256,
 		"support: ccif cldma register smem image layout\n");
 	return count;
 }
@@ -1176,7 +1180,7 @@ static ssize_t md_cd_dump_store(struct ccci_modem *md,
 
 static ssize_t md_net_speed_show(struct ccci_modem *md, char *buf)
 {
-	return snprintf(buf, 4096, "curr netspeed log: %d\n",
+	return scnprintf(buf, 4096, "curr netspeed log: %d\n",
 		ccci_hif_dump_status(DPMAIF_HIF_ID, DUMP_FLAG_TOGGLE_NET_SPD,
 			NULL, -1));
 }
@@ -1185,9 +1189,9 @@ static ssize_t md_cd_parameter_show(struct ccci_modem *md, char *buf)
 {
 	int count = 0;
 
-	count += snprintf(buf + count, 128,
+	count += scnprintf(buf + count, 128,
 		"PACKET_HISTORY_DEPTH=%d\n", PACKET_HISTORY_DEPTH);
-	count += snprintf(buf + count, 128, "BD_NUM=%ld\n", MAX_BD_NUM);
+	count += scnprintf(buf + count, 128, "BD_NUM=%ld\n", MAX_BD_NUM);
 
 	return count;
 }
@@ -1319,7 +1323,7 @@ int ccci_modem_init_common(struct platform_device *plat_dev,
 	/* init modem private data */
 	md_info = (struct md_sys1_info *)md->private_data;
 
-	snprintf(md->trm_wakelock_name, sizeof(md->trm_wakelock_name),
+	scnprintf(md->trm_wakelock_name, sizeof(md->trm_wakelock_name),
 		"md%d_cldma_trm", md_id + 1);
 	md->trm_wake_lock = wakeup_source_register(NULL, md->trm_wakelock_name);
 	if (!md->trm_wake_lock) {
@@ -1328,7 +1332,7 @@ int ccci_modem_init_common(struct platform_device *plat_dev,
 			__func__, __LINE__);
 		return -1;
 	}
-	snprintf(md_info->peer_wakelock_name,
+	scnprintf(md_info->peer_wakelock_name,
 		sizeof(md_info->peer_wakelock_name),
 		"md%d_cldma_peer", md_id + 1);
 

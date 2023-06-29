@@ -136,7 +136,7 @@ void mtk_dp_debug(const char *opt)
 
 		ret = sscanf(opt, "adjust_phy:%d,%d,%d\n", &index, &c0, &cp1);
 		if (ret != 3) {
-			DPTXERR("ret = %s\n", ret);
+			DPTXERR("ret = %d\n", ret);
 			return;
 		}
 
@@ -151,7 +151,7 @@ void mtk_dp_debug(const char *opt)
 
 		ret = sscanf(opt, "pattern:%d,%d\n", &enable, &resolution);
 		if (ret != 2) {
-			DPTXMSG("ret = %s\n", ret);
+			DPTXMSG("ret = %d\n", ret);
 			return;
 		}
 
@@ -164,7 +164,7 @@ void mtk_dp_debug(const char *opt)
 
 		ret = sscanf(opt, "maxlinkrate:%d,%d\n", &enable, &maxlinkrate);
 		if (ret != 2) {
-			DPTXMSG("ret = %s\n", ret);
+			DPTXMSG("ret = %d\n", ret);
 			return;
 		}
 
@@ -178,7 +178,7 @@ void mtk_dp_debug(const char *opt)
 
 			ret = sscanf(opt, "video_clock:%d,%d\n", &clksrc, &con1);
 			if (ret != 2) {
-				DPTXERR("ret = %s\n", ret);
+				DPTXERR("ret = %d\n", ret);
 				return;
 			}
 			mtk_dp_clock_debug(clksrc, con1);
@@ -224,16 +224,16 @@ static ssize_t mtk_dp_debug_read(struct file *file, char __user *ubuf,
 	int ret = 0;
 	char *buffer;
 
-	buffer = kmalloc(PAGE_SIZE/8, GFP_KERNEL);
+	buffer = kmalloc(PAGE_SIZE / 8, GFP_KERNEL);
 	if (!buffer)
 		return -ENOMEM;
 
 	switch (g_infoIndex) {
 	case DP_INFO_HDCP:
-		ret = mtk_dp_hdcp_getInfo(buffer, PAGE_SIZE/8);
+		ret = mtk_dp_hdcp_getInfo(buffer, PAGE_SIZE / 8);
 		break;
 	case DP_INFO_PHY:
-		ret = mtk_dp_phy_getInfo(buffer, PAGE_SIZE/8);
+		ret = mtk_dp_phy_getInfo(buffer, PAGE_SIZE / 8);
 		break;
 	default:
 		DPTXERR("Invalid inedx!");

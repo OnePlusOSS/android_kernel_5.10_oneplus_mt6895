@@ -25,9 +25,11 @@
 #include <trace/hooks/topology.h>
 #include <trace/hooks/debug.h>
 #include <trace/hooks/wqlockup.h>
-#include <trace/hooks/sysrqcrash.h>
 #include <trace/hooks/cgroup.h>
 #include <trace/hooks/sys.h>
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_fair.h>
+#endif
 
 #include <task_turbo.h>
 
@@ -314,6 +316,7 @@ static void probe_android_vh_binder_restore_priority(void *ignore,
 		binder_stop_turbo_inherit(cur);
 }
 
+#if !IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
 static void probe_android_vh_alter_futex_plist_add(void *ignore, struct plist_node *q_list,
 						struct plist_head *hb_chain, bool *already_on_hb)
 {
@@ -345,6 +348,7 @@ static void probe_android_vh_alter_futex_plist_add(void *ignore, struct plist_no
 
 	*already_on_hb = false;
 }
+#endif
 
 static void probe_android_rvh_select_task_rq_fair(void *ignore, struct task_struct *p,
 							int prev_cpu, int sd_flag,
@@ -527,6 +531,16 @@ int find_best_turbo_cpu(struct task_struct *p)
 			    !cpu_active(iter_cpu))
 				continue;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+			/*
+			 * TODO: If turbo task is ux task, should we add more conditions
+			 */
+			/*
+			if (should_ux_task_skip_cpu(p, iter_cpu))
+				continue;
+			*/
+#endif
+
 			/*
 			 * favor tasks that prefer idle cpus
 			 * to improve latency
@@ -635,6 +649,11 @@ static void rwsem_list_add(struct task_struct *task,
 			   struct list_head *head)
 {
 	if (!sub_feat_enable(SUB_FEAT_LOCK)) {
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+		if (oplus_rwsem_list_add(task, entry, head)) {
+			return;
+		}
+#endif
 		list_add_tail(entry, head);
 		return;
 	}
@@ -654,6 +673,11 @@ static void rwsem_list_add(struct task_struct *task,
 			}
 		}
 	}
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	if (oplus_rwsem_list_add(task, entry, head)) {
+		return;
+	}
+#endif
 	list_add_tail(entry, head);
 }
 
@@ -1423,12 +1447,14 @@ static int __init init_task_turbo(void)
 		goto failed;
 	}
 
+#if !IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
 	ret = register_trace_android_vh_alter_futex_plist_add(
 			probe_android_vh_alter_futex_plist_add, NULL);
 	if (ret) {
 		ret_erri_line = __LINE__;
 		goto failed;
 	}
+#endif
 
 	ret = register_trace_android_rvh_select_task_rq_fair(
 			probe_android_rvh_select_task_rq_fair, NULL);

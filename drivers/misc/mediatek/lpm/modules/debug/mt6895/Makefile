@@ -16,6 +16,10 @@ ccflags-y += -I$(LPM_MODULES_FOLDER)/debug/mt6895/
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/
 ccflags-y += -I$(LPM_MODULES_FOLDER)/include/mt6895/
 
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+ccflags-y += -DOPLUS_FEATURE_CONN_POWER_MONITOR
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
+
 BUILD_LPM_DBG_MODUDLE_NAME=mtk-lpm-dbg-mt6895
 obj-$(CONFIG_MTK_LOW_POWER_MODULE) += ${BUILD_LPM_DBG_MODUDLE_NAME}.o
 

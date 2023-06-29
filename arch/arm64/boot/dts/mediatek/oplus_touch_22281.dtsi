@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Copyright (C) 2020 MediaTek Inc.
+ */
+/* TOUCH start */
+
+&i2c0 {
+	clock-frequency = <400000>;
+	pinctrl-names = "default", "ts_int_active",
+		"ts_reset_active", "ts_int_suspend",
+		"ts_reset_suspend", "ts_i2c_mode";
+	pinctrl-0 = <&ts_int_active>;
+	pinctrl-1 = <&ctp_ts_int_active>;
+	pinctrl-2 = <&ctp_ts_reset_active>;
+	pinctrl-3 = <&ctp_ts_int_suspend>;
+	pinctrl-4 = <&ctp_ts_reset_suspend>;
+	pinctrl-5 = <&ctp_ts_i2c_mode>;
+
+	Focaltech@38 {
+		compatible = "focaltech,fts";
+		reg = <0x38>;
+		chip-name = "FT3518";
+
+		/* Interrupt && Irq-gpio */
+		interrupt-parent = <&pio>;
+		interrupts = <9 IRQ_TYPE_EDGE_FALLING 9 0>;
+
+		enable2v8_gpio = <&pio 153 0x1>;
+
+		/* Other HW Resource */
+		irq-gpio = <&pio 9 0x2002>;
+		reset-gpio = <&pio 152 0>;
+		pinctrl-names = "default";
+
+		vid_len = <2>;
+		tp_type = <8>;
+		// type of tp_dev ,TP-SAMSUNG = 8;
+		panel_type = <8>;
+		firmware_name = "0xAC03000";
+		platform_support_project = <22281 22282 22283>;
+		platform_support_project_dir = <22281 22281 22281>;
+		platform_support_project_commandline = "default_commandline","default_commandline","default_commandline";
+		touchpanel,max-num-support = <10>;
+		touchpanel,tx-rx-num = <16 34>;
+		touchpanel,panel-coords = <4320 9600>;
+		touchpanel,display-coords = <1080 2400>;
+		touchpanel,touchmajor-limit = <0 216>;
+		touchpanel,smooth-level = <255 2 15 25 45 60>;
+		touchpanel,smooth-level-charging = <255 15 20 25 45 60>;
+		touchpanel,sensitive-level = <255 20 16 10 8 5>;
+		touchpanel,single-optimized-time = <8>;
+		touchpanel,high-frame-rate-time = <20>;
+
+		/* SW Support Feature Control */
+		black_gesture_support;
+		fw_edge_limit_support;
+		pressure_report_support;
+		charger_pump_support;
+		game_switch_support;
+		smart_gesture_support;
+		fw_update_app_support;
+		fingerprint_underscreen_support;
+		headset_pump_support;
+		irq_need_dev_resume_ok;
+		esd_handle_support;
+		high_resolution_support;
+		health_monitor_support;
+		disable_suspend_irq_handler_support;
+		sportify_aod_gesture_support;
+		black_gesture_indep_support;
+		exception_upload_support;
+		snr_read_support;
+		/*
+		 *Virtual Key Config:
+		 *1:touchpanel,button-type: <virtualkey_type  supportted_button-map>
+		 *virtualkey_type:
+		 *Type 1: using board_properties
+		 *Type 2: using same IC (button zone&& touch zone are seprate)
+		 *Type 3: using diffrent IC (button zone&& touch zone are seprate)
+		 *Type 4: No need of virtual key process
+		 *supportted_button-map:select|menu|home|back
+		 *
+		 *2:touchpanel,button-map
+		 *type (X1,Y1)(X2,Y2)(X3,Y3)(Width_X,Hight_Y)--Only when button-type is 0
+		 */
+		touchpanel,button-type = <4>;
+		touchpanel.button-TRx = <0 0>;
+	};
+};
+&pio {
+	ts_int_active: ts_int_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO9__FUNC_GPIO9>;
+			slew-rate = <0>;
+			bias-pull-up;
+		};
+	};
+};

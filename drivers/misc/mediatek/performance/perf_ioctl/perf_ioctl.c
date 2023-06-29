@@ -131,12 +131,15 @@ static void perfctl_notify_fpsgo_nn_end(
 	if (!exec_time)
 		goto out_exec_time_malloc_fail;
 
-	perfctl_copy_from_user(boost,
-		msgKM->boost, size * sizeof(__s32));
-	perfctl_copy_from_user(device,
-		msgKM->device, size * sizeof(__s32));
-	perfctl_copy_from_user(exec_time,
-		msgKM->exec_time, size * sizeof(__u64));
+	if (perfctl_copy_from_user(boost,
+		msgKM->boost, size * sizeof(__s32)))
+		goto out_perfctl_fail;
+	if (perfctl_copy_from_user(device,
+		msgKM->device, size * sizeof(__s32)))
+		goto out_perfctl_fail;
+	if (perfctl_copy_from_user(exec_time,
+		msgKM->exec_time, size * sizeof(__u64)))
+		goto out_perfctl_fail;
 
 	fpsgo_notify_nn_job_end_fp(msgKM->pid, msgKM->tid, msgKM->mid,
 			msgKM->num_step, boost, device, exec_time);
@@ -146,6 +149,8 @@ static void perfctl_notify_fpsgo_nn_end(
 	perfctl_copy_to_user(msgUM, msgKM, sizeof(struct _EARA_NN_PACKAGE));
 	return;
 
+out_perfctl_fail:
+	kfree(exec_time);
 out_exec_time_malloc_fail:
 	kfree(device);
 out_device_malloc_fail:
@@ -232,6 +237,7 @@ static long eara_ioctl(struct file *filp,
 	return eara_ioctl_impl(filp, cmd, arg, NULL);
 }
 
+#if IS_ENABLED(CONFIG_COMPAT)
 static long eara_compat_ioctl(struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
@@ -290,10 +296,13 @@ static long eara_compat_ioctl(struct file *filp,
 unlock_and_return:
 	return ret;
 }
+#endif
 
 static const struct proc_ops eara_Fops = {
 	.proc_ioctl = eara_ioctl,
+#if IS_ENABLED(CONFIG_COMPAT)
 	.proc_compat_ioctl = eara_compat_ioctl,
+#endif
 	.proc_open = eara_open,
 	.proc_read = seq_read,
 	.proc_lseek = seq_lseek,
@@ -473,7 +482,9 @@ static long eas_ioctl(struct file *filp,
 
 static const struct proc_ops eas_Fops = {
 	.proc_ioctl = eas_ioctl,
+#if IS_ENABLED(CONFIG_COMPAT)
 	.proc_compat_ioctl = eas_ioctl,
+#endif
 	.proc_open = eas_open,
 	.proc_read = seq_read,
 	.proc_lseek = seq_lseek,
@@ -493,6 +504,8 @@ EXPORT_SYMBOL(xgff_frame_startend_fp);
 void (*xgff_frame_getdeplist_maxsize_fp)(
 		unsigned int *pdeplistsize);
 EXPORT_SYMBOL(xgff_frame_getdeplist_maxsize_fp);
+void (*xgff_frame_min_cap_fp)(unsigned int min_cap);
+EXPORT_SYMBOL(xgff_frame_min_cap_fp);
 
 static int xgff_show(struct seq_file *m, void *v)
 {
@@ -568,6 +581,14 @@ static long xgff_ioctl_impl(struct file *filp,
 
 		break;
 
+	case XGFFRAME_MIN_CAP:
+		if (!xgff_frame_min_cap_fp) {
+			ret = -EAGAIN;
+			goto ret_ioctl;
+		}
+		xgff_frame_min_cap_fp((unsigned int)msgKM->min_cap);
+		break;
+
 	default:
 		pr_debug(TAG "%s %d: unknown cmd %x\n",
 			__FILE__, __LINE__, cmd);
@@ -585,6 +606,7 @@ static long xgff_ioctl(struct file *filp,
 	return xgff_ioctl_impl(filp, cmd, arg, NULL);
 }
 
+#if IS_ENABLED(CONFIG_COMPAT)
 static long xgff_compat_ioctl(struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
@@ -623,10 +645,13 @@ static long xgff_compat_ioctl(struct file *filp,
 unlock_and_return:
 	return ret;
 }
+#endif
 
 static const struct proc_ops xgff_Fops = {
 	.proc_ioctl = xgff_ioctl,
+#if IS_ENABLED(CONFIG_COMPAT)
 	.proc_compat_ioctl = xgff_compat_ioctl,
+#endif
 	.proc_open = xgff_open,
 	.proc_read = seq_read,
 	.proc_lseek = seq_lseek,
@@ -790,7 +815,9 @@ ret_ioctl:
 }
 
 static const struct proc_ops Fops = {
+#if IS_ENABLED(CONFIG_COMPAT)
 	.proc_compat_ioctl = device_ioctl,
+#endif
 	.proc_ioctl = device_ioctl,
 	.proc_open = device_open,
 	.proc_read = seq_read,

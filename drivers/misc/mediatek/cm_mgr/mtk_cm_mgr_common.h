@@ -31,6 +31,12 @@ struct cm_mgr_hook {
 	void (*cm_mgr_perf_set_status)(int);
 };
 
+enum cm_mgr_display_ {
+	CM_MGR_MAIN_SCREEN = 0,
+	CM_MGR_SUB_SCREEN,
+	CM_MGR_DISPLAY_MAX,
+};
+
 #if !IS_ENABLED(CONFIG_MTK_CM_IPI)
 #define CM_MGR_D_LEN		(2)
 #define IPI_CM_MGR_INIT 0
@@ -60,9 +66,12 @@ struct cm_mgr_hook {
 #define IPI_CM_MGR_BBCPU_WEIGHT_MIN_SET 27
 #endif /* CONFIG_MTK_CM_IPI */
 
+
 /* common api */
 #if IS_ENABLED(CONFIG_MTK_CM_IPI)
 extern int get_cm_step_num(void);
+extern int get_dsu_perf(void);
+extern int cm_mgr_judge_perfs_dram_opp(int dram_opp);
 #endif
 extern void cm_mgr_update_dram_by_cpu_opp(int cpu_opp);
 #if !IS_ENABLED(CONFIG_MTK_CM_IPI)

@@ -63,6 +63,7 @@ enum gpu_fastdvfs_share_info {
 	FASTDVFS_COMMIT_VIRTUAL_FREQUENCY = 39,
 	FASTDVFS_COMMIT_TYPE = 40,
 	FASTDVFS_SET_TARGET_MARGIN = 41,
+	FASTDVFS_TA_3D_COEF = 42,
 
 	MAX_FASTDVFS_SHARE_INFO
 };
@@ -182,6 +183,10 @@ enum gpu_fastdvfs_share_info {
 (                                      \
 (FASTDVFS_SET_TARGET_MARGIN*SYSRAM_LOG_SIZE) \
 )
+#define SYSRAM_GPU_TA_3D_COEF \
+(                                      \
+(FASTDVFS_TA_3D_COEF*SYSRAM_LOG_SIZE) \
+)
 
 enum action_map {
 	ACTION_MAP_FASTDVFS = 0,
@@ -208,6 +213,7 @@ enum {
 	GPUFDVFS_IPI_SET_FEEDBACK_INFO      = 8,
 	GPUFDVFS_IPI_SET_MODE               = 9,
 	GPUFDVFS_IPI_GET_MODE               = 10,
+	GPUFDVFS_IPI_SET_GED_READY          = 11,
 
 	NR_GPUFDVFS_IPI,
 };
@@ -290,6 +296,7 @@ extern unsigned int mtk_gpueb_dvfs_set_mode(unsigned int action);
 extern unsigned int is_fdvfs_enable(void);
 extern int mtk_gpueb_power_modle_cmd(unsigned int enable);
 extern void mtk_swpm_gpu_pm_start(void);
+extern int mtk_set_ged_ready(int ged_ready_flag);
 
 
 extern int fastdvfs_proc_init(void);

@@ -328,8 +328,8 @@ void fpsgo_notify_qudeq(int qudeq,
 	unsigned long long cur_ts;
 	struct FPSGO_NOTIFIER_PUSH_TAG *vpPush;
 
-	FPSGO_LOGI("[FPSGO_CTRL] qudeq %d-%d, id %llu pid %d\n",
-		qudeq, startend, id, pid);
+	//FPSGO_LOGI("[FPSGO_CTRL] qudeq %d-%d, id %llu pid %d\n",
+	//	qudeq, startend, id, pid);
 
 	if (!fpsgo_is_enable())
 		return;
@@ -744,7 +744,7 @@ static void fpsgo_cpu_frequency_tracer(void *ignore, unsigned int frequency, uns
 
 	if (policy) {
 		fpsgo_notify_cpufreq(cluster, frequency);
-		cpufreq_cpu_put(policy);
+		//cpufreq_cpu_put(policy);
 	}
 }
 
@@ -765,7 +765,11 @@ static void lookup_tracepoints(struct tracepoint *tp, void *ignore)
 	}
 }
 
+#if IS_BUILTIN(CONFIG_MTK_FPSGO_V3)
+static void tracepoint_cleanup(void)
+#else
 void tracepoint_cleanup(void)
+#endif
 {
 	int i;
 
@@ -873,8 +877,11 @@ fail_reg_cpu_frequency_entry:
 
 	return 0;
 }
-
+#if IS_BUILTIN(CONFIG_MTK_FPSGO_V3)
+late_initcall(fpsgo_init);
+#else
 module_init(fpsgo_init);
+#endif
 module_exit(fpsgo_exit);
 
 MODULE_LICENSE("GPL");

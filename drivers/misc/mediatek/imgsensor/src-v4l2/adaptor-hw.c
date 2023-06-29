@@ -61,19 +61,29 @@ static int set_mclk(struct adaptor_ctx *ctx, void *data, int val)
 {
 	int ret;
 	struct clk *mclk, *mclk_src;
-
+	#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+	unsigned char payload[PAYLOAD_LENGTH] = {0x00};
+	scnprintf(payload, sizeof(payload), "NULL$$EventField@@%s$$FieldData@@0x=%x$$detailData@@sn=%s",
+		acquireEventField(EXCEP_CLOCK), (CAM_RESERVED_ID << 20 | CAM_MODULE_ID << 12 | EXCEP_CLOCK), ctx->subdrv->name);
+	#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 	mclk = ctx->clk[CLK_MCLK];
 	mclk_src = get_clk_by_freq(ctx, val);
 
 	ret = clk_prepare_enable(mclk);
 	if (ret) {
 		dev_err(ctx->dev, "failed to enable mclk\n");
+		#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+		cam_olc_raise_exception(EXCEP_CLOCK, payload);
+		#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 		return ret;
 	}
 
 	ret = clk_prepare_enable(mclk_src);
 	if (ret) {
 		dev_err(ctx->dev, "failed to enable mclk_src\n");
+		#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+		cam_olc_raise_exception(EXCEP_CLOCK, payload);
+		#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 		return ret;
 	}
 
@@ -103,20 +113,39 @@ static int set_reg(struct adaptor_ctx *ctx, void *data, int val)
 {
 	unsigned long long ret, idx;
 	struct regulator *reg;
-
+	#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+	unsigned char payload[PAYLOAD_LENGTH] = {0x00};
+	#endif
 	idx = (unsigned long long)data;
 	reg = ctx->regulator[idx];
 
 	ret = regulator_set_voltage(reg, val, val);
 	if (ret) {
+		#ifndef OPLUS_FEATURE_CAMERA_COMMON
+		//Add for DFX camera log report
 		dev_dbg(ctx->dev, "failed to set voltage %s %d\n",
 				reg_names[idx], val);
+		#else
+		dev_err(ctx->dev, "failed to set voltage %s %d\n",
+				reg_names[idx], val);
+		#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 	}
 
 	ret = regulator_enable(reg);
 	if (ret) {
+		#ifndef OPLUS_FEATURE_CAMERA_COMMON
 		dev_dbg(ctx->dev, "failed to enable %s\n",
 				reg_names[idx]);
+		#else
+		dev_err(ctx->dev, "failed to enable %s\n",
+				reg_names[idx]);
+		#endif
+		#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+		scnprintf(payload, sizeof(payload), "NULL$$EventField@@%s$$FieldData@@0x%x$$detailData@@sn=%s, reg_names=%s",
+			acquireEventField(EXCEP_VOLTAGE), (CAM_RESERVED_ID << 20 | CAM_MODULE_ID << 12 | EXCEP_VOLTAGE),
+			ctx->subdrv->name, reg_names[idx]);
+		cam_olc_raise_exception(EXCEP_VOLTAGE, payload);
+		#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 		return ret;
 	}
 
@@ -133,8 +162,13 @@ static int unset_reg(struct adaptor_ctx *ctx, void *data, int val)
 
 	ret = regulator_disable(reg);
 	if (ret) {
+		#ifndef OPLUS_FEATURE_CAMERA_COMMON
 		dev_dbg(ctx->dev, "failed to disable %s\n",
 				reg_names[idx]);
+		#else
+		dev_err(ctx->dev, "failed to disable %s\n",
+				reg_names[idx]);
+		#endif
 		return ret;
 	}
 
@@ -143,14 +177,23 @@ static int unset_reg(struct adaptor_ctx *ctx, void *data, int val)
 
 static int set_state(struct adaptor_ctx *ctx, void *data, int val)
 {
-	unsigned long long ret, idx, x;
-
+	unsigned long long idx, x;
+	int ret;
+	#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+	unsigned char payload[PAYLOAD_LENGTH] = {0x00};
+	#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 	idx = (unsigned long long)data;
 	x = idx + val;
 
 	ret = pinctrl_select_state(ctx->pinctrl, ctx->state[x]);
 	if (ret < 0) {
 		dev_err(ctx->dev, "fail to select %s\n", state_names[x]);
+		#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+		scnprintf(payload, sizeof(payload), "NULL$$EventField@@%s$$FieldData@@0x%x$$detailData@@sn=%s, state_names=%s",
+			acquireEventField(EXCEP_GPIO), (CAM_RESERVED_ID << 20 | CAM_MODULE_ID << 12 | EXCEP_GPIO),
+			ctx->subdrv->name, state_names[idx]);
+		cam_olc_raise_exception(EXCEP_GPIO, payload);
+		#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 		return ret;
 	}
 
@@ -207,6 +250,131 @@ static int reinit_pinctrl(struct adaptor_ctx *ctx)
 
 	return 0;
 }
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+static int reinit_supply(struct adaptor_ctx *ctx)
+{
+	int i;
+	struct device *dev = ctx->dev;
+	/* supplies */
+	for (i = 0; i < REGULATOR_MAXCNT; i++) {
+		ctx->regulator[i] = devm_regulator_get_optional(
+				dev, reg_names[i]);
+		if (IS_ERR(ctx->regulator[i])) {
+			ctx->regulator[i] = NULL;
+			dev_dbg(dev, "In %s:no reg %s\n", __func__, reg_names[i]);
+		}
+	}
+	return 0;
+}
+
+static int reinit_clk(struct adaptor_ctx *ctx)
+{
+	int i;
+	struct device *dev = ctx->dev;
+	/* clocks */
+	for (i = 0; i < CLK_MAXCNT; i++) {
+		ctx->clk[i] = devm_clk_get(dev, clk_names[i]);
+		if (IS_ERR(ctx->clk[i])) {
+			ctx->clk[i] = NULL;
+			dev_dbg(dev, "In %s:no clk %s\n", __func__, clk_names[i]);
+		}
+	}
+	return 0;
+}
+
+int adaptor_hw_aon_power_on(struct adaptor_ctx *ctx)
+{
+    int i;
+    const struct subdrv_pw_seq_entry *ent;
+    struct adaptor_hw_ops *op;
+
+    dev_info(ctx->dev, "[%s]+\n", __func__);
+
+    /* may be released for mipi switch */
+    if (!ctx->pinctrl)
+        reinit_pinctrl(ctx);
+
+    /*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+    if (ctx->support_explorer_aon_fl == 1 && ctx->idx == IMGSENSOR_SENSOR_IDX_SUB) {
+        dev_info(ctx->dev, "In %s:start to reinit supply and clk for front sensor.\n", __func__);
+        /*reinit the supply*/
+        reinit_supply(ctx);
+        /*reinit the clk*/
+        reinit_clk(ctx);
+    }
+
+    for (i = 0; i < ctx->subdrv->aon_pw_seq_cnt; i++) {
+        ent = &ctx->subdrv->aon_pw_seq[i];
+        op = &ctx->hw_ops[ent->id];
+        if (!op->set) {
+            dev_dbg(ctx->dev, "cannot set comp %d val %d\n",
+                ent->id, ent->val);
+            continue;
+        }
+        op->set(ctx, op->data, ent->val);
+        if (ent->delay)
+            mdelay(ent->delay);
+    }
+
+    dev_info(ctx->dev, "[%s]-\n", __func__);
+    return 0;
+}
+
+int adaptor_hw_aon_power_off(struct adaptor_ctx *ctx)
+{
+    int i;
+    const struct subdrv_pw_seq_entry *ent;
+    struct adaptor_hw_ops *op;
+    dev_info(ctx->dev, "[%s]+\n", __func__);
+
+    for (i = ctx->subdrv->aon_pw_seq_cnt - 1; i >= 0; i--) {
+        ent = &ctx->subdrv->aon_pw_seq[i];
+        op = &ctx->hw_ops[ent->id];
+        if (!op->unset)
+            continue;
+        if (ent->id == HW_ID_MCLK)
+            continue;
+        op->unset(ctx, op->data, ent->val);
+        //msleep(ent->delay);
+    }
+
+    /* the pins of mipi switch are shared. free it for another users */
+    if (ctx->state[STATE_MIPI_SWITCH_ON] ||
+        ctx->state[STATE_MIPI_SWITCH_OFF]) {
+        devm_pinctrl_put(ctx->pinctrl);
+        ctx->pinctrl = NULL;
+    }
+
+    /*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+    if (ctx->support_explorer_aon_fl == 1 && ctx->idx == IMGSENSOR_SENSOR_IDX_SUB) {
+        dev_dbg(ctx->dev, "In adaptor_hw_power_off:Start to release the supply and clk resource for front camera.\n");
+        /* clocks */
+        for (i = 0; i < CLK_MAXCNT; i++) {
+            if (ctx->clk[i] != NULL) {
+                devm_clk_put(ctx->dev, ctx->clk[i]);
+                ctx->clk[i] = NULL;
+                dev_dbg(ctx->dev, "In %s:Release clk:%s ok.\n", __func__, clk_names[i]);
+            }
+        }
+        /* supplies */
+        for (i = 0; i < REGULATOR_MAXCNT; i++) {
+            if (ctx->regulator[i] != NULL) {
+                devm_regulator_put(ctx->regulator[i]);
+                ctx->regulator[i] = NULL;
+                dev_dbg(ctx->dev, "In %s:Release regulator:%s ok.\n", __func__, reg_names[i]);
+            }
+        }
+        /*pinctrl*/
+        devm_pinctrl_put(ctx->pinctrl);
+        ctx->pinctrl = NULL;
+    }
+
+    dev_info(ctx->dev, "[%s]-\n", __func__);
+    return 0;
+}
+
+#endif
 int do_hw_power_on(struct adaptor_ctx *ctx)
 {
 	int i;
@@ -218,11 +386,19 @@ int do_hw_power_on(struct adaptor_ctx *ctx)
 	else
 		dev_dbg(ctx->dev, "%s fail to __pm_stay_awake\n",
 			__func__);
-
 	/* may be released for mipi switch */
 	if (!ctx->pinctrl)
 		reinit_pinctrl(ctx);
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	if (ctx->support_explorer_aon_fl == 1 && ctx->idx == IMGSENSOR_SENSOR_IDX_SUB) {
+		dev_info(ctx->dev, "In %s:start to reinit supply and clk for front sensor.\n", __func__);
+		/*reinit the supply*/
+		reinit_supply(ctx);
+		/*reinit the clk*/
+		reinit_clk(ctx);
+	}
+#endif
 	op = &ctx->hw_ops[HW_ID_MIPI_SWITCH];
 	if (op->set)
 		op->set(ctx, op->data, 0);
@@ -293,6 +469,31 @@ int do_hw_power_off(struct adaptor_ctx *ctx)
 		devm_pinctrl_put(ctx->pinctrl);
 		ctx->pinctrl = NULL;
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	if (ctx->support_explorer_aon_fl == 1 && ctx->idx == IMGSENSOR_SENSOR_IDX_SUB) {
+		dev_dbg(ctx->dev, "In adaptor_hw_power_off:Start to release the supply and clk resource for front camera.\n");
+		/* clocks */
+		for (i = 0; i < CLK_MAXCNT; i++) {
+			if (ctx->clk[i] != NULL) {
+				devm_clk_put(ctx->dev, ctx->clk[i]);
+				ctx->clk[i] = NULL;
+				dev_dbg(ctx->dev, "In %s:Release clk:%s ok.\n", __func__, clk_names[i]);
+			}
+		}
+		/* supplies */
+		for (i = 0; i < REGULATOR_MAXCNT; i++) {
+			if (ctx->regulator[i] != NULL) {
+				devm_regulator_put(ctx->regulator[i]);
+				ctx->regulator[i] = NULL;
+				dev_dbg(ctx->dev, "In %s:Release regulator:%s ok.\n", __func__, reg_names[i]);
+			}
+		}
+		/*pinctrl*/
+		devm_pinctrl_put(ctx->pinctrl);
+		ctx->pinctrl = NULL;
+	}
+#endif
 
 	if (ctx->sensor_ws)
 		__pm_relax(ctx->sensor_ws);
@@ -331,6 +532,10 @@ int adaptor_hw_init(struct adaptor_ctx *ctx)
 {
 	int i;
 	struct device *dev = ctx->dev;
+
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	ctx->subctx.is_esd_enable = false;
+	#endif
 
 	/* clocks */
 	for (i = 0; i < CLK_MAXCNT; i++) {
@@ -423,7 +628,31 @@ int adaptor_hw_init(struct adaptor_ctx *ctx)
 		devm_pinctrl_put(ctx->pinctrl);
 		ctx->pinctrl = NULL;
 	}
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	if (ctx->support_explorer_aon_fl == 1 && ctx->idx == IMGSENSOR_SENSOR_IDX_SUB) {
+		dev_dbg(ctx->dev, "In adaptor_hw_power_off:Start to release the supply and clk resource for front camera.\n");
+		/* clocks */
+		for (i = 0; i < CLK_MAXCNT; i++) {
+			if (ctx->clk[i] != NULL) {
+				devm_clk_put(ctx->dev, ctx->clk[i]);
+				ctx->clk[i] = NULL;
+				dev_dbg(ctx->dev, "In %s:Release clk:%s ok.\n", __func__, clk_names[i]);
+			}
+		}
+		/* supplies */
+		for (i = 0; i < REGULATOR_MAXCNT; i++) {
+			if (ctx->regulator[i] != NULL) {
+				devm_regulator_put(ctx->regulator[i]);
+				ctx->regulator[i] = NULL;
+				dev_dbg(ctx->dev, "In %s:Release regulator:%s ok.\n", __func__, reg_names[i]);
+			}
+		}
+		/*pinctrl*/
+		devm_pinctrl_put(ctx->pinctrl);
+		ctx->pinctrl = NULL;
+	}
+#endif
 	return 0;
 }
 
@@ -441,6 +670,10 @@ int adaptor_hw_sensor_reset(struct adaptor_ctx *ctx)
 
 		do_hw_power_off(ctx);
 		do_hw_power_on(ctx);
+
+		#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		ctx->subctx.is_esd_enable = true;
+		#endif
 
 		return 0;
 	}

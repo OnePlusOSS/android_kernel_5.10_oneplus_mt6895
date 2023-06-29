@@ -91,7 +91,6 @@ static struct i2c_driver _lcm_i2c_driver = {
  *****************************************************************************/
 
 #ifdef VENDOR_EDIT
-// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 extern void lcd_queue_load_tp_fw(void);
 #endif /*VENDOR_EDIT*/
 
@@ -769,11 +768,12 @@ static int jdi_unprepare(struct drm_panel *panel)
 	jdi_dcs_write_seq_static(ctx, MIPI_DCS_ENTER_SLEEP_MODE);
 	msleep(150);
 
-	/*
-	 * ctx->reset_gpio = devm_gpiod_get(ctx->dev, "reset", GPIOD_OUT_HIGH);
-	 * gpiod_set_value(ctx->reset_gpio, 0);
-	 * devm_gpiod_put(ctx->dev, ctx->reset_gpio);
-	 */
+	ctx->reset_gpio = devm_gpiod_get(ctx->dev, "reset", GPIOD_OUT_HIGH);
+	if (!IS_ERR_OR_NULL(ctx->reset_gpio)) {
+		gpiod_set_value(ctx->reset_gpio, 0);
+		devm_gpiod_put(ctx->dev, ctx->reset_gpio);
+	}
+
 	if (ctx->gate_ic == 0) {
 		ctx->bias_neg =
 			devm_gpiod_get_index(ctx->dev, "bias", 1, GPIOD_OUT_HIGH);
@@ -845,7 +845,6 @@ static int jdi_prepare(struct drm_panel *panel)
 #endif
 
 #ifdef VENDOR_EDIT
-	// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 	lcd_queue_load_tp_fw();
 #endif
 
@@ -979,11 +978,11 @@ static struct mtk_panel_params ext_params = {
 	},
 	/* following MIPI hopping parameter might cause screen mess */
 	.dyn = {
-		.switch_en = 0,
-		.pll_clk = 428,
-		.vfp_lp_dyn = 4178,
-		.hfp = 396,
-		.vfp = 2528,
+		.switch_en = 1,
+		.pll_clk = 556,
+		.vfp_lp_dyn = 888,
+		.hfp = 720,
+		.vfp = 60,
 	},
 };
 
@@ -1059,11 +1058,11 @@ static struct mtk_panel_params ext_params_90hz = {
 	},
 	/* following MIPI hopping parameter might cause screen mess */
 	.dyn = {
-		.switch_en = 0,
-		.pll_clk = 428,
-		.vfp_lp_dyn = 2528,
-		.hfp = 396,
-		.vfp = 879,
+		.switch_en = 1,
+		.pll_clk = 556,
+		.vfp_lp_dyn = 1290,
+		.hfp = 315,
+		.vfp = 60,
 	},
 };
 
@@ -1139,11 +1138,11 @@ static struct mtk_panel_params ext_params_120hz = {
 	},
 	/* following MIPI hopping parameter might cause screen mess */
 	.dyn = {
-		.switch_en = 0,
-		.pll_clk = 428,
+		.switch_en = 1,
+		.pll_clk = 556,
 		.vfp_lp_dyn = 2528,
-		.hfp = 396,
-		.vfp = 54,
+		.hfp = 108,
+		.vfp = 60,
 	},
 };
 
@@ -1188,6 +1187,11 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	struct mtk_panel_ext *ext = find_panel_ext(panel);
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id_hfp(connector, mode);
+
+	if (!m) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return ret;
+	}
 
 	if (drm_mode_vrefresh(m) == 60)
 		ext->params = &ext_params;
@@ -1249,6 +1253,11 @@ static int mode_switch(struct drm_panel *panel,
 {
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id_hfp(connector, dst_mode);
+
+	if (!m) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return ret;
+	}
 
 	pr_info("%s cur_mode = %d dst_mode %d\n", __func__, cur_mode, dst_mode);
 

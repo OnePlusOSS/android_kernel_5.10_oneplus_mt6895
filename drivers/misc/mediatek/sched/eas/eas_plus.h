@@ -88,6 +88,9 @@ extern void mtk_select_task_rq_rt(void *data, struct task_struct *p, int cpu, in
 extern int mtk_sched_asym_cpucapacity;
 #endif
 
+extern void op_show_cpuinfo_max_freq(void *data, struct cpufreq_policy *policy,
+		unsigned int *max_freq);
+
 #ifdef CONFIG_SMP
 static inline unsigned long task_util(struct task_struct *p)
 {

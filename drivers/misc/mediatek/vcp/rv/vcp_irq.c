@@ -9,6 +9,7 @@
 #include <mt-plat/aee.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <soc/mediatek/smi.h>
 //#include <mt-plat/sync_write.h>
 #include "vcp_ipi_pin.h"
 #include "vcp_helper.h"
@@ -23,6 +24,7 @@ static void vcp_A_wdt_handler(void)
 {
 	pr_notice("[VCP] %s\n", __func__);
 	vcp_dump_last_regs(mmup_enable_count());
+	mtk_smi_dbg_hang_detect("VCP WDT");
 #if VCP_RECOVERY_SUPPORT
 	if (vcp_set_reset_status() == RESET_STATUS_STOP) {
 		pr_debug("[VCP] start to reset vcp...\n");

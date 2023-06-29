@@ -135,6 +135,11 @@ struct mml_task_ops {
 	void (*kt_setsched)(void *adaptor_ctx);
 };
 
+struct mml_config_ops {
+	void (*get)(struct mml_frame_config *cfg);
+	void (*put)(struct mml_frame_config *cfg);
+};
+
 struct mml_cap {
 	enum mml_mode target;
 	enum mml_mode running;
@@ -295,6 +300,7 @@ struct mml_frame_config {
 
 	/* core */
 	const struct mml_task_ops *task_ops;
+	const struct mml_config_ops *cfg_ops;
 
 	/* workqueue for handling slow part of task done */
 	struct workqueue_struct *wq_done;
@@ -315,9 +321,11 @@ struct mml_frame_config {
 	bool shadow:1;
 	bool framemode:1;
 	bool nocmd:1;
+	bool err:1;
 
 	/* tile */
 	struct mml_tile_output *tile_output[MML_PIPE_CNT];
+	struct timespec64 dvfs_boost_time;
 };
 
 struct mml_dma_buf {
@@ -417,6 +425,8 @@ struct mml_task {
 
 	/* mml pq task */
 	struct mml_pq_task *pq_task;
+
+	bool err;
 };
 
 struct tile_func_block;

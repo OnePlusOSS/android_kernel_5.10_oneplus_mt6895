@@ -5,19 +5,19 @@
 
 #define pr_fmt(fmt)    "mtk_iommu: pseudo " fmt
 
+#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <dt-bindings/memory/mtk-memory-port.h>
+#include "iommu_pseudo.h"
 
 #if IS_ENABLED(CONFIG_MTK_ENABLE_GENIEZONE)
 #include <linux/list.h>
 #include <soc/mediatek/smi.h>
 #include "iommu_gz_sec.h"
-#include "iommu_pseudo.h"
 
 #define M4U_L2_ENABLE	1
-#define SVP_FEATURE_DT_NAME	"SecureVideoPath"
 
 struct iommu_pseudo_data {
 	struct device	*dev;
@@ -142,19 +142,10 @@ EXPORT_SYMBOL_GPL(is_disable_map_sec);
 static int mtk_iommu_pseudo_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *svp_node;
 	struct device_node *larbnode;
 	struct platform_device	*plarbdev;
 	struct iommu_pseudo_data *data;
 	int ret, i, count = 0, larb_nr = 0;
-
-	svp_node = of_find_node_by_name(NULL, SVP_FEATURE_DT_NAME);
-	if (!svp_node) {
-		pr_info("SVP on MTEE not support, skip init iommu_pseudo\n");
-		iommu_on_mtee = STATE_DISABLED;
-		return 0;
-	}
-	of_node_put(svp_node);
 
 	data = devm_kzalloc(dev, sizeof(struct iommu_pseudo_data),
 			    GFP_KERNEL);
@@ -255,6 +246,7 @@ EXPORT_SYMBOL_GPL(tmem_type2sec_id);
 
 static const struct of_device_id mtk_iommu_pseudo_of_ids[] = {
 	{ .compatible = "mediatek,mt6833-iommu-pseudo" },
+	{ .compatible = "mediatek,mt6789-iommu-pseudo" },
 	{},
 };
 

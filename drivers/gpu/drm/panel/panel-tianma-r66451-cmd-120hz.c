@@ -519,7 +519,8 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	struct mtk_panel_ext *ext = find_panel_ext(panel);
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id(connector, mode);
-
+	if (!m)
+		return ret;
 	if (drm_mode_vrefresh(m) == MODE_0_FPS)
 		ext->params = &ext_params;
 	else if (drm_mode_vrefresh(m) == MODE_1_FPS)
@@ -752,6 +753,8 @@ static int mode_switch(struct drm_panel *panel,
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id(connector, dst_mode);
 
+	if (!m)
+		return -EFAULT;
 	if (cur_mode == dst_mode)
 		return ret;
 

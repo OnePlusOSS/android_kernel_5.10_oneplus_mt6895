@@ -1064,7 +1064,7 @@ static int panel_ata_check(struct drm_panel *panel)
 {
 	struct lcm *ctx = panel_to_lcm(panel);
 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
-	unsigned char data[3];
+	unsigned char data[3] = {0, 0, 0};
 	unsigned char id[3] = {0x00, 0x80, 0x00};
 	ssize_t ret;
 
@@ -1224,6 +1224,10 @@ static struct mtk_panel_params ext_params = {
 			},
 		},
 	},
+	.dyn = {
+		.switch_en = 1,
+		.data_rate = PLL_CLOCK * 2 + 1,
+	},
 };
 
 struct drm_display_mode *get_mode_by_id(struct drm_connector *connector,
@@ -1246,6 +1250,11 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	struct mtk_panel_ext *ext = find_panel_ext(panel);
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id(connector, mode);
+
+	if (!m) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return ret;
+	}
 
 	if (drm_mode_vrefresh(m) == MODE_0_FPS)
 		ext->params = &ext_params;
@@ -1632,6 +1641,10 @@ static int mode_switch(struct drm_panel *panel,
 	if (cur_mode == dst_mode)
 		return ret;
 
+	if (m == NULL) {
+		DDPPR_ERR("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return -1;
+	}
 	if (drm_mode_vrefresh(m) == MODE_0_FPS) { /*switch to 60 */
 		mode_switch_to_60(panel, stage);
 		DDPMSG("%s:%d switch to 60fps\n", __func__, __LINE__);

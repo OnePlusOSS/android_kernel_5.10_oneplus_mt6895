@@ -427,10 +427,8 @@ static int gauge_coulomb_thread(void *arg)
 		end = ktime_get_boottime();
 		duraction = end - start;
 
-		bm_debug(
-			"%s time:%d ms\n",
-			__func__,
-			(int)(duraction / 1000000));
+		bm_debug("%s time:%d ms\n", __func__,
+			(int)(div_s64(duraction, 1000000)));
 	}
 
 	return 0;
@@ -445,6 +443,7 @@ static irqreturn_t coulomb_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_PM
 static int system_pm_notify(struct notifier_block *nb,
 			    unsigned long mode, void *_unused)
 {
@@ -473,6 +472,7 @@ static int system_pm_notify(struct notifier_block *nb,
 
 	return NOTIFY_DONE;
 }
+#endif /* CONFIG_PM */
 
 void gauge_coulomb_service_init(struct mtk_battery *gm)
 {
@@ -495,10 +495,14 @@ void gauge_coulomb_service_init(struct mtk_battery *gm)
 	if (!gm->disableGM30)
 		kthread_run(gauge_coulomb_thread, cs, "gauge_coulomb_thread");
 
+#ifdef CONFIG_PM
 	cs->pm_nb.notifier_call = system_pm_notify;
 	ret = register_pm_notifier(&cs->pm_nb);
-	if (ret)
+	if (ret) {
 		bm_err("failed to register system pm notify\n");
+		unregister_pm_notifier(&cs->pm_nb);
+	}
+#endif /* CONFIG_PM */
 
 	ret = devm_request_threaded_irq(&gm->gauge->pdev->dev,
 	gm->gauge->irq_no[COULOMB_H_IRQ],

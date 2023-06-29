@@ -12,6 +12,8 @@
 #define EE_BUF_LEN_UMOLY		(0x700)
 #define AED_STR_LEN		(2048)/* 0x800 */
 #define EE_BUF_LEN		(256)/* 0x100 */
+/* for Moet md MD_L2SRAM_SIZE is 0x1C00 */
+#define MD_L2SRAM_SIZE_V3 (0x1000)
 
 #define MD_CORE_TOTAL_NUM   (8)
 #define MD_CORE_NAME_LEN    (11)
@@ -218,5 +220,12 @@ struct mdee_dumper_v3 {
 	/* request by modem, change to 2k: include struct ex_PL_log*/
 	unsigned char ex_pl_info[MD_HS1_FAIL_DUMP_SIZE];
 };
+//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+#define MODEM_MONITOR_ID          509    //modem crash
+#define BUF_LOG_LENGTH            2148
+unsigned int BKDRHash(const char* str, unsigned int len);
+extern void mm_keylog_write_modemdump(unsigned int hashId, const char *cause, int id, char *subsys);
+
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 #endif	/* __MDEE_DUMPER_V3_H__ */
 

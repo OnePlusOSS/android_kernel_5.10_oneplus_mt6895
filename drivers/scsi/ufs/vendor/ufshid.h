@@ -49,7 +49,7 @@
 #include "../../../block/blk.h"
 
 #define UFSHID_VER					0x0101
-#define UFSHID_DD_VER					0x010202
+#define UFSHID_DD_VER					0x010204
 #define UFSHID_DD_VER_POST				""
 
 #define UFS_FEATURE_SUPPORT_HID_BIT			0x400
@@ -134,6 +134,8 @@ struct ufshid_sysfs_entry {
 	ssize_t (*show)(struct ufshid_dev *hid, char *buf);
 	ssize_t (*store)(struct ufshid_dev *hid, const char *buf, size_t count);
 };
+
+struct ufshcd_lrb;
 
 int ufshid_get_state(struct ufsf_feature *ufsf);
 void ufshid_set_state(struct ufsf_feature *ufsf, int state);

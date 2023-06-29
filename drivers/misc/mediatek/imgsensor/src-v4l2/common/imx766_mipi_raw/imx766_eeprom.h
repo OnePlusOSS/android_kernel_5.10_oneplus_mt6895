@@ -22,6 +22,8 @@
 
 #include "adaptor-subdrv.h"
 
+#include "kd_eeprom_oplus.h"
+
 /*
  * LRC
  *
@@ -37,6 +39,6 @@ unsigned int read_imx766_LRC(struct subdrv_ctx *ctx, BYTE *data);
  * @return size of data
  */
 unsigned int read_imx766_DCC(struct subdrv_ctx *ctx, BYTE *data);
-
+unsigned int read_imx766_eeprom_info(struct subdrv_ctx *ctx, kal_uint16 meta_id,
+				     BYTE *data, int size);
 #endif
-

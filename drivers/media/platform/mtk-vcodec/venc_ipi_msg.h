@@ -226,6 +226,7 @@ struct venc_ap_ipi_msg_enc {
 	__u8 fb_num_planes;
 	__u8 bs_mode;
 	__u32 meta_size;
+	__u32 sec_mem_handle;
 };
 
 /**
@@ -440,6 +441,7 @@ struct venc_vcu_config {
 	__u32 p_qp;
 	__u32 b_qp;
 	__u32 svp_mode;
+	__u32 svp_is_hal_secure_handle;
 	__u32 tsvc;
 	__u32 max_qp;
 	__u32 min_qp;

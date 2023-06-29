@@ -19,20 +19,43 @@ char * const imgsensor_hw_pin_names[] = {
 	"rst",
 	"vcama",
 	"vcama1",
+	"vcamaf",
 	"vcamd",
 	"vcamio",
 	"mipi_switch_en",
 	"mipi_switch_sel",
 	"mclk"
 };
-
+char * const imgsensor_hw_pin_state_names[] = {
+	"pin_state_Low",
+	"pin_out_1v",
+	"pin_out_1.05v",
+	"pin_out_1.1v",
+	"pin_out_1.15v",
+	"pin_out_1.2v",
+	"pin_out_1.21v",
+	"pin_out_1.22v",
+	"pin_out_1.5v",
+	"pin_out_1.8v",
+	"pin_out_2.2v",
+	"pin_out_2.5v",
+	"pin_out_2.8v",
+	"pin_out_2.9v",
+	"pin_state_High"
+};
 /*the index is consistent with enum IMGSENSOR_HW_ID*/
 char * const imgsensor_hw_id_names[] = {
 	"mclk",
 	"regulator",
-	"gpio"
+	"gpio",
+	"wl2868c"
+	#ifdef SUPPORT_WL2868
+	,"wl2868"
+	#endif
 };
-
+char * const imgsensor_prj_names[] = {
+	"tb8781p2_64"
+};
 enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 {
 	struct IMGSENSOR_HW_SENSOR_POWER      *psensor_pwr;
@@ -41,17 +64,33 @@ enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 	unsigned int i, j, len;
 	char str_prop_name[LENGTH_FOR_SNPRINTF];
 	const char *pin_hw_id_name;
+	const char *prj_name;
+	unsigned int custlen = 0;
 	struct device_node *of_node
 		= of_find_compatible_node(NULL, NULL, "mediatek,imgsensor");
 	int ret_snprintf = 0;
 
 	mutex_init(&phw->common.pinctrl_mutex);
 
+	memset(str_prop_name, 0, sizeof(str_prop_name));
+	snprintf(str_prop_name, sizeof(str_prop_name),
+			"mtk_custom_project");
+	if (of_property_read_string(
+			of_node, str_prop_name,
+			&prj_name) == 0) {
+		custlen = strlen(prj_name);
+	}
 	/* update the imgsensor_custom_cfg by dts */
 	for (i = 0; i < IMGSENSOR_SENSOR_IDX_MAX_NUM; i++) {
 		PK_DBG("IMGSENSOR_SENSOR_IDX: %d\n", i);
 
-		pcust_pwr_cfg = imgsensor_custom_config;
+		if (custlen != 0 && strncmp(prj_name, imgsensor_prj_names[0], custlen)
+			== 0) {
+			pcust_pwr_cfg = imgsensor_mt8781_config;
+		} else {
+			pcust_pwr_cfg = imgsensor_custom_config;
+		}
+
 
 		while (pcust_pwr_cfg->sensor_idx != i &&
 		       pcust_pwr_cfg->sensor_idx != IMGSENSOR_SENSOR_IDX_NONE)
@@ -66,7 +105,6 @@ enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 			{
 				if (IS_MT6877(phw->g_platform_id) ||
 					IS_MT6833(phw->g_platform_id) ||
-					IS_MT6789(phw->g_platform_id) ||
 					IS_MT6781(phw->g_platform_id) ||
 					IS_MT6779(phw->g_platform_id))
 					pcust_pwr_cfg->i2c_dev = IMGSENSOR_I2C_DEV_1;
@@ -150,7 +188,12 @@ enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 	for (i = 0; i < IMGSENSOR_SENSOR_IDX_MAX_NUM; i++) {
 		psensor_pwr = &phw->sensor_pwr[i];
 
-		pcust_pwr_cfg = imgsensor_custom_config;
+		if (custlen != 0 && strncmp(prj_name, imgsensor_prj_names[0], custlen)
+			== 0) {
+			pcust_pwr_cfg = imgsensor_mt8781_config;
+		} else {
+			pcust_pwr_cfg = imgsensor_custom_config;
+		}
 
 		while (pcust_pwr_cfg->sensor_idx != i &&
 		       pcust_pwr_cfg->sensor_idx != IMGSENSOR_SENSOR_IDX_NONE)
@@ -253,10 +296,12 @@ static enum IMGSENSOR_RETURN imgsensor_hw_power_sequence(
 
 					if (__ratelimit(&ratelimit))
 						PK_DBG(
-						"sensor_idx %d, ppwr_info->pin %d, ppwr_info->pin_state_on %d, delay %u",
+						"sensor_idx %d, ppwr_info->pin %d(%s), ppwr_info->pin_state_on %d(%s), delay %u",
 						sensor_idx,
 						ppwr_info->pin,
+						imgsensor_hw_pin_names[ppwr_info->pin],
 						ppwr_info->pin_state_on,
+						imgsensor_hw_pin_state_names[ppwr_info->pin_state_on],
 						ppwr_info->pin_on_delay);
 
 					if (pdev->set != NULL)
@@ -286,10 +331,12 @@ static enum IMGSENSOR_RETURN imgsensor_hw_power_sequence(
 
 					if (__ratelimit(&ratelimit))
 						PK_DBG(
-						"sensor_idx %d, ppwr_info->pin %d, ppwr_info->pin_state_off %d, delay %u",
+						"sensor_idx %d, ppwr_info->pin %d(%s), ppwr_info->pin_state_off %d(%s), delay %u",
 						sensor_idx,
 						ppwr_info->pin,
+						imgsensor_hw_pin_names[ppwr_info->pin],
 						ppwr_info->pin_state_off,
+						imgsensor_hw_pin_state_names[ppwr_info->pin_state_off],
 						ppwr_info->pin_on_delay);
 
 					if (pdev->set != NULL)

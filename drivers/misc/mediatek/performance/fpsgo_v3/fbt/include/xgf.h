@@ -62,6 +62,16 @@ enum XGF_DEPS_CAT {
 	PREVI_DEPS
 };
 
+enum XGF_ALLOC {
+	XGF_RENDER = 0,
+	XGF_RENDER_SECTOR,
+	XGF_PID_REC,
+	XGF_DEP,
+	XGF_RUNTIME_SECT,
+	XGF_SPID,
+	XGFF_FRAME
+};
+
 struct xgf_sub_sect {
 	struct hlist_node hlist;
 	unsigned long long start_ts;
@@ -139,6 +149,7 @@ struct xgf_render {
 	struct xgf_sub_sect deque;
 	struct xgf_sub_sect queue;
 
+    unsigned long long raw_runtime;
 	unsigned long long ema_runtime;
 	unsigned long long pre_u_runtime;
 	unsigned long long u_runtime[XGF_MAX_UFRMAES];
@@ -156,12 +167,25 @@ struct xgf_render {
 	struct xgf_ema2_predictor *ema2_pt;
 };
 
+struct xgff_frame {
+	struct hlist_node hlist;
+	pid_t parent;
+	pid_t tid;
+	unsigned long long bufid;
+	unsigned long frameid;
+	unsigned long long ts;
+
+	struct xgf_render xgfrender;
+	struct fbt_thread_loading *ploading;
+};
+
 struct xgf_dep {
 	struct rb_node rb_node;
 
 	pid_t tid;
 	int render_dep;
 	int frame_idx;
+	int action;
 };
 
 struct xgf_runtime_sect {
@@ -254,8 +278,8 @@ void xgf_trace(const char *fmt, ...);
 void xgf_reset_renders(void);
 int xgf_est_runtime(pid_t r_pid, struct xgf_render *render,
 			unsigned long long *runtime, unsigned long long ts);
-void *xgf_alloc(int size);
-void xgf_free(void *block);
+void *xgf_alloc(int size, int cmd);
+void xgf_free(void *pvBuf, int cmd);
 void *xgf_atomic_val_assign(int select);
 int *xgf_extra_sub_assign(void);
 int *xgf_spid_sub_assign(void);
@@ -373,8 +397,10 @@ extern int fstb_separate_runtime_enable;
 extern int fstb_fps_num;
 extern int fstb_fps_choice[];
 extern int fstb_consider_deq;
+extern int fstb_no_r_timer_enable;
 
 int __init init_xgf(void);
+int __exit exit_xgf(void);
 
 struct fbt_thread_loading *fbt_xgff_list_loading_add(int pid,
 	unsigned long long buffer_id, unsigned long long ts);
