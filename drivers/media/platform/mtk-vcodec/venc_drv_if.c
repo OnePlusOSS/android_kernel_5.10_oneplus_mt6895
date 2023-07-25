@@ -28,6 +28,7 @@ const struct venc_common_if *get_enc_vcp_if(void);
 
 static const struct venc_common_if * get_data_path_ptr(void)
 {
+#if IS_ENABLED(CONFIG_MTK_TINYSYS_VCP_SUPPORT)
 	if (VCU_FPTR(vcu_get_plat_device)) {
 		if (mtk_vcodec_vcp & (1 << MTK_INST_ENCODER))
 			return get_enc_vcp_if();
@@ -35,6 +36,12 @@ static const struct venc_common_if * get_data_path_ptr(void)
 			return get_enc_vcu_if();
 	} else
 		return get_enc_vcp_if();
+#endif
+#if IS_ENABLED(CONFIG_VIDEO_MEDIATEK_VCU)
+	if (VCU_FPTR(vcu_get_plat_device))
+		return get_enc_vcu_if();
+#endif
+	return NULL;
 }
 
 int venc_if_init(struct mtk_vcodec_ctx *ctx, unsigned int fourcc)
@@ -137,7 +144,6 @@ void venc_encode_prepare(void *ctx_prepare,
 		return;
 
 	mutex_lock(&ctx->hw_status);
-	mtk_venc_lock(ctx, core_id);
 	spin_lock_irqsave(&ctx->dev->irqlock, *flags);
 	ctx->dev->curr_enc_ctx[core_id] = ctx;
 	spin_unlock_irqrestore(&ctx->dev->irqlock, *flags);
@@ -177,7 +183,6 @@ void venc_encode_unprepare(void *ctx_unprepare,
 	spin_lock_irqsave(&ctx->dev->irqlock, *flags);
 	ctx->dev->curr_enc_ctx[core_id] = NULL;
 	spin_unlock_irqrestore(&ctx->dev->irqlock, *flags);
-	mtk_venc_unlock(ctx, core_id);
 	mutex_unlock(&ctx->hw_status);
 }
 
@@ -239,5 +244,20 @@ void venc_check_release_lock(void *ctx_check)
 			mtk_v4l2_err("[%d] daemon killed when holding lock %d", ctx->id, i);
 		}
 	}
+}
+
+int venc_lock(void *ctx_lock, int core_id, bool sec)
+{
+	struct mtk_vcodec_ctx *ctx = (struct mtk_vcodec_ctx *)ctx_lock;
+
+	return mtk_venc_lock(ctx, core_id, sec);
+
+}
+
+void venc_unlock(void *ctx_unlock, int core_id)
+{
+	struct mtk_vcodec_ctx *ctx = (struct mtk_vcodec_ctx *)ctx_unlock;
+
+	mtk_venc_unlock(ctx, core_id);
 }
 

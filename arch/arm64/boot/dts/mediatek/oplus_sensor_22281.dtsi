@@ -1,0 +1,149 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+       	/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			ICM4X6XX,
+			ICM4263X,
+			SC7A20,
+			MC34X9,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <9>;//icm4n607
+			device_name = "icm4n607";
+			i2c_num = <1>;
+			i2c_addr = <0>;
+			direction = <3>;
+			eint_num = <2>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <300 300 300>;
+			gyro_cali_range = <350>;
+		};
+		gsensor_2: gsensor_2 {
+			status = "okay";
+			sensor_name = <6>;//lsm6dso
+			device_name = "lsm6dso";
+			i2c_num = <1>;
+			i2c_addr = <0>;
+			direction = <3>;
+			eint_num = <2>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <300 300 300>;
+			gyro_cali_range = <700>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <0>;
+			i2c_addr = <48>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <9999 0 7 1 32 1 25 0 10088 0 124 0 32 1 297 1 10704 0>;
+		};
+		msensor_2: msensor_2 {
+			status = "okay";
+			sensor_name = <3>;//MXG4300
+			i2c_num = <0>;
+			i2c_addr = <12>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <9739 0 91 1 140 0 64 1 9812 0 113 0 129 1 120 1 10458 0>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+			STK33502,
+			MN78911,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <5>;//TCS3701
+			i2c_num = <0>;
+			i2c_addr = <57>;
+			direction = <4>;
+			eint_num = <11>;
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <400>;
+			high_limit = <600>;
+			dirty_low_step = <180>;
+			dirty_high_step = <250>;
+			ps_dirty_limit = <1020>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <600>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <110>;
+			step_div = <1500>;
+			anti_shake_delta = <80>;
+			dynamic_cali_max = <1024>;
+			raw2offset_radio = <31200>;
+			offset_max = <250>;
+			offset_range_min = <255>;
+			offset_range_max = <255>;
+			force_cali_limit = <2000>;
+			cali_jitter_limit = <30>;
+			cal_offset_margin = <120>;
+			sensor-reg = <0xB9 0x12 0xBC 0xFB>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <5>;//TCS3701
+			i2c_num = <0>;
+			i2c_addr = <57>;
+			direction = <4>;
+			eint_num = <11>;
+			als_ratio = <90>;
+			als_buffer_length = <10>;
+			als_type = <2>;
+			device_name = "tcs3701";
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+	};
+/* sensor end */
+};

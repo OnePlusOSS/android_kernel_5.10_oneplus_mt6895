@@ -26,8 +26,6 @@ u16 msdc_offsets[] = {
 	MSDC_INT,
 	MSDC_INTEN,
 	MSDC_FIFOCS,
-	MSDC_TXDATA,
-	MSDC_RXDATA,
 	SDC_CFG,
 	SDC_CMD,
 	SDC_ARG,
@@ -38,6 +36,7 @@ u16 msdc_offsets[] = {
 	SDC_RESP3,
 	SDC_BLK_NUM,
 	SDC_ADV_CFG0,
+	MSDC_NEW_RX_CFG,
 	EMMC_IOCON,
 	SDC_ACMD_RESP,
 	DMA_SA_H4BIT,
@@ -85,6 +84,8 @@ u16 msdc_offsets_top[] = {
 	EMMC50_PAD_DAT5_TUNE,
 	EMMC50_PAD_DAT6_TUNE,
 	EMMC50_PAD_DAT7_TUNE,
+	LOOP_TEST_CONTROL,
+	MSDC_TOP_NEW_RX_CFG,
 
 	0xFFFF /*as mark of end */
 };
@@ -144,7 +145,7 @@ struct tracepoints_table {
 static void msdc_dump_clock_sts_core(char **buff, unsigned long *size,
 	struct seq_file *m, struct msdc_host *host)
 {
-	char buffer[512];
+	char buffer[512] = {0};
 	char *buf_ptr = buffer;
 	int n = 0;
 
@@ -182,6 +183,16 @@ static void msdc_dump_clock_sts_core(char **buff, unsigned long *size,
 		n += scnprintf(&buf_ptr[n], sizeof(buffer) - n,
 			"[src_clk_cg]enable:%d freq:%lu\n",
 			__clk_is_enabled(host->src_clk_cg), clk_get_rate(host->src_clk_cg));
+
+	if (host->crypto_clk)
+		n += scnprintf(&buf_ptr[n], sizeof(buffer) - n,
+			"[crypto_clk]enable:%d freq:%lu\n",
+			__clk_is_enabled(host->crypto_clk), clk_get_rate(host->crypto_clk));
+
+	if (host->crypto_cg)
+		n += scnprintf(&buf_ptr[n], sizeof(buffer) - n,
+			"[crypto_cg]enable:%d freq:%lu\n",
+			__clk_is_enabled(host->crypto_cg), clk_get_rate(host->crypto_cg));
 
 	SPREAD_PRINTF(buff, size, m, "%s", buffer);
 }
@@ -472,7 +483,7 @@ void msdc_dump_info(char **buff, unsigned long *size, struct seq_file *m,
 		return;
 
 	msdc_dump_register(buff, size, m, host);
-
+#if 0
 	if (!buff)
 		mdelay(10);
 
@@ -486,7 +497,7 @@ void msdc_dump_info(char **buff, unsigned long *size, struct seq_file *m,
 
 	if (!buff)
 		mdelay(10);
-
+#endif
 	msdc_dump_dbg_register(buff, size, m, host);
 }
 EXPORT_SYMBOL(msdc_dump_info);
@@ -558,6 +569,8 @@ static void __emmc_store_buf_start(void *__data, struct mmc_host *mmc,
 	u64 *task_desc = NULL;
 	u64 data;
 	struct cqhci_host *cq_host = NULL;
+	unsigned long flags;
+	struct msdc_host *host = NULL;
 
 	if (!cmd_hist_enabled)
 		return;
@@ -565,10 +578,14 @@ static void __emmc_store_buf_start(void *__data, struct mmc_host *mmc,
 	if (!mmc)
 		return;
 
+	host = mmc_priv(mmc);
 	cq_host = mmc->cqe_private;
 	t = cpu_clock(print_cpu_test);
 	tn = t;
 	nanosec_rem = do_div(t, 1000000000)/1000;
+
+	spin_lock_irqsave(&host->log_lock, flags);
+
 	if (!(mrq->cmd) && cq_host && cq_host->desc_base) { /* CQE */
 		task_desc = (__le64 __force *)dbg_get_desc(cq_host, mrq->tag);
 		cqhci_prep_task_desc_dbg(mrq, &data, 1);
@@ -599,6 +616,7 @@ static void __emmc_store_buf_start(void *__data, struct mmc_host *mmc,
 				dbg_host_cnt = dbg_max_cnt;
 			/* remove type = 0, command */
 			dbg_host_cnt--;
+			spin_unlock_irqrestore(&host->log_lock, flags);
 			return;
 		}
 		last_cmd = mrq->cmd->opcode;
@@ -627,6 +645,8 @@ static void __emmc_store_buf_start(void *__data, struct mmc_host *mmc,
 
 	if (dbg_host_cnt >= dbg_max_cnt)
 		dbg_host_cnt = 0;
+
+	spin_unlock_irqrestore(&host->log_lock, flags);
 }
 
 static void __emmc_store_buf_end(void *__data, struct mmc_host *mmc,
@@ -637,6 +657,8 @@ static void __emmc_store_buf_end(void *__data, struct mmc_host *mmc,
 	static int last_cmd, last_arg, skip;
 	int l_skip = 0;
 	struct cqhci_host *cq_host = NULL;
+	unsigned long flags;
+	struct msdc_host *host = NULL;
 
 	if (!cmd_hist_enabled)
 		return;
@@ -644,10 +666,13 @@ static void __emmc_store_buf_end(void *__data, struct mmc_host *mmc,
 	if (!mmc)
 		return;
 
+	host = mmc_priv(mmc);
 	cq_host = mmc->cqe_private;
 	t = cpu_clock(print_cpu_test);
 
 	nanosec_rem = do_div(t, 1000000000)/1000;
+
+	spin_lock_irqsave(&host->log_lock, flags);
 
 	if (!(mrq->cmd)) { /* CQE */
 		dbg_run_host_log_dat[dbg_host_cnt].time_sec = t;
@@ -666,6 +691,7 @@ static void __emmc_store_buf_end(void *__data, struct mmc_host *mmc,
 				dbg_host_cnt = dbg_max_cnt;
 			/* remove type = 0, command */
 			dbg_host_cnt--;
+			spin_unlock_irqrestore(&host->log_lock, flags);
 			return;
 		}
 		last_cmd = mrq->cmd->opcode;
@@ -693,6 +719,8 @@ static void __emmc_store_buf_end(void *__data, struct mmc_host *mmc,
 	}
 	if (dbg_host_cnt >= dbg_max_cnt)
 		dbg_host_cnt = 0;
+
+	spin_unlock_irqrestore(&host->log_lock, flags);
 }
 
 static void __sd_store_buf_start(void *__data, struct mmc_host *mmc,
@@ -700,6 +728,8 @@ static void __sd_store_buf_start(void *__data, struct mmc_host *mmc,
 {
 	unsigned long long t, tn;
 	unsigned long long nanosec_rem;
+	unsigned long flags;
+	struct msdc_host *host = NULL;
 
 	if (!cmd_hist_enabled)
 		return;
@@ -707,9 +737,12 @@ static void __sd_store_buf_start(void *__data, struct mmc_host *mmc,
 	if (!mmc)
 		return;
 
+	host = mmc_priv(mmc);
 	t = cpu_clock(print_cpu_test);
 	tn = t;
 	nanosec_rem = do_div(t, 1000000000)/1000;
+
+	spin_lock_irqsave(&host->log_lock, flags);
 
 	dbg_run_sd_log_dat[dbg_sd_cnt].time_sec = t;
 	dbg_run_sd_log_dat[dbg_sd_cnt].time_usec = nanosec_rem;
@@ -721,6 +754,8 @@ static void __sd_store_buf_start(void *__data, struct mmc_host *mmc,
 
 	if (dbg_sd_cnt >= sd_dbg_max_cnt)
 		dbg_sd_cnt = 0;
+
+	spin_unlock_irqrestore(&host->log_lock, flags);
 }
 
 static void __sd_store_buf_end(void *__data, struct mmc_host *mmc,
@@ -730,6 +765,8 @@ static void __sd_store_buf_end(void *__data, struct mmc_host *mmc,
 	unsigned long long nanosec_rem;
 	static int last_cmd, last_arg, skip;
 	int l_skip = 0;
+	unsigned long flags;
+	struct msdc_host *host = NULL;
 
 	if (!cmd_hist_enabled)
 		return;
@@ -737,6 +774,7 @@ static void __sd_store_buf_end(void *__data, struct mmc_host *mmc,
 	if (!mmc)
 		return;
 
+	host = mmc_priv(mmc);
 	t = cpu_clock(print_cpu_test);
 	tn = t;
 	nanosec_rem = do_div(t, 1000000000)/1000;
@@ -745,16 +783,20 @@ static void __sd_store_buf_end(void *__data, struct mmc_host *mmc,
 	if (last_cmd == mrq->cmd->opcode &&
 		last_arg == mrq->cmd->arg && mrq->cmd->opcode == 13) {
 		skip++;
+		spin_lock_irqsave(&host->log_lock, flags);
 		if (dbg_sd_cnt == 0)
 			dbg_sd_cnt = sd_dbg_max_cnt;
 		/* remove type = 0, command */
 		dbg_sd_cnt--;
+		spin_unlock_irqrestore(&host->log_lock, flags);
 		return;
 	}
 	last_cmd = mrq->cmd->opcode;
 	last_arg = mrq->cmd->arg;
 	l_skip = skip;
 	skip = 0;
+
+	spin_lock_irqsave(&host->log_lock, flags);
 
 	dbg_run_sd_log_dat[dbg_sd_cnt].time_sec = t;
 	dbg_run_sd_log_dat[dbg_sd_cnt].time_usec = nanosec_rem;
@@ -766,6 +808,8 @@ static void __sd_store_buf_end(void *__data, struct mmc_host *mmc,
 
 	if (dbg_sd_cnt >= sd_dbg_max_cnt)
 		dbg_sd_cnt = 0;
+
+	spin_unlock_irqrestore(&host->log_lock, flags);
 }
 
 /* all cases which except softirq of IO */

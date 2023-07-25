@@ -34,9 +34,9 @@ def get_config_in_defconfig(file_name, kernel_dir):
 
 def help():
     print 'Usage:'
-    print '  python scripts/gen_build_config.py --project <project> --kernel-defconfig <kernel project defconfig file> --kernel-defconfig-overlays <kernel project overlay defconfig files> --build-mode <mode> --out-file <gen build.config>'
+    print '  python scripts/gen_build_config.py --project <project> --kernel-defconfig <kernel project defconfig file> --kernel-defconfig-overlays <kernel project overlay defconfig files> --kernel-build-config-overlays <kernel build config overlays> --build-mode <mode> --out-file <gen build.config>'
     print 'Or:'
-    print '  python scripts/gen_build_config.py -p <project> --kernel-defconfig <kernel project defconfig file> --kernel-defconfig-overlays <kernel project overlay defconfig files> -m <mode> -o <gen build.config>'
+    print '  python scripts/gen_build_config.py -p <project> --kernel-defconfig <kernel project defconfig file> --kernel-defconfig-overlays <kernel project overlay defconfig files> --kernel-build-config-overlays <kernel build config overlays> -m <mode> -o <gen build.config>'
     print ''
     print 'Attention: Must set generated build.config, and project or kernel project defconfig file!!'
     sys.exit(2)
@@ -46,6 +46,7 @@ def main(**args):
     project = args["project"]
     kernel_defconfig = args["kernel_defconfig"]
     kernel_defconfig_overlays = args["kernel_defconfig_overlays"]
+    kernel_build_config_overlays = args["kernel_build_config_overlays"]
     build_mode = args["build_mode"]
     abi_mode = args["abi_mode"]
     out_file = args["out_file"]
@@ -73,10 +74,13 @@ def main(**args):
     else:
         project_defconfig_name = '%s_defconfig' % (project)
     defconfig_dir = ''
+    kernel_arch = ''
     if os.path.exists('%s/arch/arm/configs/%s' % (abs_kernel_dir, project_defconfig_name)):
-        defconfig_dir = 'arch/arm/comfigs'
+        defconfig_dir = 'arch/arm/configs'
+        kernel_arch = 'arm'
     elif os.path.exists('%s/arch/arm64/configs/%s' % (abs_kernel_dir, project_defconfig_name)):
         defconfig_dir = 'arch/arm64/configs'
+        kernel_arch = 'arm64'
     else:
         print 'Error: cannot find project defconfig file under ' + abs_kernel_dir
         sys.exit(2)
@@ -113,8 +117,13 @@ def main(**args):
         print 'Please check whether ' + project_defconfig + ' defined CONFIG_BUILD_CONFIG_FILE.'
         sys.exit(2)
 
-    file_text.append("PATH=${ROOT_DIR}/../prebuilts/perl/linux-x86/bin:${ROOT_DIR}/build/build-tools/path/linux-x86:/usr/bin:/bin")
-    file_text.append("MAKE_GOALS=\"all\"")
+    file_text.append("PATH=${ROOT_DIR}/../prebuilts/perl/linux-x86/bin:${ROOT_DIR}/prebuilts/kernel-build-tools/linux-x86/bin:/usr/bin:/bin:$PATH")
+    file_text.append("HERMETIC_TOOLCHAIN=")
+    file_text.append("DTC='${OUT_DIR}/scripts/dtc/dtc'")
+    file_text.append("DEPMOD=")
+    file_text.append("MAKE_GOALS=\"${MAKE_GOALS}")
+    file_text.append("all")
+    file_text.append("\"")
     file_text.append("TRIM_NONLISTED_KMI=")
     file_text.append("KMI_SYMBOL_LIST_STRICT_MODE=")
     file_text.append("MODULES_ORDER=")
@@ -124,6 +133,7 @@ def main(**args):
     file_text.append("  KMI_SYMBOL_LIST_ADD_ONLY=1")
     file_text.append("  ADDITIONAL_KMI_SYMBOL_LISTS=\"${ADDITIONAL_KMI_SYMBOL_LISTS} android/abi_gki_aarch64\"")
     file_text.append("fi")
+    file_text.append("unset BUILD_NUMBER")
 
     all_defconfig = ''
     pre_defconfig_cmds = ''
@@ -134,6 +144,7 @@ def main(**args):
         rel_kernel_path = 'REL_KERNEL_PATH=`./${KERNEL_DIR}/scripts/get_rel_path.sh ${ROOT_DIR} %s`' % (kernel_dir)
         file_text.append(rel_kernel_path)
         all_defconfig = '%s ../../../${REL_KERNEL_PATH}/${OUT_DIR}/%s.config %s %s' % (special_defconfig, project, kernel_defconfig_overlays, mode_config)
+        print 'all_defconfig is ' + all_defconfig
         pre_defconfig_cmds = 'PRE_DEFCONFIG_CMDS=\"cp -p ${KERNEL_DIR}/%s/%s ${OUT_DIR}/%s.config\"' % (defconfig_dir, project_defconfig_name, project)
     all_defconfig = 'DEFCONFIG=\"%s\"' % (all_defconfig.strip())
     file_text.append(all_defconfig)
@@ -179,6 +190,8 @@ def main(**args):
     file_handle = open(gen_build_config, 'w')
     kernel_dir_line = 'KERNEL_DIR=%s' % (kernel_dir)
     file_handle.write(kernel_dir_line + '\n')
+    kernel_arch_line = 'KERNEL_ARCH=%s' % (kernel_arch)
+    file_handle.write(kernel_arch_line + '\n')
     rel_gen_build_config_dir = 'REL_GEN_BUILD_CONFIG_DIR=`./${KERNEL_DIR}/scripts/get_rel_path.sh %s ${ROOT_DIR}`' % (gen_build_config_dir)
     file_handle.write(rel_gen_build_config_dir + '\n')
     kernel_build_mode_cmds = 'KERNEL_BUILD_MODE=%s' % (build_mode)
@@ -196,10 +209,15 @@ def main(**args):
     file_handle.write('fi\n')
     build_config_fragments = 'BUILD_CONFIG_FRAGMENTS="${BUILD_CONFIG_FRAGMENTS} ${REL_GEN_BUILD_CONFIG_DIR}/%s' % (os.path.basename(gen_build_config_mtk))
     file_handle.write(build_config_fragments + '"\n')
-    file_handle.write('if [ "x${ENABLE_GKI_CHECKER}" == "xtrue" ] || [ -d "${ROOT_DIR}/../vendor/mediatek/internal" ] && [ "${KERNEL_BUILD_MODE}" == "user" ]; then\n')
-    file_handle.write('  BUILD_CONFIG_FRAGMENTS="${BUILD_CONFIG_FRAGMENTS} ${KERNEL_DIR}/build.config.mtk.check_gki"\n')
-    file_handle.write('  ADDITIONAL_HOST_TOOLS="${ADDITIONAL_HOST_TOOLS} strings less"\n')
+    file_handle.write('if [ "x${KERNEL_ARCH}" == "xarm64" ]; then\n')
+    file_handle.write('  if [ "x${ENABLE_GKI_CHECKER}" == "xtrue" ] || [ -d "${ROOT_DIR}/../vendor/mediatek/internal" ] && [ "${KERNEL_BUILD_MODE}" == "user" ]; then\n')
+    file_handle.write('    BUILD_CONFIG_FRAGMENTS="${BUILD_CONFIG_FRAGMENTS} ${KERNEL_DIR}/build.config.mtk.check_gki"\n')
+    file_handle.write('    ADDITIONAL_HOST_TOOLS="${ADDITIONAL_HOST_TOOLS} diff"\n')
+    file_handle.write('  fi\n')
     file_handle.write('fi\n')
+    if kernel_build_config_overlays:
+        build_config_fragments = 'BUILD_CONFIG_FRAGMENTS="${BUILD_CONFIG_FRAGMENTS} %s"' % (kernel_build_config_overlays)
+        file_handle.write(build_config_fragments + '\n')
     file_handle.close()
 
 if __name__ == '__main__':
@@ -208,6 +226,7 @@ if __name__ == '__main__':
     parser.add_argument("-p","--project", dest="project", help="specify the project to build kernel.", default="")
     parser.add_argument("--kernel-defconfig", dest="kernel_defconfig", help="special kernel project defconfig file.",default="")
     parser.add_argument("--kernel-defconfig-overlays", dest="kernel_defconfig_overlays", help="special kernel project overlay defconfig files.",default="")
+    parser.add_argument("--kernel-build-config-overlays", dest="kernel_build_config_overlays", help="special kernel build config overlays files.",default="")
     parser.add_argument("-m","--build-mode", dest="build_mode", help="specify the build mode to build kernel.", default="user")
     parser.add_argument("--abi", dest="abi_mode", help="specify whether build.config is used to check ABI.", default="no")
     parser.add_argument("-o","--out-file", dest="out_file", help="specify the generated build.config file.", required=True)

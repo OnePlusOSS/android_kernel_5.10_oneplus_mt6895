@@ -775,18 +775,25 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 			(void *)arg, sizeof(struct ccu_control_info));
 		if (ret != 0) {
 			LOG_ERR(
-			"CCU_IOCTL_IPC_SEND_CMD copy_to_user failed: %d\n",
+			"CCU_IOCTL_IPC_SEND_CMD copy_from_user failed: %d\n",
 			ret);
 			kfree(indata);
 			kfree(outdata);
 			break;
 		}
-
+		if (msg.inDataSize > CCU_IPC_IBUF_CAPACITY) {
+			LOG_ERR(
+			"CCU_IOCTL_IPC_SEND_CMD copy_from_user 2 oversize\n");
+			ret = -EINVAL;
+			kfree(indata);
+			kfree(outdata);
+			break;
+		}
 		ret = copy_from_user(indata,
-			(void *)msg.inDataPtr, msg.inDataSize);
+			msg.inDataPtr, msg.inDataSize);
 		if (ret != 0) {
 			LOG_ERR(
-			"CCU_IOCTL_IPC_SEND_CMD copy_to_user 2 failed: %d\n",
+			"CCU_IOCTL_IPC_SEND_CMD copy_from_user 2 failed: %d\n",
 			ret);
 			kfree(indata);
 			kfree(outdata);
@@ -796,7 +803,14 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 		msg.feature_type,
 		(enum IMGSENSOR_SENSOR_IDX)msg.sensor_idx,
 		msg.msg_id, indata, msg.inDataSize, outdata, msg.outDataSize);
-
+		if (msg.outDataSize > CCU_IPC_OBUF_CAPACITY) {
+			LOG_ERR(
+			"CCU_IOCTL_IPC_SEND_CMD copy_to_user oversize\n");
+			ret = -EINVAL;
+			kfree(indata);
+			kfree(outdata);
+			break;
+		}
 		ret = copy_to_user((void *)msg.outDataPtr, outdata, msg.outDataSize);
 		kfree(indata);
 		kfree(outdata);
@@ -1018,30 +1032,6 @@ static long ccu_ioctl(struct file *flip, unsigned int cmd,
 			}
 		}
 		#undef SENSOR_NAME_MAX_LEN
-		break;
-	}
-
-	case CCU_READ_REGISTER:
-	{
-		int regToRead = (int)arg;
-
-		return ccu_read_info_reg(regToRead);
-	}
-
-	case CCU_WRITE_REGISTER:
-	{
-		struct ccu_reg_s reg;
-
-		ret = copy_from_user(&reg,
-			(void *)arg, sizeof(struct ccu_reg_s));
-		if (ret != 0) {
-			LOG_ERR(
-			"CCU_WRITE_REGISTER copy_from_user failed: %d\n",
-			ret);
-			break;
-		}
-
-		ccu_write_info_reg(reg.reg_no, reg.reg_val);
 		break;
 	}
 

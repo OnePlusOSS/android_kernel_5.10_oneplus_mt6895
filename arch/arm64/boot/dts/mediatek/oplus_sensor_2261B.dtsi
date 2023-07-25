@@ -1,0 +1,179 @@
+&odm {
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+       		/* 
+		enum {
+        	        LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA4XY,
+			SC7A20,
+			ICM4X6XX,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <7>;//icm4263x
+			device_name = "icm4263x";
+			i2c_num = <0>;
+			i2c_addr = <0>;
+			direction = <5>;
+			eint_num = <15>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <200 200 200>;
+		};
+		gsensor_2: gsensor_2 {
+			status = "okay";
+			sensor_name = <5>;//icm4263x
+			device_name = "bmi2xy";
+			i2c_num = <0>;
+			i2c_addr = <0>;
+			direction = <4>;
+			eint_num = <15>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <200 200 200>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <0>;
+			i2c_addr = <0x30>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <9985 0 540 1 34 1 574 1 8928 0 28 1 632 0 468 0 10524 0>;
+		};
+		/*
+		enum {
+			SX933x
+		};
+		*/
+		sar_1: sar_1 {
+			status = "okay";
+			sensor_name = <0>;//SX933x
+			i2c_num = <2>;
+			i2c_addr = <0x28>;
+			direction = <4>;
+			eint_num = <3>;
+			channel_num = <3>;
+			channel_0_min = <3977>;
+			channel_0_max = <5291>;
+			channel_1_min = <5951>;
+			channel_1_max = <7715>;
+			channel_2_min = <8375>;
+			channel_2_max = <10797>;
+			channel_3_min = <0>;
+			channel_3_max = <70000>;
+			reg_table_num = <1>;
+			use_far_near = <1>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <5>;//TCS3701
+			i2c_num = <2>;
+			i2c_addr = <57>;
+			direction = <4>;
+			eint_num = <17>;
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <400>;
+			high_limit = <600>;
+			dirty_low_step = <180>;
+			dirty_high_step = <250>;
+			ps_dirty_limit = <1020>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <600>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <110>;
+			step_div = <1500>;
+			anti_shake_delta = <80>;
+			dynamic_cali_max = <1024>;
+			raw2offset_radio = <31200>;
+			offset_max = <250>;
+			offset_range_min = <255>;
+			offset_range_max = <255>;
+			force_cali_limit = <2000>;
+			cali_jitter_limit = <30>;
+			cal_offset_margin = <120>;
+			sensor-reg = <0xBC 0xFB 0xB9 0x1C>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <5>;//TCS3701
+			i2c_num = <2>;
+			i2c_addr = <57>;
+			direction = <4>;
+			eint_num = <17>;
+			als_ratio = <140>;
+			als_buffer_length = <10>;
+			als_type = <2>;
+			device_name = "tcs3701";
+			gold_als_factor = <1001>;
+		};
+		/*
+		enum {
+			STK37600,
+			MN29005,
+			TCS3408,
+		};
+		*/
+		rear_cct_1: rear_cct_1 {
+			status = "okay";
+			sensor_name = <2>;//TCS3408
+			i2c_num = <0>;
+			i2c_addr = <0x39>;
+			direction = <0>;
+			eint_num = <30>;
+			available_sensor = <7>; // bit 0: rear als, bit 1: rear cct, bit 2: rear flicker
+			gold_rear_cct_3k = <7278 3456 1879 11674 5004 3833>; // 3000k gold parameter
+			gold_rear_cct_6k = <4521 3814 2679 10341 4011 2653>;  // 6000k gold parameter
+			gold_rear_cct_factor = <1024 979 983 1016 1043 1001>;
+			device_name = "tcs3408";
+			cct_coef_Lir = <4820 1 8067 1 67891 1 6737 1 15631 0 108176 1 14270 1 11983 1 113887 0 43221 0 40368 0 64693 0 26170 1 37782 1 7066 0>;//coe * 10^6, +:0, -:1
+			cct_coef_Hir = <1506 0 6233 1 83349 1 44328 1 31719 1 61803 0 3592 0 2996 1 48118 1 32987 0 35686 0 42472 0 1315 1 2337 1 11591 0>;//coe * 10^6, +:0, -:1
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+	};
+/* sensor end */
+};

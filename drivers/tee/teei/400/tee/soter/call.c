@@ -35,7 +35,7 @@ static struct tee_shm *get_msg_arg(struct tee_context *ctx, size_t num_params,
 	struct tee_shm *shm;
 	struct optee_msg_arg *ma;
 
-	shm = isee_shm_alloc(ctx, OPTEE_MSG_GET_ARG_SIZE(num_params),
+	shm = isee_shm_alloc_noid(ctx, OPTEE_MSG_GET_ARG_SIZE(num_params),
 			    TEE_SHM_MAPPED);
 	if (IS_ERR(shm))
 		return shm;
@@ -303,8 +303,8 @@ int soter_close_session(struct tee_context *ctx, u32 session)
 {
 	struct soter_context_data *ctxdata = ctx->data;
 	struct tee_shm *shm;
-	struct optee_msg_arg *msg_arg;
-	phys_addr_t msg_parg;
+	struct optee_msg_arg *msg_arg = NULL;
+	phys_addr_t msg_parg = 0;
 	struct soter_session *sess;
 
 	/* Check that the session is valid and remove it from the list */
@@ -336,8 +336,8 @@ int soter_invoke_func(struct tee_context *ctx, struct tee_ioctl_invoke_arg *arg,
 {
 	struct soter_context_data *ctxdata = ctx->data;
 	struct tee_shm *shm;
-	struct optee_msg_arg *msg_arg;
-	phys_addr_t msg_parg;
+	struct optee_msg_arg *msg_arg = NULL;
+	phys_addr_t msg_parg = 0;
 	struct soter_session *sess;
 	int rc;
 #if IS_ENABLED(CONFIG_MICROTRUST_TZDRIVER_DYNAMICAL_DEBUG)

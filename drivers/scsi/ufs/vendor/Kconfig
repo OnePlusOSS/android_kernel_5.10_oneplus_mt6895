@@ -74,6 +74,13 @@ config UFSHID_DEBUG
 	help
 	UFS HID Debug Enable (for check io stat during trigger)
 
+config UFSSID
+	bool "UFS Stream ID support"
+	depends on SCSI_UFSHCD && UFSFEATURE && UFSHID
+	help
+	  Enable Stream ID Feature for Streamed-HID
+
+
 config UFSRINGBUF
 	bool "UFS RingBuffer support"
 	depends on SCSI_UFSHCD && UFSFEATURE

@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+* Copyright (C) 2018-2020 Oplus. All rights reserved.
+*/
+
+&i2c5 {
+	wusb3801x_typec: usb_type_c_wusb3801x@60 {
+		compatible = "mediatek,usb_type_c_wusb3801"; //
+		reg = <0x60>;
+		mt-dual,supported_modes = <0>; /* 0: dfp/ufp, 1: dfp, 2: ufp */
+		wusb3801-tcpc,name = "type_c_port0"; /* tcpc_device's name */ //
+		/* 0: SNK Only, 1: SRC Only, 2: DRP, 3: Try.SRC, 4: Try.SNK */
+		wusb3801-tcpc,role_def = <0>;
+
+		wusb3801,rp_level = <0>; /* 0: Default, 1: 1.5, 2: 3.0 */
+		/* 0: Never, 1: Always, 2: EMarkOnly, 3: StartOnly */
+		// sgm7220-tcpc,vconn_supply  = <1>; //
+		wusb3801,drp-toggle-time = <0>;
+		/* the number of notifier supply */
+		wusb3801-tcpc,notifier_supply_num = <3>; //
+
+		wusb3801,irq-gpio = <&pio 3 0x0>; //
+		wusb3801,irq-gpio_num = <3>; //
+
+		// mt6360pd,pcb_gpio = <&pio 5 0x0>;
+		// mt6360pd,pcb_gpio_num = <5>;
+		// interrupt-parent = <&subpmic_mtk>;
+		// interrupts = <64 0>;
+		// interrupt-names = "usbid_evt";
+		// bootmode = <&chosen>;
+        status = "okay";
+	};
+};
+

@@ -38,6 +38,9 @@ static DEFINE_MUTEX(gbe_lock);
 static int boost_set[KIR_NUM];
 static unsigned long policy_mask;
 static int thrm_hdrm_thrs;
+static int cpu_user_0 = 3000000;
+static int cpu_user_1 = 3000000;
+static int cpu_user_2 = 3000000;
 
 enum GBE_BOOST_DEVICE {
 	GBE_BOOST_UNKNOWN = -1,
@@ -48,7 +51,10 @@ enum GBE_BOOST_DEVICE {
 	GBE_BOOST_HE = 4,
 	GBE_BOOST_GPU = 5,
 	GBE_BOOST_LLF = 6,
-	GBE_BOOST_NUM = 7,
+	GBE_BOOST_CPU_USER_0 = 7,
+	GBE_BOOST_CPU_USER_1 = 8,
+	GBE_BOOST_CPU_USER_2 = 9,
+	GBE_BOOST_NUM = 10,
 };
 
 void gbe_trace_printk(int pid, char *module, char *string)
@@ -120,9 +126,9 @@ void gbe_boost(enum GBE_KICKER kicker, int boost)
 	int i;
 	int thermal_headroom;
 	int boost_final = 0;
-	int cpu_boost = 0, eas_boost = -1, vcore_boost = -1,
-			io_boost = 0, he_boost = 0, gpu_boost = 0,
-			llf_boost = 0;
+	int cpu_boost = 0, cpu_boost_0 = -1, cpu_boost_1 = -1, cpu_boost_2 = -1,
+			eas_boost = -1, vcore_boost = -1, io_boost = 0,
+			he_boost = 0, gpu_boost = 0, llf_boost = 0;
 
 	mutex_lock(&gbe_lock);
 
@@ -143,6 +149,9 @@ void gbe_boost(enum GBE_KICKER kicker, int boost)
 
 	if (boost_final && thermal_headroom > thrm_hdrm_thrs) {
 		cpu_boost = 1;
+		cpu_boost_0 = cpu_user_0;
+		cpu_boost_1 = cpu_user_1;
+		cpu_boost_2 = cpu_user_2;
 		eas_boost = 100;
 		vcore_boost = 0;
 		io_boost = 1;
@@ -172,6 +181,15 @@ void gbe_boost(enum GBE_KICKER kicker, int boost)
 	if (test_bit(GBE_BOOST_LLF, &policy_mask))
 		gbe_sentcmd(GBE_BOOST_LLF, llf_boost, -1);
 
+	if (test_bit(GBE_BOOST_CPU_USER_0, &policy_mask))
+		gbe_sentcmd(GBE_BOOST_CPU_USER_0, cpu_boost_0, -1);
+
+	if (test_bit(GBE_BOOST_CPU_USER_1, &policy_mask))
+		gbe_sentcmd(GBE_BOOST_CPU_USER_1, cpu_boost_1, -1);
+
+	if (test_bit(GBE_BOOST_CPU_USER_2, &policy_mask))
+		gbe_sentcmd(GBE_BOOST_CPU_USER_2, cpu_boost_2, -1);
+
 out:
 	mutex_unlock(&gbe_lock);
 
@@ -189,23 +207,28 @@ static ssize_t gbe_thrm_hdrm_thrs_store(struct kobject *kobj,
 		const char *buf, size_t count)
 {
 	int val = 0;
-	char acBuffer[GBE_SYSFS_MAX_BUFF_SIZE];
+	char *acBuffer;
 	int arg;
 	int cpu_boost = 0, eas_boost = -1, vcore_boost = -1,
 			io_boost = 0, he_boost = 0, gpu_boost = 0,
 			llf_boost = 0;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
 
 	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
 		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
 			if (kstrtoint(acBuffer, 0, &arg) == 0)
 				val = arg;
 			else
-				return count;
+				goto err;
 		}
 	}
 
 	if (val > 1000 || val < 0)
-		return count;
+		goto err;
 
 	mutex_lock(&gbe_lock);
 	thrm_hdrm_thrs = val;
@@ -219,9 +242,138 @@ static ssize_t gbe_thrm_hdrm_thrs_store(struct kobject *kobj,
 	gbe_sentcmd(GBE_BOOST_LLF, llf_boost, -1);
 	mutex_unlock(&gbe_lock);
 
+err:
+	kfree(acBuffer);
 	return count;
 }
+
 static KOBJ_ATTR_RW(gbe_thrm_hdrm_thrs);
+
+static ssize_t gbe_cpu_0_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", cpu_user_0);
+}
+
+static ssize_t gbe_cpu_0_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	int val = 0;
+	char *acBuffer;
+	int arg;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
+
+	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				goto err;
+		}
+	}
+
+	if (val < 0)
+		goto err;
+
+	mutex_lock(&gbe_lock);
+	cpu_user_0 = val;
+	mutex_unlock(&gbe_lock);
+
+err:
+	kfree(acBuffer);
+	return count;
+}
+static KOBJ_ATTR_RW(gbe_cpu_0);
+
+static ssize_t gbe_cpu_1_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", cpu_user_1);
+}
+
+static ssize_t gbe_cpu_1_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	int val = 0;
+	char *acBuffer;
+	int arg;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
+
+	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				goto err;
+		}
+	}
+
+	if (val < 0)
+		goto err;
+
+	mutex_lock(&gbe_lock);
+	cpu_user_1 = val;
+	mutex_unlock(&gbe_lock);
+
+err:
+	kfree(acBuffer);
+	return count;
+}
+static KOBJ_ATTR_RW(gbe_cpu_1);
+
+static ssize_t gbe_cpu_2_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", cpu_user_2);
+}
+
+static ssize_t gbe_cpu_2_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	int val = 0;
+	char *acBuffer;
+	int arg;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
+
+	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
+		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
+			if (kstrtoint(acBuffer, 0, &arg) == 0)
+				val = arg;
+			else
+				goto err;
+		}
+	}
+
+	if (val < 0)
+		goto err;
+
+	mutex_lock(&gbe_lock);
+	cpu_user_2 = val;
+	mutex_unlock(&gbe_lock);
+
+err:
+	kfree(acBuffer);
+	return count;
+}
+static KOBJ_ATTR_RW(gbe_cpu_2);
 
 static ssize_t gbe_policy_mask_show(struct kobject *kobj,
 		struct kobj_attribute *attr,
@@ -235,28 +387,36 @@ static ssize_t gbe_policy_mask_store(struct kobject *kobj,
 		const char *buf, size_t count)
 {
 	int val = 0;
-	char acBuffer[GBE_SYSFS_MAX_BUFF_SIZE];
+	char *acBuffer;
 	int arg;
 	int cpu_boost = 0, eas_boost = -1, vcore_boost = -1,
 			io_boost = 0, he_boost = 0, gpu_boost = 0,
 			llf_boost = 0;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
 
 	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
 		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
 			if (kstrtoint(acBuffer, 0, &arg) == 0)
 				val = arg;
 			else
-				return count;
+				goto EXIT;
 		}
 	}
 
 	if (val > 1 << GBE_BOOST_NUM || val < 0)
-		return count;
+		goto EXIT;
 
 	mutex_lock(&gbe_lock);
 	policy_mask = val;
 
 	gbe_sentcmd(GBE_BOOST_CPU, cpu_boost, -1);
+	gbe_sentcmd(GBE_BOOST_CPU_USER_0, cpu_boost, -1);
+	gbe_sentcmd(GBE_BOOST_CPU_USER_1, cpu_boost, -1);
+	gbe_sentcmd(GBE_BOOST_CPU_USER_2, cpu_boost, -1);
 	gbe_sentcmd(GBE_BOOST_EAS, eas_boost, -1);
 	gbe_sentcmd(GBE_BOOST_VCORE, vcore_boost, -1);
 	gbe_sentcmd(GBE_BOOST_IO, io_boost, -1);
@@ -265,6 +425,8 @@ static ssize_t gbe_policy_mask_store(struct kobject *kobj,
 	gbe_sentcmd(GBE_BOOST_LLF, llf_boost, -1);
 	mutex_unlock(&gbe_lock);
 
+EXIT:
+	kfree(acBuffer);
 	return count;
 }
 
@@ -274,6 +436,9 @@ void exit_gbe_common(void)
 {
 	gbe_sysfs_remove_file(&kobj_attr_gbe_policy_mask);
 	gbe_sysfs_remove_file(&kobj_attr_gbe_thrm_hdrm_thrs);
+	gbe_sysfs_remove_file(&kobj_attr_gbe_cpu_0);
+	gbe_sysfs_remove_file(&kobj_attr_gbe_cpu_1);
+	gbe_sysfs_remove_file(&kobj_attr_gbe_cpu_2);
 	gbe_sysfs_exit();
 	gbe1_exit();
 	gbe2_exit();
@@ -290,6 +455,9 @@ int init_gbe_common(void)
 
 	gbe_sysfs_create_file(&kobj_attr_gbe_policy_mask);
 	gbe_sysfs_create_file(&kobj_attr_gbe_thrm_hdrm_thrs);
+	gbe_sysfs_create_file(&kobj_attr_gbe_cpu_0);
+	gbe_sysfs_create_file(&kobj_attr_gbe_cpu_1);
+	gbe_sysfs_create_file(&kobj_attr_gbe_cpu_2);
 
 
 	set_bit(GBE_BOOST_CPU, &policy_mask);

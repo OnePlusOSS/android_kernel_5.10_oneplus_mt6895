@@ -79,6 +79,9 @@ static struct cm_mgr_hook hk;
 
 static int cm_mgr_blank_status;
 static int cm_mgr_disable_fb = 1;
+static int cm_mgr_disp_wakeup_status;
+spinlock_t cm_mgr_disp_lock;
+
 int cm_mgr_emi_demand_check = 1;
 int cm_mgr_enable = 1;
 int cm_mgr_loading_enable;
@@ -97,13 +100,16 @@ unsigned int *debounce_times_up_adb;
 static int debounce_times_perf_down = 50;
 static int debounce_times_perf_force_down = 100;
 #if IS_ENABLED(CONFIG_MTK_CM_IPI)
+static int cm_mgr_dram_opp_ceiling = -1;
+static int cm_mgr_dram_opp_floor = -1;
 static int dsu_enable = 1;
 static int dsu_opp_send = 0xff;
 static int dsu_mode;
 static int cm_aggr;
-static int cm_mgr_dram_opp_ceiling = -1;
-static int cm_mgr_dram_opp_floor = -1;
+static int cm_passive;
 unsigned int cm_hint;
+unsigned int dsu_perf;
+unsigned int cm_lmode;
 #endif
 int debounce_times_reset_adb;
 int light_load_cps = 1000;
@@ -135,6 +141,11 @@ int get_cm_step_num(void)
 	return cm_hint;
 }
 EXPORT_SYMBOL_GPL(get_cm_step_num);
+int get_dsu_perf(void)
+{
+	return dsu_perf;
+}
+EXPORT_SYMBOL_GPL(get_dsu_perf);
 #endif
 
 struct icc_path *cm_mgr_get_bw_path(void)
@@ -289,6 +300,39 @@ void cm_mgr_unregister_hook(struct cm_mgr_hook *hook)
 }
 EXPORT_SYMBOL_GPL(cm_mgr_unregister_hook);
 
+static void cm_mgr_notify_sspm_blank_status(void)
+{
+	cm_mgr_to_sspm_command(IPI_CM_MGR_BLANK, cm_mgr_blank_status);
+	if (cm_mgr_blank_status) {
+		cm_mgr_dram_opp_base = -1;
+		if (hk.cm_mgr_perf_platform_set_status)
+			hk.cm_mgr_perf_platform_set_status(0);
+	}
+}
+
+static void cm_mgr_set_disp_wakeup_status(int display_index, int is_wakeup)
+{
+	unsigned long spinlock_save_flag;
+
+	spin_lock_irqsave(&cm_mgr_disp_lock, spinlock_save_flag);
+
+	if (is_wakeup)
+		cm_mgr_disp_wakeup_status |= (1 << display_index);
+	else
+		cm_mgr_disp_wakeup_status &= ~(1 << display_index);
+
+	if (cm_mgr_disp_wakeup_status)
+		cm_mgr_blank_status = 0;
+	else
+		cm_mgr_blank_status = 1;
+
+	spin_unlock_irqrestore(&cm_mgr_disp_lock, spinlock_save_flag);
+
+	pr_info("%s, cm_mgr_disp_wakeup_status %d, cm_mgr_blank_status %d\n",
+			__func__, cm_mgr_disp_wakeup_status, cm_mgr_blank_status);
+	cm_mgr_notify_sspm_blank_status();
+}
+
 static int cm_mgr_fb_notifier_callback(struct notifier_block *nb,
 		unsigned long value, void *v)
 {
@@ -298,15 +342,30 @@ static int cm_mgr_fb_notifier_callback(struct notifier_block *nb,
 		pr_info("%s+\n", __func__);
 		if (*data == MTK_DISP_BLANK_UNBLANK) {
 			pr_info("#@# %s(%d) SCREEN ON\n", __func__, __LINE__);
-			cm_mgr_blank_status = 0;
-			cm_mgr_to_sspm_command(IPI_CM_MGR_BLANK, 0);
+			cm_mgr_set_disp_wakeup_status(CM_MGR_MAIN_SCREEN, 1);
 		} else if (*data == MTK_DISP_BLANK_POWERDOWN) {
 			pr_info("#@# %s(%d) SCREEN OFF\n", __func__, __LINE__);
-			cm_mgr_blank_status = 1;
-			cm_mgr_dram_opp_base = -1;
-			if (hk.cm_mgr_perf_platform_set_status)
-				hk.cm_mgr_perf_platform_set_status(0);
-			cm_mgr_to_sspm_command(IPI_CM_MGR_BLANK, 1);
+			cm_mgr_set_disp_wakeup_status(CM_MGR_MAIN_SCREEN, 0);
+		}
+		pr_info("%s-\n", __func__);
+	}
+
+	return 0;
+}
+
+static int cm_mgr_fb_sub_notifier_callback(struct notifier_block *nb,
+		unsigned long value, void *v)
+{
+	int *data = (int *)v;
+
+	if (value == MTK_DISP_EVENT_BLANK) {
+		pr_info("%s+\n", __func__);
+		if (*data == MTK_DISP_BLANK_UNBLANK) {
+			pr_info("#@# %s(%d) SCREEN ON\n", __func__, __LINE__);
+			cm_mgr_set_disp_wakeup_status(CM_MGR_SUB_SCREEN, 1);
+		} else if (*data == MTK_DISP_BLANK_POWERDOWN) {
+			pr_info("#@# %s(%d) SCREEN OFF\n", __func__, __LINE__);
+			cm_mgr_set_disp_wakeup_status(CM_MGR_SUB_SCREEN, 0);
 		}
 		pr_info("%s-\n", __func__);
 	}
@@ -316,6 +375,10 @@ static int cm_mgr_fb_notifier_callback(struct notifier_block *nb,
 
 static struct notifier_block cm_mgr_fb_notifier = {
 	.notifier_call = cm_mgr_fb_notifier_callback,
+};
+
+static struct notifier_block cm_mgr_fb_sub_notifier = {
+	.notifier_call = cm_mgr_fb_sub_notifier_callback,
 };
 
 #if !IS_ENABLED(CONFIG_MTK_CM_IPI)
@@ -386,14 +449,34 @@ EXPORT_SYMBOL_GPL(cm_mgr_to_sspm_command);
 #endif /* CONFIG_MTK_CM_IPI */
 
 #if IS_ENABLED(CONFIG_MTK_CM_IPI)
+int cm_mgr_judge_perfs_dram_opp(int dram_opp)
+{
+	int perf_num = cm_mgr_get_num_perf();
+
+	if (cm_mgr_dram_opp_ceiling < 0 && cm_mgr_dram_opp_floor < 0)
+		return dram_opp;
+
+	if (cm_mgr_dram_opp_ceiling >= 0) {
+		if (cm_mgr_dram_opp_floor >= 0 && cm_mgr_dram_opp_ceiling > cm_mgr_dram_opp_floor)
+			return dram_opp;
+		if (cm_mgr_dram_opp_ceiling <= perf_num && cm_mgr_dram_opp_ceiling > dram_opp)
+			dram_opp = cm_mgr_dram_opp_ceiling;
+	}
+
+	return dram_opp;
+}
+EXPORT_SYMBOL_GPL(cm_mgr_judge_perfs_dram_opp);
+
 void cm_mgr_set_dram_opp_ceiling(int opp)
 {
+	cm_mgr_dram_opp_ceiling = opp;
 	cm_mgr_to_sspm_command(IPI_CM_MGR_DRAM_OPP_CEILING, opp);
 }
 EXPORT_SYMBOL_GPL(cm_mgr_set_dram_opp_ceiling);
 
 void cm_mgr_set_dram_opp_floor(int opp)
 {
+	cm_mgr_dram_opp_floor = opp;
 	cm_mgr_to_sspm_command(IPI_CM_MGR_DRAM_OPP_FLOOR, opp);
 }
 EXPORT_SYMBOL_GPL(cm_mgr_set_dram_opp_floor);
@@ -531,8 +614,14 @@ static ssize_t dbg_cm_mgr_show(struct kobject *kobj,
 			dsu_mode);
 	len += cm_mgr_print("cm_aggr %d\n",
 			cm_aggr);
+	len += cm_mgr_print("cm_passive %d\n",
+			cm_passive);
 	len += cm_mgr_print("cm_hint %d\n",
 			cm_hint);
+	len += cm_mgr_print("dsu_perf %d\n",
+			dsu_perf);
+	len += cm_mgr_print("cm_lmode %d\n",
+			cm_lmode);
 	len += cm_mgr_print("cm_mgr_dram_opp_ceiling %d\n",
 			    cm_mgr_dram_opp_ceiling);
 	len += cm_mgr_print("cm_mgr_dram_opp_floor %d\n",
@@ -701,8 +790,16 @@ static ssize_t dbg_cm_mgr_store(struct  kobject *kobj,
 	} else if (!strcmp(cmd, "cm_aggr")) {
 		cm_aggr = val_1;
 		cm_mgr_to_sspm_command(IPI_CM_MGR_AGGRESSIVE, val_1);
+	} else if (!strcmp(cmd, "cm_passive")) {
+		cm_passive = val_1;
+		cm_mgr_to_sspm_command(IPI_CM_MGR_PASSIVE, val_1);
 	} else if (!strcmp(cmd, "cm_hint")) {
 		cm_hint = val_1;
+	} else if (!strcmp(cmd, "dsu_perf")) {
+		dsu_perf = val_1;
+	} else if (!strcmp(cmd, "cm_lmode")) {
+		cm_lmode = val_1;
+		cm_mgr_to_sspm_command(IPI_CM_MGR_LMODE, val_1);
 	} else if (!strcmp(cmd, "cm_mgr_dram_opp_ceiling")) {
 		cm_mgr_dram_opp_ceiling = val_1;
 		cm_mgr_to_sspm_command(IPI_CM_MGR_DRAM_OPP_CEILING, val_1);
@@ -1025,6 +1122,8 @@ int cm_mgr_common_init(void)
 	int i;
 	int ret;
 
+	spin_lock_init(&cm_mgr_disp_lock);
+
 	cm_mgr_kobj = kobject_create_and_add("cm_mgr", kernel_kobj);
 	if (!cm_mgr_kobj)
 		return -ENOMEM;
@@ -1040,6 +1139,12 @@ int cm_mgr_common_init(void)
 	ret = mtk_disp_notifier_register("cm_mgr", &cm_mgr_fb_notifier);
 	if (ret) {
 		pr_info("[CM_MGR] FAILED TO REGISTER FB CLIENT (%d)\n", ret);
+		return ret;
+	}
+
+	ret = mtk_disp_sub_notifier_register("cm_mgr", &cm_mgr_fb_sub_notifier);
+	if (ret) {
+		pr_info("[CM_MGR] FAILED TO REGISTER FB SUB-CLIENT (%d)\n", ret);
 		return ret;
 	}
 
@@ -1138,6 +1243,10 @@ void cm_mgr_common_exit(void)
 	ret = mtk_disp_notifier_unregister(&cm_mgr_fb_notifier);
 	if (ret)
 		pr_info("[CM_MGR] FAILED TO UNREGISTER FB CLIENT (%d)\n", ret);
+
+	ret = mtk_disp_sub_notifier_unregister(&cm_mgr_fb_sub_notifier);
+	if (ret)
+		pr_info("[CM_MGR] FAILED TO UNREGISTER FB SUB-CLIENT (%d)\n", ret);
 }
 EXPORT_SYMBOL_GPL(cm_mgr_common_exit);
 MODULE_LICENSE("GPL");

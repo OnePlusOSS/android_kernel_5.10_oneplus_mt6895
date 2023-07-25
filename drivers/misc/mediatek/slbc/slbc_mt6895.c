@@ -48,7 +48,7 @@ static int slb_disable;
 static int slc_disable;
 static int slbc_sram_enable;
 static u32 slbc_force;
-static u32 buffer_ref;
+static int buffer_ref;
 static u32 acp_ref;
 static u32 slbc_ref;
 static u32 slbc_sta;
@@ -70,8 +70,8 @@ static int slbc_mic_num = 3;
 static int slbc_inner = 5;
 static int slbc_outer = 5;
 
-static int req_val_count;
-static int rel_val_count;
+static u64 req_val_count;
+static u64 rel_val_count;
 static u64 req_val_min;
 static u64 req_val_max;
 static u64 req_val_total;
@@ -700,10 +700,10 @@ static int dbg_slbc_proc_show(struct seq_file *m, void *v)
 	mutex_unlock(&slbc_ops_lock);
 
 	if (req_val_count) {
-		seq_printf(m, "stat req count:%ld min:%lld avg:%lld max:%lld\n",
+		seq_printf(m, "stat req count:%lld min:%lld avg:%lld max:%lld\n",
 				req_val_count, req_val_min,
 				req_val_total / req_val_count, req_val_max);
-		seq_printf(m, "stat rel count:%ld min:%lld avg:%lld max:%lld\n",
+		seq_printf(m, "stat rel count:%lld min:%lld avg:%lld max:%lld\n",
 				rel_val_count, rel_val_min,
 				rel_val_total / rel_val_count, rel_val_max);
 	}
@@ -759,15 +759,15 @@ static ssize_t dbg_slbc_proc_write(struct file *file,
 			mutex_unlock(&slbc_ops_lock);
 		}
 	} else if (!strcmp(cmd, "slb_disable")) {
-		pr_info("slb disable %d\n", val_1);
+		pr_info("slb disable %ld\n", val_1);
 		slb_disable = val_1;
 		slbc_sspm_slb_disable((int)!!val_1);
 	} else if (!strcmp(cmd, "slc_disable")) {
-		pr_info("slc disable %d\n", val_1);
+		pr_info("slc disable %ld\n", val_1);
 		slc_disable = val_1;
 		slbc_sspm_slc_disable((int)!!val_1);
 	} else if (!strcmp(cmd, "slbc_scmi_enable")) {
-		pr_info("slbc scmi enable %d\n", val_1);
+		pr_info("slbc scmi enable %ld\n", val_1);
 		slbc_sspm_enable((int)!!val_1);
 	} else if (!strcmp(cmd, "slbc_uid_used")) {
 		slbc_uid_used = val_1;
@@ -821,7 +821,7 @@ static ssize_t dbg_slbc_proc_write(struct file *file,
 		print_hex_dump(KERN_INFO, "SLBC: ", DUMP_PREFIX_OFFSET,
 				16, 4, slbc->sram_vaddr, slbc->regsize, 1);
 	} else {
-		pr_info("#@# %s(%d) wrong cmd %s val %d\n",
+		pr_info("#@# %s(%d) wrong cmd %s val %ld\n",
 				__func__, __LINE__, cmd, val_1);
 	}
 

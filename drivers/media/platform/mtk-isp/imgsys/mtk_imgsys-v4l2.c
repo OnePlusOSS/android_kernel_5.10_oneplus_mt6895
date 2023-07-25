@@ -418,12 +418,16 @@ static void mtk_imgsys_vb2_buf_queue(struct vb2_buffer *vb)
 	struct vb2_v4l2_buffer *b = to_vb2_v4l2_buffer(vb);
 	struct mtk_imgsys_dev_buffer *dev_buf =
 					mtk_imgsys_vb2_buf_to_dev_buf(vb);
-	struct mtk_imgsys_request *req =
-				mtk_imgsys_media_req_to_imgsys_req(vb->request);
+	struct mtk_imgsys_request *req = NULL;
 	struct mtk_imgsys_video_device *node =
 					mtk_imgsys_vbq_to_node(vb->vb2_queue);
 	struct mtk_imgsys_pipe *pipe = vb2_get_drv_priv(vb->vb2_queue);
 	int buf_count;
+
+	if (!vb->request)
+		return;
+
+	req = mtk_imgsys_media_req_to_imgsys_req(vb->request);
 
 	dev_buf->dev_fmt = node->dev_q.dev_fmt;
 	//support std mode dynamic change buf info & fmt
@@ -693,13 +697,22 @@ static int mtk_imgsys_videoc_try_fmt(struct file *file, void *fh,
 	struct mtk_imgsys_video_device *node = mtk_imgsys_file_to_node(file);
 	const struct mtk_imgsys_dev_format *dev_fmt;
 	struct v4l2_format try_fmt;
+	unsigned int idx;
 
 	memset(&try_fmt, 0, sizeof(try_fmt));
 
 	dev_fmt = mtk_imgsys_pipe_find_fmt(pipe, node,
 					f->fmt.pix_mp.pixelformat);
 	if (!dev_fmt) {
-		dev_fmt = &node->desc->fmts[node->desc->default_fmt_idx];
+		idx = node->desc->default_fmt_idx;
+		if (idx >= node->desc->num_fmts) {
+			idx = 0;
+			dev_info(pipe->imgsys_dev->dev,
+				"%s:%s: invalid idx(%d), must < num_fmts(%d)\n",
+			__func__, node->desc->name, idx, node->desc->num_fmts);
+		}
+
+		dev_fmt = &node->desc->fmts[idx];
 		dev_dbg(pipe->imgsys_dev->dev,
 			"%s:%s:%s: dev_fmt(%d) not found, use default(%d)\n",
 			__func__, pipe->desc->name, node->desc->name,
@@ -728,6 +741,7 @@ static int mtk_imgsys_videoc_s_fmt(struct file *file, void *fh,
 	struct mtk_imgsys_video_device *node = mtk_imgsys_file_to_node(file);
 	struct mtk_imgsys_pipe *pipe = video_drvdata(file);
 	const struct mtk_imgsys_dev_format *dev_fmt;
+	unsigned int idx;
 
 	if (pipe->streaming || vb2_is_busy(&node->dev_q.vbq))
 		return -EBUSY;
@@ -735,7 +749,15 @@ static int mtk_imgsys_videoc_s_fmt(struct file *file, void *fh,
 	dev_fmt = mtk_imgsys_pipe_find_fmt(pipe, node,
 					f->fmt.pix_mp.pixelformat);
 	if (!dev_fmt) {
-		dev_fmt = &node->desc->fmts[node->desc->default_fmt_idx];
+		idx = node->desc->default_fmt_idx;
+		if (idx >= node->desc->num_fmts) {
+			idx = 0;
+			dev_info(pipe->imgsys_dev->dev,
+				"%s:%s: invalid idx(%d), must < num_fmts(%d)\n",
+			__func__, node->desc->name, idx, node->desc->num_fmts);
+		}
+
+		dev_fmt = &node->desc->fmts[idx];
 		dev_dbg(pipe->imgsys_dev->dev,
 			"%s:%s:%s: dev_fmt(%d) not found, use default(%d)\n",
 			__func__, pipe->desc->name, node->desc->name,
@@ -838,21 +860,28 @@ static int mtk_imgsys_videoc_s_meta_fmt(struct file *file, void *fh,
 	struct mtk_imgsys_video_device *node = mtk_imgsys_file_to_node(file);
 	struct mtk_imgsys_pipe *pipe = video_drvdata(file);
 	const struct mtk_imgsys_dev_format *dev_fmt;
+	unsigned int idx;
 
 	if (pipe->streaming || vb2_is_busy(&node->dev_q.vbq))
 		return -EBUSY;
 
 	dev_fmt = mtk_imgsys_pipe_find_fmt(pipe, node,
 						f->fmt.meta.dataformat);
-
-		if (!dev_fmt) {
-			dev_fmt =
-				&node->desc->fmts[node->desc->default_fmt_idx];
+	if (!dev_fmt) {
+		idx = node->desc->default_fmt_idx;
+		if (idx >= node->desc->num_fmts) {
+			idx = 0;
 			dev_info(pipe->imgsys_dev->dev,
-				"%s:%s:%s: dev_fmt(%d) not found, use default(%d)\n",
-				__func__, pipe->desc->name, node->desc->name,
-				f->fmt.meta.dataformat, dev_fmt->format);
+				"%s:%s: invalid idx(%d), must < num_fmts(%d)\n",
+			__func__, node->desc->name, idx, node->desc->num_fmts);
 		}
+
+		dev_fmt = &node->desc->fmts[idx];
+		dev_info(pipe->imgsys_dev->dev,
+			"%s:%s:%s: dev_fmt(%d) not found, use default(%d)\n",
+			__func__, pipe->desc->name, node->desc->name,
+			f->fmt.meta.dataformat, dev_fmt->format);
+	}
 
 	memset(&node->vdev_fmt, 0, sizeof(node->vdev_fmt));
 
@@ -899,18 +928,28 @@ static int mtk_imgsys_vidioc_qbuf(struct file *file, void *priv,
 {
 	struct mtk_imgsys_pipe *pipe = video_drvdata(file);
 	struct mtk_imgsys_video_device *node = mtk_imgsys_file_to_node(file);
-	struct vb2_buffer *vb = node->dev_q.vbq.bufs[buf->index];
-	struct mtk_imgsys_dev_buffer *dev_buf =
-					mtk_imgsys_vb2_buf_to_dev_buf(vb);
+	struct vb2_buffer *vb;
+	struct mtk_imgsys_dev_buffer *dev_buf;
+	int ret = 0;
+#ifdef DYNAMIC_FMT
 	struct buf_info dyn_buf_info;
-	int ret = 0, i = 0;
+	int i = 0;
 	unsigned long user_ptr = 0;
-	struct mtk_imgsys_request *imgsys_req;
-	struct media_request *req;
 #ifndef USE_V4L2_FMT
 	struct v4l2_plane_pix_format *vfmt;
 	struct plane_pix_format *bfmt;
 #endif
+#endif
+	struct mtk_imgsys_request *imgsys_req;
+	struct media_request *req;
+
+	if ((buf->index >= VB2_MAX_FRAME) || (buf->index < 0)) {
+		dev_info(pipe->imgsys_dev->dev, "[%s] error vb2 index %d\n", __func__, buf->index);
+		return -EINVAL;
+	}
+
+	vb = node->dev_q.vbq.bufs[buf->index];
+	dev_buf = mtk_imgsys_vb2_buf_to_dev_buf(vb);
 	if (!dev_buf) {
 		dev_dbg(pipe->imgsys_dev->dev, "[%s] NULL dev_buf obtained with idx %d\n", __func__,
 											buf->index);
@@ -919,10 +958,16 @@ static int mtk_imgsys_vidioc_qbuf(struct file *file, void *priv,
 
 	//support dynamic change size&fmt for std mode flow
 	req = media_request_get_by_fd(&pipe->imgsys_dev->mdev, buf->request_fd);
+	if (IS_ERR(req)) {
+		dev_info(pipe->imgsys_dev->dev, "%s: invalid request_fd\n", __func__);
+		return PTR_ERR(req);
+	}
+
 	imgsys_req = mtk_imgsys_media_req_to_imgsys_req(req);
 	imgsys_req->tstate.time_qbuf = ktime_get_boottime_ns()/1000;
 	media_request_put(req);
 	if (!is_desc_fmt(node->dev_q.dev_fmt)) {
+#ifdef DYNAMIC_FMT
 		user_ptr =
 			(((unsigned long)(buf->m.planes[0].reserved[0]) << 32) |
 			((unsigned long)buf->m.planes[0].reserved[1]));
@@ -947,7 +992,7 @@ static int mtk_imgsys_vidioc_qbuf(struct file *file, void *priv,
 					dyn_buf_info.fmt.fmt.pix_mp.height;
 			dev_buf->fmt.fmt.pix_mp.pixelformat =
 					dyn_buf_info.fmt.fmt.pix_mp.pixelformat;
-			for (i = 0; i < IMGBUF_MAX_PLANES; i++) {
+			for (i = 0; i < dyn_buf_info.buf.num_planes; i++) {
 				vfmt = &dev_buf->fmt.fmt.pix_mp.plane_fmt[i];
 				bfmt =
 				&dyn_buf_info.fmt.fmt.pix_mp.plane_fmt[i];
@@ -995,6 +1040,7 @@ static int mtk_imgsys_vidioc_qbuf(struct file *file, void *priv,
 				dev_buf->compose = node->compose;
 			}
 		}
+#endif
 	} else {
 		dev_dbg(pipe->imgsys_dev->dev,
 			"[%s]%s:%s: no need to cache bufinfo,videonode fmt is DESC or SingleDevice(%d)!\n",
@@ -1438,6 +1484,9 @@ static int mtkdip_ioc_add_kva(struct v4l2_subdev *subdev, void *arg)
 	dma_addr_t dma_addr;
 	int i;
 
+	if (fd_info->fd_num > FD_MAX)
+		return -EINVAL;
+
 	kva_list = get_fd_kva_list();
 	for (i = 0; i < fd_info->fd_num; i++) {
 		buf_va_info = (struct buf_va_info_t *)
@@ -1525,6 +1574,9 @@ static int mtkdip_ioc_del_kva(struct v4l2_subdev *subdev, void *arg)
 	struct list_head *ptr = NULL;
 	int i;
 
+	if (fd_info->fd_num > FD_MAX)
+		return -EINVAL;
+
 	kva_list = get_fd_kva_list();
 	for (i = 0; i < fd_info->fd_num; i++) {
 		find = false;
@@ -1587,6 +1639,9 @@ static int mtkdip_ioc_add_iova(struct v4l2_subdev *subdev, void *arg)
 		return -EINVAL;
 		dev_dbg(pipe->imgsys_dev->dev, "%s:NULL usrptr\n", __func__);
 	}
+
+	if (fd_tbl->fd_num > FD_MAX)
+		return -EINVAL;
 
 	size = sizeof(*kfd) * fd_tbl->fd_num;
 	kfd = vzalloc(size);
@@ -1679,7 +1734,7 @@ static int mtkdip_ioc_del_iova(struct v4l2_subdev *subdev, void *arg)
 	size_t size;
 	int i, ret;
 
-	if ((!fd_tbl->fds) || (!fd_tbl->fd_num)) {
+	if ((!fd_tbl->fds) || (!fd_tbl->fd_num) || (fd_tbl->fd_num > FD_MAX)) {
 		return -EINVAL;
 		dev_dbg(pipe->imgsys_dev->dev, "%s:NULL usrptr\n", __func__);
 	}
@@ -1709,7 +1764,7 @@ static int mtkdip_ioc_del_iova(struct v4l2_subdev *subdev, void *arg)
 		dmabuf = dma_buf_get(fd);
 		if (IS_ERR(dmabuf))
 			continue;
-
+		mutex_lock(&pipe->iova_cache.mlock);
 		list_for_each_entry_safe(iova_info, tmp,
 					&pipe->iova_cache.list, list_entry) {
 
@@ -1727,6 +1782,7 @@ static int mtkdip_ioc_del_iova(struct v4l2_subdev *subdev, void *arg)
 			spin_unlock(&pipe->iova_cache.lock);
 			vfree(iova_info);
 		}
+		mutex_unlock(&pipe->iova_cache.mlock);
 		fd_info.fds_size[i] = dmabuf->size;
 		dma_buf_put(dmabuf);
 
@@ -2594,10 +2650,40 @@ static struct notifier_block imgsys_notifier_block = {
 };
 #endif
 
+static void mtk_imgsys_get_ccu_phandle(struct mtk_imgsys_dev *imgsys_dev)
+{
+	struct device *dev = imgsys_dev->dev;
+	struct device_node *node;
+	phandle rproc_ccu_phandle;
+	int ret;
+
+	node = of_find_compatible_node(NULL, NULL, "mediatek,camera_imgsys_ccu");
+	if (node == NULL) {
+		dev_info(dev, "of_find mediatek,camera_imgsys_ccu fail\n");
+		goto out;
+	}
+
+	ret = of_property_read_u32(node, "mediatek,ccu_rproc",
+				   &rproc_ccu_phandle);
+	if (ret) {
+		dev_info(dev, "fail to get rproc_ccu_phandle:%d\n", ret);
+		goto out;
+	}
+
+	imgsys_dev->rproc_ccu_handle = rproc_get_by_phandle(rproc_ccu_phandle);
+	if (imgsys_dev->rproc_ccu_handle == NULL) {
+		dev_info(imgsys_dev->dev, "Get ccu handle fail\n");
+		goto out;
+	}
+
+out:
+	return;
+}
 
 static int mtk_imgsys_probe(struct platform_device *pdev)
 {
 	struct mtk_imgsys_dev *imgsys_dev;
+	struct device **larb_devs;
 	const struct cust_data *data;
 #if MTK_CM4_SUPPORT
 	phandle rproc_phandle;
@@ -2614,6 +2700,8 @@ static int mtk_imgsys_probe(struct platform_device *pdev)
 	data = of_device_get_match_data(&pdev->dev);
 
 	init_imgsys_pipeline(data);
+
+	mtk_imgsys_get_ccu_phandle(imgsys_dev);
 
 	imgsys_dev->cust_pipes = data->pipe_settings;
 	imgsys_dev->modules = data->imgsys_modules;
@@ -2684,6 +2772,11 @@ static int mtk_imgsys_probe(struct platform_device *pdev)
 	larbs_num = of_count_phandle_with_args(pdev->dev.of_node,
 						"mediatek,larbs", NULL);
 	dev_info(imgsys_dev->dev, "%d larbs to be added", larbs_num);
+
+	larb_devs = devm_kzalloc(&pdev->dev, sizeof(larb_devs) * larbs_num, GFP_KERNEL);
+	if (!larb_devs)
+		return -ENOMEM;
+
 	for (i = 0; i < larbs_num; i++) {
 		struct device_node *larb_node;
 		struct platform_device *larb_pdev;
@@ -2708,9 +2801,10 @@ static int mtk_imgsys_probe(struct platform_device *pdev)
 				DL_FLAG_PM_RUNTIME | DL_FLAG_STATELESS);
 		if (!link)
 			dev_info(imgsys_dev->dev, "unable to link SMI LARB idx %d\n", i);
-
+		larb_devs[i] = &larb_pdev->dev;
 	}
-
+	imgsys_dev->larbs = larb_devs;
+	imgsys_dev->larbs_num = larbs_num;
 	atomic_set(&imgsys_dev->imgsys_enqueue_cnt, 0);
 	atomic_set(&imgsys_dev->imgsys_user_cnt, 0);
 	atomic_set(&imgsys_dev->num_composing, 0);

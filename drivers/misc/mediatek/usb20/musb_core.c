@@ -2372,6 +2372,7 @@ int musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	struct musb *musb;
 	struct musb_hdrc_platform_data *plat = dev->platform_data;
 	struct usb_hcd *hcd;
+	struct device_node *np = dev->parent->of_node;
 
 	/* resolve CR ALPS01823375 */
 	u8 u8_busperf3 = 0;
@@ -2392,6 +2393,11 @@ int musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 		status = -ENOMEM;
 		goto fail0;
 	}
+
+	status = of_property_read_u32(np, "usb_phy_offset", &musb->mtk_usb_phy_offset);
+	if (status)
+		musb->mtk_usb_phy_offset = 0x300;
+	DBG(0, "musb->mtk_usb_phy_offset : 0x%x\n", musb->mtk_usb_phy_offset);
 
 	mtk_musb = musb;
 	sema_init(&musb->musb_lock, 1);
@@ -2496,8 +2502,8 @@ int musb_init_controller(struct device *dev, int nIrq, void __iomem *ctrl)
 	INIT_WORK(&musb->otg_notifier_work, musb_otg_notifier_work);
 #endif
 	/* attach to the IRQ */
-	if (request_irq(musb->nIrq, musb->isr
-			, IRQF_TRIGGER_NONE, dev_name(dev), musb)) {
+	if (request_threaded_irq(musb->nIrq, NULL, musb->isr
+			, IRQF_ONESHOT, dev_name(dev), musb)) {
 		DBG(0, "request_irq %d failed!\n", musb->nIrq);
 		status = -ENODEV;
 		goto fail3;
@@ -3113,6 +3119,30 @@ void Charger_Detect_Release(void)
 	DBG(0, "%s\n", __func__);
 }
 EXPORT_SYMBOL(Charger_Detect_Release);
+
+#ifndef FPGA_PLATFORM
+#include <linux/arm-smccc.h>
+#include <linux/soc/mediatek/mtk_sip_svc.h>
+static void usb_dpidle_request(int mode)
+{
+	struct arm_smccc_res res;
+	int op;
+
+	switch (mode) {
+	case USB_DPIDLE_SUSPEND:
+		op = MTK_USB_SMC_INFRA_SUSPEND;
+		break;
+	case USB_DPIDLE_RESUME:
+		op = MTK_USB_SMC_INFRA_RESUME;
+		break;
+	default:
+		return;
+	}
+
+	DBG(0, "operation = %d\n", op);
+	arm_smccc_smc(MTK_SIP_KERNEL_USB_CONTROL, op, 0, 0, 0, 0, 0, 0, &res);
+}
+#endif
 
 #ifdef DISABLE_FOR_BRING_UP
 #if IS_ENABLED(CONFIG_USB_MTK_OTG)
@@ -3732,6 +3762,8 @@ void do_connection_work(struct work_struct *data)
 		set_usb_phy_mode(PHY_MODE_USB_DEVICE);
 
 	} else if (mtk_musb->power && (usb_on == false)) {
+		/* Set USB phy mode to INVALID */
+		set_usb_phy_mode(PHY_MODE_INVALID);
 		/* disable usb */
 		musb_stop(mtk_musb);
 		if (mtk_musb->usb_lock->active) {
@@ -3741,13 +3773,14 @@ void do_connection_work(struct work_struct *data)
 			DBG(0, "lock not active\n");
 		}
 		usb_clk_state = ON_TO_OFF;
-		/* Set USB phy mode to INVALID */
-		set_usb_phy_mode(PHY_MODE_INVALID);
 	} else
 		DBG(0, "do nothing, usb_on:%d, power:%d\n",
 				usb_on, mtk_musb->power);
 exit:
 	spin_unlock_irqrestore(&mtk_musb->lock, flags);
+
+	/* Wait for irq All done */
+	synchronize_irq(mtk_musb->nIrq);
 
 	if (usb_clk_state == ON_TO_OFF) {
 		/* clock on -> of: clk_prepare_cnt -2 */
@@ -4186,7 +4219,7 @@ static int mt_usb_init(struct musb *musb)
 	mt_usb_otg_init(musb);
 	/* enable host suspend mode */
 	/* mt_usb_wakeup_init(musb); */
-	/* musb->host_suspend = true; */
+	musb->host_suspend = true;
 #endif
 	DBG(0, "%s done\n", __func__);
 	return 0;
@@ -4370,9 +4403,7 @@ static int musb_probe(struct platform_device *pdev)
 	mtk_host_qmu_force_isoc_restart = 0;
 #endif
 #ifndef FPGA_PLATFORM
-#if IS_ENABLED(CONFIG_MTK_BASE_POWER)
-	/* register_usb_hal_dpidle_request(usb_6765_dpidle_request); */
-#endif
+	register_usb_hal_dpidle_request(usb_dpidle_request);
 #endif
 	register_usb_hal_disconnect_check(trigger_disconnect_check_work);
 
@@ -4549,6 +4580,8 @@ static const struct of_device_id apusb_of_ids[] = {
 	{.compatible = "mediatek,mt6789-usb20",},
 	{.compatible = "mediatek,mt6855-usb20",},
 	{.compatible = "mediatek,mt6833-usb20",},
+	{.compatible = "mediatek,mt6768-usb20",},
+	{.compatible = "mediatek,mt6765-usb20",},
 	{},
 };
 MODULE_DEVICE_TABLE(of, apusb_of_ids);

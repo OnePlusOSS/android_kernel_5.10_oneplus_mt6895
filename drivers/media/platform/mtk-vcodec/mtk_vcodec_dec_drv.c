@@ -39,9 +39,10 @@ static struct mtk_vcodec_dev *dev_ptr;
 
 static int mtk_vcodec_vcp_log_write(const char *val, const struct kernel_param *kp)
 {
-	pr_info("%s, val: %s, len: %d", __func__, val, strlen(val));
-	if (!(val == NULL || strlen(val) == 0))
+	if (!(val == NULL || strlen(val) == 0)) {
+		mtk_v4l2_debug(0, "val: %s, len: %zu", val, strlen(val));
 		mtk_vcodec_set_log(dev_ptr, val, MTK_VCODEC_LOG_INDEX_LOG);
+	}
 	return 0;
 }
 static struct kernel_param_ops vcodec_vcp_log_param_ops = {
@@ -51,9 +52,10 @@ module_param_cb(mtk_vdec_vcp_log, &vcodec_vcp_log_param_ops, &mtk_vdec_vcp_log, 
 
 static int mtk_vcodec_vcp_property_write(const char *val, const struct kernel_param *kp)
 {
-	pr_info("%s, val: %s, len: %d", __func__, val, strlen(val));
-	if (!(val == NULL || strlen(val) == 0))
+	if (!(val == NULL || strlen(val) == 0)) {
+		mtk_v4l2_debug(0, "val: %s, len: %zu", val, strlen(val));
 		mtk_vcodec_set_log(dev_ptr, val, MTK_VCODEC_LOG_INDEX_PROP);
+	}
 	return 0;
 }
 static struct kernel_param_ops vcodec_vcp_prop_param_ops = {
@@ -147,8 +149,8 @@ static int fops_vcodec_open(struct file *file)
 	dev->dec_cnt++;
 
 	mutex_unlock(&dev->dev_mutex);
-	mtk_v4l2_debug(0, "%s decoder [%d]", dev_name(&dev->plat_dev->dev),
-				   ctx->id);
+	mtk_v4l2_debug(0, "%s decoder [%d][%d]", dev_name(&dev->plat_dev->dev),
+				   ctx->id, dev->dec_cnt);
 	return ret;
 
 	/* Deinit when failure occurred */
@@ -175,8 +177,17 @@ static int fops_vcodec_release(struct file *file)
 	struct mtk_vcodec_dev *dev = video_drvdata(file);
 	struct mtk_vcodec_ctx *ctx = fh_to_ctx(file->private_data);
 
-	mtk_v4l2_debug(0, "[%d] decoder", ctx->id);
+	mtk_v4l2_debug(0, "[%d][%d] decoder", ctx->id, dev->dec_cnt);
 	mutex_lock(&dev->dev_mutex);
+
+	/*
+	 * Check no more ipi in progress, to avoid inst abort since vcp
+	 * wdt but still has another kind of ipi is waiting timeout
+	 */
+	mutex_lock(&dev->ipi_mutex);
+	mutex_unlock(&dev->ipi_mutex);
+	mutex_lock(&dev->ipi_mutex_res);
+	mutex_unlock(&dev->ipi_mutex_res);
 
 	/*
 	 * Call v4l2_m2m_ctx_release before mtk_vcodec_dec_release. First, it
@@ -387,6 +398,14 @@ static int mtk_vcodec_dec_probe(struct platform_device *pdev)
 		goto err_res;
 	}
 
+	ret = of_property_read_u32(pdev->dev.of_node, "svp-mtee", &dev->svp_mtee);
+	if (ret)
+		mtk_v4l2_debug(0, "[VDEC] Cannot get svp-mtee, skip");
+
+	ret = of_property_read_u32(pdev->dev.of_node, "mediatek,uniq_dom", &dev->unique_domain);
+	if (ret)
+		mtk_v4l2_debug(0, "[VDEC] Cannot get uniq dom, skip");
+
 	ret = mtk_vcodec_dec_irq_setup(pdev, dev);
 	if (ret)
 		goto err_res;
@@ -401,6 +420,8 @@ static int mtk_vcodec_dec_probe(struct platform_device *pdev)
 	mutex_init(&dev->ipi_mutex);
 	mutex_init(&dev->ipi_mutex_res);
 	mutex_init(&dev->dec_dvfs_mutex);
+	mutex_init(&dev->log_param_mutex);
+	mutex_init(&dev->prop_param_mutex);
 	spin_lock_init(&dev->irqlock);
 
 	snprintf(dev->v4l2_dev.name, sizeof(dev->v4l2_dev.name), "%s",
@@ -549,6 +570,8 @@ static const struct of_device_id mtk_vcodec_match[] = {
 	{.compatible = "mediatek,mt6895-vcodec-dec",},
 	{.compatible = "mediatek,mt6855-vcodec-dec",},
 	{.compatible = "mediatek,mt6833-vcodec-dec",},
+	{.compatible = "mediatek,mt6768-vcodec-dec",},
+	{.compatible = "mediatek,mt6789-vcodec-dec",},
 	{.compatible = "mediatek,vdec_gcon",},
 	{},
 };

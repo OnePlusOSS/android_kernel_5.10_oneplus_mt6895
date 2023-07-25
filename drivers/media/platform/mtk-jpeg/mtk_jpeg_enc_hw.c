@@ -54,6 +54,10 @@ void mtk_jpeg_enc_start(void __iomem *base)
 
 	value = readl(base + JPEG_ENC_CTRL);
 	value |= JPEG_ENC_CTRL_INT_EN_BIT | JPEG_ENC_CTRL_ENABLE_BIT;
+	value |= JPEG_ENC_CTRL_RDMA_PADDING_EN;
+	value |= JPEG_ENC_CTRL_RDMA_RIGHT_PADDING_EN;
+	value &= ~JPEG_ENC_CTRL_RDMA_PADDING_0_EN;
+
 	writel(value, base + JPEG_ENC_CTRL);
 }
 
@@ -69,13 +73,17 @@ void mtk_jpeg_set_enc_src(struct mtk_jpeg_ctx *ctx,  void __iomem *base,
 		if (!i) {
 			pr_info("%s %d dma_addr %llx", __func__, __LINE__, dma_addr);
 			writel(dma_addr, base + JPEG_ENC_SRC_LUMA_ADDR);
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
 			if (support_34bit)
 				writel(dma_addr >> 32, base + JPEG_ENC_SRC_LUMA_ADDR_EXT);
+#endif
 		} else {
 			pr_info("%s %d dma_addr %llx", __func__, __LINE__, dma_addr);
 			writel(dma_addr, base + JPEG_ENC_SRC_CHROMA_ADDR);
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
 			if (support_34bit)
 				writel(dma_addr >> 32, base + JPEG_ENC_SRC_CHROMA_ADDR_EXT);
+#endif
 		}
 	}
 }
@@ -94,17 +102,26 @@ void mtk_jpeg_set_enc_dst(struct mtk_jpeg_ctx *ctx, void __iomem *base,
 	dma_addr_offsetmask = dma_addr & JPEG_ENC_DST_ADDR_OFFSET_MASK;
 	size = vb2_plane_size(dst_buf, 0);
 
-	pr_info("%s output size %d dma_addr %llx", __func__, size, (dma_addr - ctx->dst_offset));
+	pr_info("%s output size %lu dma_addr %llx", __func__, size, (dma_addr - ctx->dst_offset));
 
 	writel(dma_addr_offset & ~0xf, base + JPEG_ENC_OFFSET_ADDR);
 	writel(dma_addr_offsetmask & 0xf, base + JPEG_ENC_BYTE_OFFSET_MASK);
 	writel(dma_addr & ~0xf, base + JPEG_ENC_DST_ADDR0);
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
 	if (support_34bit)
 		writel(dma_addr >> 32, base + JPEG_ENC_DEST_ADDR0_EXT);
-	writel((dma_addr + (size - ctx->dst_offset)) & ~0xf, base + JPEG_ENC_STALL_ADDR0);
+#endif
+    #ifndef OPLUS_FEATURE_CAMERA_COMMON
+	writel((dma_addr + size) & ~0xf, base + JPEG_ENC_STALL_ADDR0);
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
 	if (support_34bit)
-		writel(((dma_addr + (size - ctx->dst_offset))>>32),
+		writel(((dma_addr + size)>>32),
 			base + JPEG_ENC_STALL_ADDR0_EXT);
+#endif
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
+        writel((dma_addr + size) & ~0xf, base + JPEG_ENC_STALL_ADDR0);
+        writel(((dma_addr + size)>>32), base + JPEG_ENC_STALL_ADDR0_EXT);
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 }
 
 void mtk_jpeg_set_enc_params(struct mtk_jpeg_ctx *ctx,  void __iomem *base)
@@ -117,7 +134,8 @@ void mtk_jpeg_set_enc_params(struct mtk_jpeg_ctx *ctx,  void __iomem *base)
 	u32 blk_num;
 	u32 img_stride;
 	u32 mem_stride;
-	u32 i, enc_quality;
+	u32 enc_quality;
+	s32 i;
 
 	value = width << 16 | height;
 	writel(value, base + JPEG_ENC_IMG_SIZE);

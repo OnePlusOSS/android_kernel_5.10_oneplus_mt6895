@@ -20,6 +20,11 @@ int mtk_vcodec_wait_for_done_ctx(struct mtk_vcodec_ctx  *ctx,
 	wait_queue_head_t *waitqueue;
 	long timeout_jiff, ret;
 
+	if (IS_ERR_OR_NULL(ctx)) {
+		mtk_v4l2_err("invalid arguments, ctx: %p", ctx);
+		return -EINVAL;
+	}
+
 	if (core_id >= MTK_VDEC_HW_NUM ||
 		core_id < 0) {
 		mtk_v4l2_err("ctx %d, invalid core_id=%d", ctx->id, core_id);
@@ -69,15 +74,30 @@ irqreturn_t mtk_vcodec_dec_irq_handler(int irq, void *priv)
 	struct mtk_vcodec_ctx *ctx;
 	u32 cg_status = 0;
 	unsigned int dec_done_status = 0;
-	void __iomem *vdec_misc_addr = dev->dec_reg_base[VDEC_MISC] +
-		MTK_VDEC_IRQ_CFG_REG;
+	void __iomem *vdec_misc_addr;
+
+	if (IS_ERR_OR_NULL(dev)) {
+		mtk_v4l2_err("invalid arguments, dev: %p", dev);
+		return IRQ_HANDLED;
+	}
+
+	vdec_misc_addr = dev->dec_reg_base[VDEC_MISC] + MTK_VDEC_IRQ_CFG_REG;
 
 	ctx = mtk_vcodec_get_curr_ctx(dev, MTK_VDEC_CORE);
 	if (ctx == NULL)
 		return IRQ_HANDLED;
 
+	if (ctx->dec_params.svp_mode && dev->svp_mtee) {
+		mtk_v4l2_debug(4, "svp_mode %d don't handle",
+			ctx->dec_params.svp_mode);
+		return IRQ_HANDLED;
+	}
+
 	/* check if HW active or not */
-	cg_status = readl(dev->dec_reg_base[0]);
+	if (dev->dec_reg_base[VDEC_BASE] != NULL)
+		cg_status = readl(dev->dec_reg_base[VDEC_BASE]);
+	else
+		cg_status = readl(dev->dec_reg_base[VDEC_SYS]);
 	if ((cg_status & MTK_VDEC_HW_ACTIVE) != 0) {
 		mtk_v4l2_err("DEC ISR, VDEC active is not 0x0 (0x%08x)",
 					 cg_status);
@@ -113,9 +133,14 @@ irqreturn_t mtk_vcodec_lat_dec_irq_handler(int irq, void *priv)
 	struct mtk_vcodec_ctx *ctx;
 	u32 cg_status = 0;
 	unsigned int dec_done_status = 0;
-	void __iomem *vdec_misc_addr = dev->dec_reg_base[VDEC_LAT_MISC] +
-		MTK_VDEC_IRQ_CFG_REG;
+	void __iomem *vdec_misc_addr;
 
+	if (IS_ERR_OR_NULL(dev)) {
+		mtk_v4l2_err("invalid arguments, dev: %p", dev);
+		return IRQ_HANDLED;
+	}
+
+	vdec_misc_addr = dev->dec_reg_base[VDEC_LAT_MISC] + MTK_VDEC_IRQ_CFG_REG;
 	ctx = mtk_vcodec_get_curr_ctx(dev, MTK_VDEC_LAT);
 	if (ctx == NULL)
 		return IRQ_HANDLED;
@@ -192,6 +217,11 @@ irqreturn_t mtk_vcodec_enc_irq_handler(int irq, void *priv)
 	unsigned long flags;
 	void __iomem *addr;
 
+	if (IS_ERR_OR_NULL(dev)) {
+		mtk_v4l2_err("invalid arguments, dev: %p", dev);
+		return IRQ_HANDLED;
+	}
+
 	spin_lock_irqsave(&dev->irqlock, flags);
 	ctx = dev->curr_enc_ctx[0];
 	spin_unlock_irqrestore(&dev->irqlock, flags);
@@ -219,6 +249,11 @@ irqreturn_t mtk_vcodec_c1_enc_irq_handler(int irq, void *priv)
 	struct mtk_vcodec_ctx *ctx;
 	unsigned long flags;
 	void __iomem *addr;
+
+	if (IS_ERR_OR_NULL(dev)) {
+		mtk_v4l2_err("invalid arguments, dev: %p", dev);
+		return IRQ_HANDLED;
+	}
 
 	spin_lock_irqsave(&dev->irqlock, flags);
 	ctx = dev->curr_enc_ctx[1];
@@ -249,16 +284,27 @@ int mtk_vcodec_dec_irq_setup(struct platform_device *pdev,
 	int i = 0;
 	int ret = 0;
 
+	if (IS_ERR_OR_NULL(pdev) || IS_ERR_OR_NULL(dev)) {
+		mtk_v4l2_err("invalid arguments, pdev: %p, dev: %p", pdev, dev);
+		return -EINVAL;
+	}
+
 	for (i = 0; i < MTK_VDEC_HW_NUM; i++) {
 		dev->dec_irq[i] = platform_get_irq(pdev, i);
 		if (dev->dec_irq[i] < 0) {
 			mtk_v4l2_debug(0, "no IRQ resource, hw id: %d", i);
 			break;
 		}
-		if (i == MTK_VDEC_CORE)
-			ret = devm_request_irq(&pdev->dev, dev->dec_irq[i],
-				mtk_vcodec_dec_irq_handler, 0, pdev->name, dev);
-		else if (i == MTK_VDEC_LAT)
+		if (i == MTK_VDEC_CORE) {
+			if (dev->svp_mtee)
+				ret = devm_request_irq(&pdev->dev, dev->dec_irq[i],
+					mtk_vcodec_dec_irq_handler,
+					IRQF_NO_THREAD | IRQF_SHARED | IRQF_PROBE_SHARED,
+					pdev->name, dev);
+			else
+				ret = devm_request_irq(&pdev->dev, dev->dec_irq[i],
+					mtk_vcodec_dec_irq_handler, 0, pdev->name, dev);
+		} else if (i == MTK_VDEC_LAT)
 			ret = devm_request_irq(&pdev->dev, dev->dec_irq[i],
 				mtk_vcodec_lat_dec_irq_handler, 0,
 					pdev->name, dev);
@@ -282,6 +328,11 @@ int mtk_vcodec_enc_irq_setup(struct platform_device *pdev,
 #ifndef FPGA_INTERRUPT_API_DISABLE
 	int i = 0;
 	int ret = 0;
+
+	if (IS_ERR_OR_NULL(pdev) || IS_ERR_OR_NULL(dev)) {
+		mtk_v4l2_err("invalid arguments, pdev: %p, dev: %p", pdev, dev);
+		return -EINVAL;
+	}
 
 	for (i = 0; i < MTK_VENC_HW_NUM; i++) {
 		dev->enc_irq[i] = platform_get_irq(pdev, i);
@@ -319,6 +370,11 @@ EXPORT_SYMBOL_GPL(mtk_vcodec_enc_irq_setup);
 void mtk_vcodec_gce_timeout_dump(void *ctx)
 {
 	struct mtk_vcodec_ctx *curr_ctx = ctx;
+
+	if (IS_ERR_OR_NULL(curr_ctx)) {
+		mtk_v4l2_err("invalid arguments, curr_ctx: %p", curr_ctx);
+		return;
+	}
 
 	if (curr_ctx->type == MTK_INST_ENCODER)
 		mtk_vcodec_enc_timeout_dump(ctx);

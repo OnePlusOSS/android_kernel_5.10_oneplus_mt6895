@@ -392,6 +392,44 @@ out_unlock:
 	spin_unlock_irqrestore(&cmd_hist_lock, flags);
 }
 
+//bsp.storage.ufs 2021.10.14 add for /proc/devinfo/ufs
+/*feature-devinfo-v001-1-begin*/
+#ifdef OPLUS_DEVINFO_UFS
+static int create_devinfo_ufs(struct scsi_device *sdev)
+{
+	static char temp_version[5] = {0};
+	static char vendor[9] = {0};
+	static char model[17] = {0};
+	int ret = 0;
+
+	pr_info("get ufs device vendor/model/rev\n");
+	WARN_ON(!sdev);
+	strncpy(temp_version, sdev->rev, 4);
+	strncpy(vendor, sdev->vendor, 8);
+	strncpy(model, sdev->model, 16);
+
+	ret = register_device_proc("ufs_version", temp_version, vendor);
+
+	if (ret) {
+		pr_err("%s create ufs_version fail, ret=%d",__func__,ret);
+		return ret;
+	}
+
+	ret = register_device_proc("ufs", model, vendor);
+
+	if (ret) {
+		pr_err("%s create ufs fail, ret=%d",__func__,ret);
+	}
+
+	return ret;
+}
+
+static void probe_android_vh_ufs_update_sdev(void *data, struct scsi_device *sdev)
+{
+	pr_info_once("%s ret=%d",__func__,create_devinfo_ufs(sdev));
+}
+#endif
+/*feature-devinfo-v001-1-end*/
 /**
  * Data structures to store tracepoints information
  */
@@ -407,6 +445,9 @@ static struct tracepoints_table interests[] = {
 	{.name = "ufshcd_uic_command", .func = probe_ufshcd_uic_command},
 	{.name = "ufshcd_clk_gating", .func = probe_ufshcd_clk_gating},
 	{.name = "android_vh_ufs_send_tm_command", .func = probe_android_vh_ufs_send_tm_command},
+#ifdef OPLUS_DEVINFO_UFS
+	{.name = "android_vh_ufs_update_sdev", .func = probe_android_vh_ufs_update_sdev},
+#endif
 };
 
 #define FOR_EACH_INTEREST(i) \

@@ -74,8 +74,8 @@
 	#define MT6789_SEL_IN_RDMA0_FROM_DISP_RSZ0     1
 	#define MT6789_SEL_IN_RDMA0_FROM_DISP_OVL0_2L       2
 //#define MT6789_DISP_REG_CONFIG_DISP_BYPASS_SPR0_SEL_IN 0xF2C
-//	#define SEL_IN_FROM_DISP_DITHER0_MOUT     (0)
-//	#define SEL_IN_FROM_DISP_SPR0     (1)
+//	#define MT6789_SEL_IN_FROM_DISP_DITHER0_MOUT     (0)
+//	#define MT6789_SEL_IN_FROM_DISP_SPR0     (1)
 #define MT6789_DISP_REG_CONFIG_DSI0_SEL_IN 0xF30
 	#define MT6789_SEL_IN_FROM_DISP_RDMA0_RSZ0_SOUT   (0)
 	#define MT6789_SEL_IN_FROM_DISP_DITHERR0       (1)
@@ -138,6 +138,7 @@ extern const struct mtk_disp_ddp_data mt6789_ddp_driver_data;
 extern const struct mtk_mmsys_reg_data mt6789_mmsys_reg_data;
 // mipi_tx
 extern const struct mtk_mipitx_data mt6789_mipitx_data;
+extern const struct mtk_mipitx_data mt6789_mipitx_cphy_data;
 
 // ddp
 int mtk_ddp_mout_en_MT6789(const struct mtk_mmsys_reg_data *data,

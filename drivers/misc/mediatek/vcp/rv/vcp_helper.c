@@ -66,7 +66,7 @@
 #define SEMAPHORE_3WAY_TIMEOUT 5000
 /* vcp ready timeout definition */
 #define VCP_30MHZ 30000
-#define VCP_READY_TIMEOUT (3 * HZ) /* 3 seconds*/
+#define VCP_READY_TIMEOUT (4 * HZ) /* 4 seconds*/
 #define VCP_A_TIMER 0
 
 /* vcp ipi message buffer */
@@ -83,7 +83,13 @@ unsigned int vcp_enable[VCP_CORE_TOTAL];
 unsigned int vcp_expected_freq;
 unsigned int vcp_current_freq;
 unsigned int vcp_support;
+EXPORT_SYMBOL_GPL(vcp_support);
+
 unsigned int vcp_dbg_log;
+
+/* set flag after driver initial done */
+bool driver_init_done;
+EXPORT_SYMBOL_GPL(driver_init_done);
 
 /*vcp awake variable*/
 int vcp_awake_counts[VCP_CORE_TOTAL];
@@ -158,15 +164,12 @@ static unsigned int vcp_timeout_times;
 
 #endif
 
-static bool is_suspending;
 static DEFINE_MUTEX(vcp_pw_clk_mutex);
 static DEFINE_MUTEX(vcp_A_notify_mutex);
 static DEFINE_MUTEX(vcp_feature_mutex);
 
 char *core_ids[VCP_CORE_TOTAL] = {"VCP A"};
 DEFINE_SPINLOCK(vcp_awake_spinlock);
-/* set flag after driver initial done */
-static bool driver_init_done;
 struct vcp_ipi_irq {
 	const char *name;
 	int order;
@@ -198,6 +201,8 @@ struct vcp_status_fp vcp_helper_fp = {
 	.vcp_register_feature		= vcp_register_feature,
 	.vcp_deregister_feature		= vcp_deregister_feature,
 	.is_vcp_ready				= is_vcp_ready,
+	.vcp_A_register_notify		= vcp_A_register_notify,
+	.vcp_A_unregister_notify	= vcp_A_unregister_notify,
 };
 
 #undef pr_debug
@@ -263,15 +268,27 @@ static int vcp_ipi_dbg_resume_noirq(struct device *dev)
 		ret = irq_get_irqchip_state(vcp_ipi_irqs[i].irq_no,
 			IRQCHIP_STATE_PENDING, &state);
 		if (!ret && state) {
-			if (i < 2)
-				pr_info("[VCP] ipc%d wakeup\n", i);
-			else
-				mt_print_vcp_ipi_id(i - 2);
+			pr_info("[VCP] ipc%d wakeup\n", i);
 			break;
 		}
 	}
 
 	return 0;
+}
+
+static void vcp_wait_awake_count(void)
+{
+	int i = 0;
+
+	while (vcp_awake_counts[VCP_A_ID] != 0) {
+		i += 1;
+		mdelay(1);
+		if (i > 200) {
+			pr_info("wait vcp_awake_counts timeout %d\n", vcp_awake_counts[VCP_A_ID]);
+			break;
+		}
+	}
+	pr_info("[VCP] %s wait count: %d\n", __func__, i);
 }
 
 /*
@@ -628,10 +645,9 @@ static void vcp_err_info_handler(int id, void *prdata, void *data,
  */
 void trigger_vcp_halt(enum vcp_core_id id)
 {
-	if (vcp_ready[id]) {
+	if (mmup_enable_count() && vcp_ready[id]) {
 		/* trigger halt isr, force vcp enter wfi */
 		writel(B_GIPC4_SETCLR_0, R_GIPC_IN_SET);
-		wait_vcp_wdt_irq_done();
 	}
 }
 EXPORT_SYMBOL_GPL(trigger_vcp_halt);
@@ -701,9 +717,12 @@ void vcp_enable_pm_clk(enum feature_id id)
 
 	mutex_lock(&vcp_pw_clk_mutex);
 	if (is_suspending) {
-		pr_notice("[VCP] %s return %d %d\n", __func__, pwclkcnt, is_suspending);
+		pr_notice("[VCP] %s blocked %d %d\n", __func__, pwclkcnt, is_suspending);
 		mutex_unlock(&vcp_pw_clk_mutex);
-		return;
+		while (is_suspending)
+			usleep_range(10000, 20000);
+		pr_notice("[VCP] %s exit %d %d\n", __func__, pwclkcnt, is_suspending);
+		mutex_lock(&vcp_pw_clk_mutex);
 	}
 
 	if (pwclkcnt == 0) {
@@ -745,9 +764,12 @@ void vcp_disable_pm_clk(enum feature_id id)
 
 	mutex_lock(&vcp_pw_clk_mutex);
 	if (is_suspending) {
-		pr_notice("[VCP] %s return %d %d\n", __func__, pwclkcnt, is_suspending);
+		pr_notice("[VCP] %s blocked %d %d\n", __func__, pwclkcnt, is_suspending);
 		mutex_unlock(&vcp_pw_clk_mutex);
-		return;
+		while (is_suspending)
+			usleep_range(10000, 20000);
+		pr_notice("[VCP] %s exit %d %d\n", __func__, pwclkcnt, is_suspending);
+		mutex_lock(&vcp_pw_clk_mutex);
 	}
 
 	pr_notice("[VCP] %s id %d entered %d ready %d\n", __func__, id,
@@ -783,6 +805,8 @@ void vcp_disable_pm_clk(enum feature_id id)
 		vcp_extern_notify(VCP_EVENT_STOP);
 		mutex_unlock(&vcp_A_notify_mutex);
 
+		vcp_wait_awake_count();
+
 		ret = pm_runtime_put_sync(vcp_io_devs[VCP_IOMMU_256MB1]);
 		if (ret)
 			pr_debug("[VCP] %s: pm_runtime_put_sync\n", __func__);
@@ -816,6 +840,7 @@ static int vcp_pm_event(struct notifier_block *notifier
 		mutex_lock(&vcp_pw_clk_mutex);
 		pr_notice("[VCP] PM_SUSPEND_PREPARE entered %d %d\n", pwclkcnt, is_suspending);
 		if ((!is_suspending) && pwclkcnt) {
+			is_suspending = true;
 #if VCP_RECOVERY_SUPPORT
 			/* make sure all reset done */
 			flush_workqueue(vcp_reset_workqueue);
@@ -838,6 +863,9 @@ static int vcp_pm_event(struct notifier_block *notifier
 #endif
 			vcp_wait_core_stop_timeout(1);
 			vcp_disable_dapc();
+
+			vcp_wait_awake_count();
+
 			retval = pm_runtime_put_sync(vcp_io_devs[VCP_IOMMU_256MB1]);
 			if (retval)
 				pr_debug("[VCP] %s: pm_runtime_put_sync\n", __func__);
@@ -876,6 +904,7 @@ static int vcp_pm_event(struct notifier_block *notifier
 #if VCP_RECOVERY_SUPPORT
 			cpuidle_pause_and_lock();
 			reset_vcp(VCP_ALL_SUSPEND);
+			is_suspending = false;
 			waitCnt = vcp_wait_ready_sync(RTOS_FEATURE_ID);
 			cpuidle_resume_and_unlock();
 #endif
@@ -949,11 +978,6 @@ int reset_vcp(int reset)
 {
 	struct arm_smccc_res res;
 
-	mutex_lock(&vcp_A_notify_mutex);
-	blocking_notifier_call_chain(&vcp_A_notifier_list, VCP_EVENT_STOP,
-		NULL);
-	mutex_unlock(&vcp_A_notify_mutex);
-
 	if (reset & 0x0f) { /* do reset */
 		/* make sure vcp is in idle state */
 		vcp_wait_core_stop_timeout(mmup_enable_count());
@@ -966,6 +990,10 @@ int reset_vcp(int reset)
 		writel((unsigned int)vcp_mem_size, DRAM_RESV_SIZE_REG);
 		vcp_set_clk();
 
+#if VCP_BOOT_TIME_OUT_MONITOR
+		vcp_ready_timer[VCP_A_ID].tl.expires = jiffies + VCP_READY_TIMEOUT;
+		add_timer(&vcp_ready_timer[VCP_A_ID].tl);
+#endif
 		if (reset == VCP_ALL_SUSPEND) {
 			arm_smccc_smc(MTK_SIP_TINYSYS_VCP_CONTROL,
 				MTK_TINYSYS_VCP_KERNEL_OP_RESET_RELEASE,
@@ -981,11 +1009,6 @@ int reset_vcp(int reset)
 			readl(R_CORE0_SW_RSTN_CLR), res.a0,
 			mt_get_fmeter_freq(vcpreg.femter_ck, CKGEN));
 
-		dsb(SY); /* may take lot of time */
-#if VCP_BOOT_TIME_OUT_MONITOR
-		vcp_ready_timer[VCP_A_ID].tl.expires = jiffies + VCP_READY_TIMEOUT;
-		add_timer(&vcp_ready_timer[VCP_A_ID].tl);
-#endif
 	}
 	pr_debug("[VCP] %s: done\n", __func__);
 
@@ -1492,11 +1515,11 @@ EXPORT_SYMBOL_GPL(vcp_get_reserve_mem_virt);
 
 phys_addr_t vcp_get_reserve_mem_size(enum vcp_reserve_mem_id_t id)
 {
-	if (id >= NUMS_MEM_ID) {
-		pr_notice("[VCP] no reserve memory for %d", id);
-		return 0;
-	} else
+	if (id < NUMS_MEM_ID)
 		return vcp_reserve_mblock[id].size;
+
+	pr_notice("[VCP] no reserve memory for %d", id);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(vcp_get_reserve_mem_size);
 
@@ -1509,7 +1532,7 @@ static int vcp_reserve_memory_ioremap(struct platform_device *pdev)
 	enum vcp_reserve_mem_id_t id;
 	phys_addr_t accumlate_memory_size = 0;
 	unsigned int vcp_mem_num = 0;
-	unsigned int i, m_idx, m_size;
+	unsigned int i = 0, m_idx = 0, m_size = 0;
 	int ret;
 #if VCP_IOMMU_ENABLE
 	uint64_t iova_upper = 0;
@@ -2014,7 +2037,7 @@ static bool vcp_ipi_table_init(struct mtk_mbox_device *vcp_mboxdev, struct platf
 		send_item_num = 3,
 		recv_item_num = 4
 	};
-	u32 i, ret, mbox_id, recv_opt;
+	u32 i, ret, mbox_id = 0, recv_opt = 0;
 	of_property_read_u32(pdev->dev.of_node, "mbox_count"
 						, &vcp_mboxdev->count);
 	if (!vcp_mboxdev->count) {
@@ -2131,52 +2154,6 @@ static bool vcp_ipi_table_init(struct mtk_mbox_device *vcp_mboxdev, struct platf
 		vcp_mbox_pin_recv[i].recv_opt = recv_opt;
 	}
 
-
-	/* wrapper_ipi_init */
-	if (!of_get_property(pdev->dev.of_node, "legacy_table", NULL)) {
-		pr_notice("[VCP]%s: wrapper_ipi don't exist\n", __func__);
-		return true;
-	}
-	ret = of_property_read_u32_index(pdev->dev.of_node,
-			"legacy_table", 0, &vcp_ipi_legacy_id[0].out_id_0);
-	if (ret) {
-		pr_notice("[VCP]%s:Cannot get out_id_0\n", __func__);
-	}
-	ret = of_property_read_u32_index(pdev->dev.of_node,
-			"legacy_table", 1, &vcp_ipi_legacy_id[0].out_id_1);
-	if (ret) {
-		pr_notice("[VCP]%s:Cannot get out_id_1\n", __func__);
-	}
-	ret = of_property_read_u32_index(pdev->dev.of_node,
-			"legacy_table", 2, &vcp_ipi_legacy_id[0].in_id_0);
-	if (ret) {
-		pr_notice("[VCP]%s:Cannot get in_id_0\n", __func__);
-	}
-	ret = of_property_read_u32_index(pdev->dev.of_node,
-			"legacy_table", 3, &vcp_ipi_legacy_id[0].in_id_1);
-	if (ret) {
-		pr_notice("[VCP]%s:Cannot get in_id_1\n", __func__);
-	}
-	ret = of_property_read_u32_index(pdev->dev.of_node,
-			"legacy_table", 4, &vcp_ipi_legacy_id[0].out_size);
-	if (ret) {
-		pr_notice("[%s]:Cannot get out_size\n", __func__);
-	}
-	ret = of_property_read_u32_index(pdev->dev.of_node,
-			"legacy_table", 5, &vcp_ipi_legacy_id[0].in_size);
-	if (ret) {
-		pr_notice("[VCP]%s:Cannot get in_size\n", __func__);
-	}
-	vcp_ipi_legacy_id[0].msg_0 = vzalloc(vcp_ipi_legacy_id[0].in_size * MBOX_SLOT_SIZE);
-	if (!vcp_ipi_legacy_id[0].msg_0) {
-		pr_notice("[VCP]%s: vmlloc legacy msg_0 fail\n", __func__);
-		return false;
-	}
-	vcp_ipi_legacy_id[0].msg_1 = vzalloc(vcp_ipi_legacy_id[0].in_size * MBOX_SLOT_SIZE);
-	if (!vcp_ipi_legacy_id[0].msg_1) {
-		pr_notice("[VCP]%s: vmlloc legacy msg_1 fail\n", __func__);
-		return false;
-	}
 	return true;
 }
 
@@ -2219,6 +2196,57 @@ static int vcp_io_device_remove(struct platform_device *dev)
 	return 0;
 }
 
+void mbox_setup_pin_table(unsigned int mbox)
+{
+	int i, last_ofs = 0, last_idx = 0, last_slot = 0, last_sz = 0;
+
+	for (i = 0; i < vcp_mboxdev.send_count; i++) {
+		if (mbox == vcp_mbox_pin_send[i].mbox) {
+			vcp_mbox_pin_send[i].offset = last_ofs + last_slot;
+			vcp_mbox_pin_send[i].pin_index = last_idx + last_sz;
+			last_idx = vcp_mbox_pin_send[i].pin_index;
+			if (vcp_mbox_info[mbox].is64d == 1) {
+				last_sz = DIV_ROUND_UP(
+					   vcp_mbox_pin_send[i].msg_size, 2);
+				last_ofs = last_sz * 2;
+				last_slot = last_idx * 2;
+			} else {
+				last_sz = vcp_mbox_pin_send[i].msg_size;
+				last_ofs = last_sz;
+				last_slot = last_idx;
+			}
+		} else if (mbox < vcp_mbox_pin_send[i].mbox)
+			break; /* no need to search the rest ipi */
+	}
+
+	for (i = 0; i < vcp_mboxdev.recv_count; i++) {
+		if (mbox == vcp_mbox_pin_recv[i].mbox) {
+			vcp_mbox_pin_recv[i].offset = last_ofs + last_slot;
+			vcp_mbox_pin_recv[i].pin_index = last_idx + last_sz;
+			last_idx = vcp_mbox_pin_recv[i].pin_index;
+			if (vcp_mbox_info[mbox].is64d == 1) {
+				last_sz = DIV_ROUND_UP(
+					   vcp_mbox_pin_recv[i].msg_size, 2);
+				last_ofs = last_sz * 2;
+				last_slot = last_idx * 2;
+			} else {
+				last_sz = vcp_mbox_pin_recv[i].msg_size;
+				last_ofs = last_sz;
+				last_slot = last_idx;
+			}
+		} else if (mbox < vcp_mbox_pin_recv[i].mbox)
+			break; /* no need to search the rest ipi */
+	}
+
+
+	if (last_idx > 32 ||
+	   (last_ofs + last_slot) > (vcp_mbox_info[mbox].is64d + 1) * 32) {
+		pr_notice("mbox%d ofs(%d)/slot(%d) exceed the maximum\n",
+			mbox, last_idx, last_ofs + last_slot);
+		WARN_ON(1);
+	}
+}
+
 static int vcp_device_probe(struct platform_device *pdev)
 {
 	int ret = 0, i = 0;
@@ -2249,6 +2277,10 @@ static int vcp_device_probe(struct platform_device *pdev)
 	vcpreg.sram = devm_ioremap_resource(dev, res);
 	if (IS_ERR((void const *) vcpreg.sram)) {
 		pr_notice("[VCP] vcpreg.sram error\n");
+		return -1;
+	}
+	if (res == NULL) {
+		pr_notice("[VCP] platform_get_resource_byname error\n");
 		return -1;
 	}
 	vcpreg.total_tcmsize = (unsigned int)resource_size(res);
@@ -2435,14 +2467,30 @@ static int vcp_device_probe(struct platform_device *pdev)
 		return ret;
 	}
 #endif
-	/* device link to SMI for iommu */
+	/* device link to SMI for Dram iommu */
 	smi_node = of_parse_phandle(dev->of_node, "mediatek,smi", 0);
 	psmi_com_dev = of_find_device_by_node(smi_node);
 	if (psmi_com_dev) {
 		link = device_link_add(dev, &psmi_com_dev->dev,
 				DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+		pr_info("[VCP] device link to %s\n", dev_name(&psmi_com_dev->dev));
 		if (!link) {
-			dev_info(dev, "Unable to link %s.\n",
+			dev_info(dev, "Unable to link Dram %s.\n",
+				dev_name(&psmi_com_dev->dev));
+			ret = -EINVAL;
+			return ret;
+		}
+	}
+
+	/* device link to SMI for SLB/Infra */
+	smi_node = of_parse_phandle(dev->of_node, "mediatek,smi", 1);
+	psmi_com_dev = of_find_device_by_node(smi_node);
+	if (psmi_com_dev) {
+		link = device_link_add(dev, &psmi_com_dev->dev,
+				DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
+		pr_info("[VCP] device link to %s\n", dev_name(&psmi_com_dev->dev));
+		if (!link) {
+			dev_info(dev, "Unable to link SLB/Infra %s.\n",
 				dev_name(&psmi_com_dev->dev));
 			ret = -EINVAL;
 			return ret;

@@ -929,8 +929,8 @@ static int dpmaif_rx_set_data_to_skb(struct dpmaif_rx_queue *rxq,
 static inline void dpmaif_handle_wakeup(struct dpmaif_rx_queue *rxq,
 		struct sk_buff *skb)
 {
-	struct iphdr *iph = (struct iphdr *)skb->data;
-	struct ipv6hdr *ip6h = (struct ipv6hdr *)skb->data;
+	struct iphdr *iph = NULL;
+	struct ipv6hdr *ip6h = NULL;
 	struct tcphdr *tcph = NULL;
 	struct udphdr *udph = NULL;
 	int ip_offset = 0;
@@ -940,8 +940,11 @@ static inline void dpmaif_handle_wakeup(struct dpmaif_rx_queue *rxq,
 	u32 dst_port = 0;
 	u32 skb_len  = 0;
 
-	if (!skb)
+	if (!skb || !skb->data)
 		goto err;
+
+	iph = (struct iphdr *)skb->data;
+	ip6h = (struct ipv6hdr *)skb->data;
 
 	skb_len = skb->len;
 	version = iph->version;
@@ -1131,19 +1134,6 @@ static int dpmaif_rx_start(struct dpmaif_rx_queue *rxq, unsigned short pit_cnt,
 				rxq->pit_dp =
 				((struct dpmaifq_msg_pit *)pkt_inf_t)->dp;
 			} else if (pkt_inf_t->packet_type == DES_PT_PD) {
-				if (dpmaif_ctrl->enable_pit_debug >= 0) {
-					dpmaif_debug_update_rx_chn_idx(rxq->cur_chn_idx);
-
-					if (dpmaif_ctrl->enable_pit_debug > 0)
-						DPMAIF_DEBUG_ADD(DEBUG_TYPE_RX_DONE,
-						DEBUG_VERION_V2,
-						rxq->index, pkt_inf_t->data_len,
-						rxq->pit_rd_idx, rxq->pit_wr_idx,
-						(unsigned short)pkt_inf_t->buffer_id,
-						dpmaif_ctrl->bat_req->bat_wr_idx,
-						(unsigned int)(local_clock() / 1000000),
-						NULL);
-				}
 
 #ifdef HW_FRG_FEATURE_ENABLE
 				if (pkt_inf_t->buffer_type == PKT_BUF_FRAG
@@ -1589,8 +1579,12 @@ static unsigned short dpmaif_relase_tx_buffer(unsigned char q_num,
 
 int dpmaif_empty_query_v2(int qno)
 {
-	struct dpmaif_tx_queue *txq = &dpmaif_ctrl->txq[qno];
+	struct dpmaif_tx_queue *txq = NULL;
 
+	if ((qno) < 0 || (qno >= DPMAIF_TXQ_NUM))
+		return 0;
+
+	txq = &dpmaif_ctrl->txq[qno];
 	if (txq == NULL) {
 		CCCI_ERROR_LOG(dpmaif_ctrl->md_id, TAG,
 			"%s:fail NULL txq\n", __func__);
@@ -1629,7 +1623,7 @@ static int dpmaif_tx_release(unsigned char q_num, unsigned short budget)
 	dpmaif_ctrl->tx_done_last_count[q_num] = real_rel_cnt;
 #endif
 
-	if (real_rel_cnt < 0 || txq->que_started == false)
+	if (txq->que_started == false)
 		return ERROR_STOP;
 	else
 		return ((real_rel_cnt < rel_cnt)?ONCE_MORE : ALL_CLEAR);
@@ -2737,7 +2731,7 @@ int dpmaif_late_init(unsigned char hif_id)
 #else
 	CCCI_DEBUG_LOG(-1, TAG, "dpmaif:%s end\n", __func__);
 #endif
-	dpmaif_debug_late_init(&(dpmaif_ctrl->rxq[0].rx_wq));
+
 	return 0;
 }
 
@@ -2932,8 +2926,7 @@ void dpmaif_stop_hw(void)
 	count = 0;
 	do {
 		/*Disable HW arb and check idle*/
-		ret = drv_dpmaif_dl_all_queue_en(false);
-		if (ret < 0) {
+		if (drv_dpmaif_dl_all_queue_en(false) < 0) {
 #if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
 			aee_kernel_warning("ccci",
 				"dpmaif stop failed to enable dl queue\n");
@@ -3303,15 +3296,6 @@ static struct ccci_hif_ops ccci_hif_dpmaif_ops = {
 	.empty_query = dpmaif_empty_query_v2,
 };
 
-static void dpmaif_total_spd_cb(u64 total_ul_speed, u64 total_dl_speed)
-{
-	if ((total_ul_speed < UL_SPEED_THRESHOLD) &&
-		(total_dl_speed < DL_SPEED_THRESHOLD))
-		dpmaif_ctrl->enable_pit_debug = 1;
-	else
-		dpmaif_ctrl->enable_pit_debug = 0;
-}
-
 static void dpmaif_init_cap(struct device *dev)
 {
 	unsigned int dpmaif_cap = 0;
@@ -3324,20 +3308,9 @@ static void dpmaif_init_cap(struct device *dev)
 			__func__);
 	}
 
-	if (dpmaif_cap & DPMAIF_CAP_PIT_DEG)
-		dpmaif_ctrl->enable_pit_debug = 1;
-	else
-		dpmaif_ctrl->enable_pit_debug = -1;
-
 	CCCI_NORMAL_LOG(-1, TAG,
-		"[%s] dpmaif_cap: %x; pit_debug: %d\n",
-		__func__, dpmaif_cap,
-		dpmaif_ctrl->enable_pit_debug);
-
-	if (dpmaif_ctrl->enable_pit_debug > -1) {
-		mtk_ccci_register_speed_1s_callback(dpmaif_total_spd_cb);
-		dpmaif_debug_init();
-	}
+		"[%s] dpmaif_cap: %x\n",
+		__func__, dpmaif_cap);
 }
 
 /* =======================================================

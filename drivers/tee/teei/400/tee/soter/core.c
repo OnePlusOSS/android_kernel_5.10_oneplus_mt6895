@@ -93,14 +93,14 @@ static void soter_release(struct tee_context *ctx)
 	struct soter_context_data *ctxdata = ctx->data;
 	struct tee_shm *shm;
 	struct optee_msg_arg *arg = NULL;
-	phys_addr_t parg;
+	phys_addr_t parg = 0;
 	struct soter_session *sess;
 	struct soter_session *sess_tmp;
 
 	if (!ctxdata)
 		return;
 
-	shm = isee_shm_alloc(ctx, sizeof(struct optee_msg_arg), TEE_SHM_MAPPED);
+	shm = isee_shm_alloc_noid(ctx, sizeof(struct optee_msg_arg), TEE_SHM_MAPPED);
 	if (!IS_ERR(shm)) {
 		arg = isee_shm_get_va(shm, 0);
 		/*

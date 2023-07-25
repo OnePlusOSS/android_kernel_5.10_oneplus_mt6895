@@ -706,7 +706,11 @@ void usb_sg_wait(struct usb_sg_request *io)
 	 * So could the submit loop above ... but it's easier to
 	 * solve neither problem than to solve both!
 	 */
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	wait_for_completion_timeout(&io->complete, 10 * HZ);
+#else
 	wait_for_completion(&io->complete);
+#endif
 
 	sg_clean(io);
 }

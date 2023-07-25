@@ -24,7 +24,7 @@
 // TODO: need remove ISR ipis
 #include "mtk_vcodec_intr.h"
 
-#ifdef CONFIG_MTK_ENG_BUILD
+#if IS_ENABLED(CONFIG_MTK_ENG_BUILD)
 #define IPI_TIMEOUT_MS          (10000U)
 #else
 #define IPI_TIMEOUT_MS          (5000U + ((mtk_vcodec_dbg | mtk_v4l2_dbg_level) ? 5000U : 0U))
@@ -90,7 +90,10 @@ static void handle_query_cap_ack_msg(struct venc_vcu_ipi_query_cap_ack *msg)
 static struct device *get_dev_by_mem_type(struct venc_inst *inst, struct vcodec_mem_obj *mem)
 {
 	if (mem->type == MEM_TYPE_FOR_SW || mem->type == MEM_TYPE_FOR_SEC_SW)
-		return vcp_get_io_device(VCP_IOMMU_256MB1);
+		if (inst->ctx->id & 1)
+			return vcp_get_io_device(VCP_IOMMU_WORK_256MB2);
+		else
+			return vcp_get_io_device(VCP_IOMMU_256MB1);
 	else if (mem->type == MEM_TYPE_FOR_HW || mem->type == MEM_TYPE_FOR_SEC_HW)
 		return &inst->vcu_inst.ctx->dev->plat_dev->dev;
 	else
@@ -119,18 +122,19 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 	}
 
 	while (!is_vcp_ready(VCP_A_ID)) {
-		mtk_v4l2_debug((((timeout % 20) == 10) ? 0 : 4), "[VCP] wait ready %d ms", timeout);
+		mtk_v4l2_debug(((timeout % 20) == 10) ? 0 : 4, "[VCP] wait ready %lu ms", timeout);
 		mdelay(1);
 		timeout++;
 		if (timeout > VCP_SYNC_TIMEOUT_MS) {
 			mtk_vcodec_err(inst, "VCP_A_ID not ready");
 			mtk_smi_dbg_hang_detect("VENC VCP");
-			break;
+			inst->vcu_inst.abort = 1;
+			return -EIO;
 		}
 	}
 
-	if (len > sizeof(struct share_obj)) {
-		mtk_vcodec_err(inst, "ipi data size wrong %d > %d", len, sizeof(struct share_obj));
+	if (len > sizeof(obj.share_buf)) {
+		mtk_vcodec_err(inst, "ipi data size wrong %d > %zu", len, sizeof(obj.share_buf));
 		inst->vcu_inst.abort = 1;
 		return -EIO;
 	}
@@ -144,6 +148,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 	obj.len = len;
 	ipi_size = ((sizeof(u32) * 2) + len + 3) /4;
 	inst->vcu_inst.failure = 0;
+	inst->ctx->err_msg = *(__u32 *)msg;
 
 	mtk_v4l2_debug(2, "id %d len %d msg 0x%x is_ack %d %d", obj.id, obj.len, *(u32 *)msg,
 		is_ack, inst->vcu_inst.signaled);
@@ -158,7 +163,9 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 		mutex_unlock(&inst->ctx->dev->ipi_mutex);
 		inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
 		inst->vcu_inst.abort = 1;
-		trigger_vcp_halt(VCP_A_ID);
+		if (inst->vcu_inst.daemon_pid == get_vcp_generation())
+			trigger_vcp_halt(VCP_A_ID);
+		inst->ctx->err_msg = *(__u32 *)msg;
 		return -EIO;
 	}
 	if (!is_ack) {
@@ -173,7 +180,9 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 			mutex_unlock(&inst->ctx->dev->ipi_mutex);
 			inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
 			inst->vcu_inst.abort = 1;
-			trigger_vcp_halt(VCP_A_ID);
+			if (inst->vcu_inst.daemon_pid == get_vcp_generation())
+				trigger_vcp_halt(VCP_A_ID);
+			inst->ctx->err_msg = *(__u32 *)msg;
 			return -EIO;
 		}
 	}
@@ -198,7 +207,7 @@ static void handle_venc_mem_alloc(struct venc_vcu_ipi_mem_op *msg)
 		msg->mem.len = (__u64)vcp_get_reserve_mem_size(VENC_MEM_ID);
 		msg->mem.iova = msg->mem.pa;
 
-		mtk_v4l2_debug(4, "va 0x%llx pa 0x%llx iova 0x%llx len %d type %d size of %d %d\n",
+		mtk_v4l2_debug(4, "va 0x%llx pa 0x%llx iova 0x%llx len %u type %u size of %zu %zu\n",
 			msg->mem.va, msg->mem.pa, msg->mem.iova, msg->mem.len, msg->mem.type, sizeof(msg->mem), sizeof(*msg));
 	} else {
 		if (IS_ERR_OR_NULL(vcu))
@@ -386,7 +395,7 @@ int vcp_enc_ipi_handler(void *arg)
 
 		if (msg == NULL ||
 		   (struct venc_vcu_inst *)(unsigned long)msg->venc_inst == NULL) {
-			mtk_v4l2_err(" msg invalid %lx\n", msg);
+			mtk_v4l2_err(" msg invalid %p\n", msg);
 			kfree(mq_node);
 			continue;
 		}
@@ -448,6 +457,8 @@ int vcp_enc_ipi_handler(void *arg)
 			handle_enc_init_msg(vcu, (void *)obj->share_buf);
 			if (msg->status != VENC_IPI_MSG_STATUS_OK)
 				vcu->failure = VENC_IPI_MSG_STATUS_FAIL;
+			else
+				vcu->ctx->state = MTK_STATE_INIT;
 		case VCU_IPIMSG_ENC_SET_PARAM_DONE:
 		case VCU_IPIMSG_ENC_ENCODE_DONE:
 		case VCU_IPIMSG_ENC_DEINIT_DONE:
@@ -500,12 +511,14 @@ int vcp_enc_ipi_handler(void *arg)
 			venc_vcp_ipi_send(inst, msg, sizeof(*msg), 1);
 			break;
 		case VCU_IPIMSG_ENC_POWER_ON:
+			venc_lock(ctx, msg->status, 0);
 			venc_encode_prepare(ctx, msg->status, &flags);
 			msg->msg_id = AP_IPIMSG_ENC_POWER_ON_DONE;
 			venc_vcp_ipi_send(inst, msg, sizeof(*msg), 1);
 			break;
 		case VCU_IPIMSG_ENC_POWER_OFF:
 			venc_encode_unprepare(ctx, msg->status, &flags);
+			venc_unlock(ctx, msg->status);
 			msg->msg_id = AP_IPIMSG_ENC_POWER_OFF_DONE;
 			venc_vcp_ipi_send(inst, msg, sizeof(*msg), 1);
 			break;
@@ -514,7 +527,8 @@ int vcp_enc_ipi_handler(void *arg)
 			struct venc_vcu_ipi_msg_trace *trace_msg =
 				(struct venc_vcu_ipi_msg_trace *)obj->share_buf;
 			char buf [16];
-			sprintf(buf, "VENC_TRACE_%d", trace_msg->trace_id);
+			if (sprintf(buf, "VENC_TRACE_%d", trace_msg->trace_id) < 0)
+				mtk_v4l2_err("venc trace id fail");
 			vcodec_trace_count(buf, trace_msg->flag);
 		}
 			break;
@@ -597,6 +611,7 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 	struct mtk_vcodec_ctx *ctx;
 	int timeout = 0;
 	bool backup = false;
+	struct venc_inst *inst = NULL;
 
 	if (!(mtk_vcodec_vcp & (1 << MTK_INST_ENCODER)))
 		return 0;
@@ -620,6 +635,11 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 			ctx = list_entry(p, struct mtk_vcodec_ctx, list);
 			if (ctx != NULL && ctx->state != MTK_STATE_ABORT) {
 				ctx->state = MTK_STATE_ABORT;
+				inst = (struct venc_inst *)(ctx->drv_handle);
+				if (inst != NULL) {
+					inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
+					inst->vcu_inst.abort = 1;
+				}
 				venc_check_release_lock(ctx);
 				mtk_venc_queue_error_event(ctx);
 			}
@@ -643,7 +663,8 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 		mutex_lock(&dev->ctx_mutex);
 		list_for_each_safe(p, q, &dev->ctx_list) {
 			ctx = list_entry(p, struct mtk_vcodec_ctx, list);
-			if (ctx != NULL && ctx->state != MTK_STATE_ABORT) {
+			if (ctx != NULL && ctx->state < MTK_STATE_ABORT
+					&& ctx->state > MTK_STATE_FREE) {
 				mutex_unlock(&dev->ctx_mutex);
 				backup = true;
 				venc_vcp_backup((struct venc_inst *)ctx->drv_handle);
@@ -974,8 +995,6 @@ static int venc_vcp_init(struct mtk_vcodec_ctx *ctx, unsigned long *handle)
 		return -ENOMEM;
 	}
 
-	mtk_vcodec_add_ctx_list(ctx);
-
 	inst->ctx = ctx;
 	inst->vcu_inst.ctx = ctx;
 	inst->vcu_inst.dev = ctx->dev->vcu_plat_dev;
@@ -1002,6 +1021,9 @@ static int venc_vcp_init(struct mtk_vcodec_ctx *ctx, unsigned long *handle)
 	out.venc_inst = (unsigned long)&inst->vcu_inst;
 	(*handle) = (unsigned long)inst;
 	inst->vcu_inst.daemon_pid = get_vcp_generation();
+
+	mtk_vcodec_add_ctx_list(ctx);
+
 	ret = venc_vcp_ipi_send(inst, &out, sizeof(out), 0);
 	inst->vsi = (struct venc_vsi *)inst->vcu_inst.vsi;
 
@@ -1190,10 +1212,10 @@ void set_venc_vcp_data(struct venc_inst *inst, enum vcp_reserve_mem_id_t id, voi
 	__u64 mem_size = (__u64)vcp_get_reserve_mem_size(id);
 	int string_len = strlen((char *)string);
 
-	mtk_vcodec_debug(inst, "mem_size 0x%llx, string_va 0x%llx, string_pa 0x%llx\n",
-		mem_size, string_va, string_pa);
-	mtk_vcodec_debug(inst, "string: %s\n", (char *)string);
-	mtk_vcodec_debug(inst, "string_len:%d\n", string_len);
+	mtk_vcodec_debug(inst, "mem_size 0x%llx, string_va 0x%llx, string_pa 0x%llx",
+		mem_size, (__u64)string_va, (__u64)string_pa);
+	mtk_vcodec_debug(inst, "string: %s", (char *)string);
+	mtk_vcodec_debug(inst, "string_len: %d", string_len);
 
 	if (string_len <= (mem_size-1))
 		memcpy(string_va, (char *)string, string_len + 1);

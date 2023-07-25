@@ -5899,6 +5899,8 @@ struct mt6368_priv {
 	int reg_afe_vow_periodic;
 	unsigned int vow_channel;
 	struct mt6368_vow_periodic_on_off_data vow_periodic_param;
+	/* vow relatch, 1: enable, 0: disable */
+	int vow_relatch;
 	/* vow dmic low power mode, 1: enable, 0: disable */
 	int vow_dmic_lp;
 	int vow_single_mic_select;

@@ -16,6 +16,7 @@ int ged_get_cur_oppidx(void);
 int ged_get_max_oppidx(void);
 int ged_get_min_oppidx(void);
 int ged_get_min_oppidx_real(void);
+unsigned int ged_get_all_available_opp_num(void);
 int ged_get_opp_num(void);
 int ged_get_opp_num_real(void);
 unsigned int ged_get_freq_by_idx(int oppidx);
@@ -30,6 +31,8 @@ unsigned int ged_get_cur_limiter_ceil(void);
 unsigned int ged_get_cur_limiter_floor(void);
 int ged_set_limit_ceil(int limiter, int ceil);
 int ged_set_limit_floor(int limiter, int floor);
+void ged_set_ud_mask_bit(unsigned int ud_mask_bit);
+unsigned int ged_get_ud_mask_bit(void);
 
 int ged_gpufreq_commit(int oppidx, int commit_type, int *bCommited);
 

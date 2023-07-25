@@ -90,6 +90,34 @@ struct mtk_raw_pipeline;
 #define v4l2_subdev_format_request_fd(x) x->reserved[0]
 #define v4l2_frame_interval_which(x) x->reserved[0]
 
+static inline raw_pipe_data_check(int a)
+{
+	bool result;
+
+	result = (a >= 0 && a < (MTKCAM_SUBDEV_RAW_END - MTKCAM_SUBDEV_RAW_START)) ? true : false;
+	return result;
+}
+static inline p_data_check(int a)
+{
+	bool result;
+
+	result = (a >= 0 && a < MTKCAM_SUBDEV_MAX) ? true : false;
+	return result;
+}
+static inline sv_pipe_check(int a)
+{
+	bool result;
+
+	result = (a >= 0 && a < CAMSV_PIPELINE_NUM) ? true : false;
+	return result;
+}
+static inline sv_devs_check(int a)
+{
+	bool result;
+
+	result = (a >= 0 && a < CAMSV_PIPELINE_NUM) ? true : false;
+	return result;
+}
 struct mtk_cam_working_buf {
 	void *va;
 	dma_addr_t iova;
@@ -248,7 +276,6 @@ struct mtk_cam_request_stream_data {
 	struct mtk_cam_req_work frame_work;
 	struct mtk_cam_req_work meta1_done_work;
 	struct mtk_cam_req_work frame_done_work;
-	struct mtk_cam_req_work sv_work;
 	struct mtk_camsys_ctrl_state state;
 	struct mtk_cam_working_buf_entry *working_buf;
 	unsigned int no_frame_done_cnt;
@@ -282,12 +309,16 @@ enum mtk_cam_request_state {
 /**
  * mtk_cam_frame_sync: the frame sync state of one request
  *
+ * @update_ctx: a mask of the ctx which frame sync state needs to be updated
+ * @update_value: a mask of the value for pipe updating frame sync state
  * @target: the num of ctx(sensor) which should be synced
  * @on_cnt: the count of frame sync on called by ctx
  * @off_cnt: the count of frame sync off called by ctx
  * @op_lock: protect frame sync state variables
  */
 struct mtk_cam_frame_sync {
+	unsigned int update_ctx;
+	unsigned int update_value;
 	unsigned int target;
 	unsigned int on_cnt;
 	unsigned int off_cnt;
@@ -370,6 +401,18 @@ struct mtk_cam_img_working_buf_pool {
 	struct mtk_cam_working_buf_list cam_freeimglist;
 };
 
+struct mtk_cam_watchdog_data {
+	struct mtk_cam_ctx *ctx;
+	int pipe_id;
+	atomic_t watchdog_timeout_cnt;
+	atomic_t watchdog_cnt;
+	atomic_t watchdog_dumped;
+	atomic_t watchdog_dump_cnt;
+	struct work_struct watchdog_work;
+	struct completion watchdog_complete;
+	u64 watchdog_time_diff_ns;
+};
+
 struct mtk_cam_device;
 struct mtk_camsys_ctrl;
 
@@ -408,7 +451,6 @@ struct mtk_cam_ctx {
 	struct kthread_worker sensor_worker;
 	struct workqueue_struct *composer_wq;
 	struct workqueue_struct *frame_done_wq;
-	struct workqueue_struct *sv_wq;
 
 	struct completion session_complete;
 	struct completion m2m_complete;
@@ -436,6 +478,10 @@ struct mtk_cam_ctx {
 	struct mtk_cam_working_buf_list processing_img_buffer_list;
 
 	atomic_t enqueued_frame_seq_no;
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	atomic_t composed_delay_seq_no;
+	u64 composed_delay_sof_tsns;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	unsigned int composed_frame_seq_no;
 	unsigned int dequeued_frame_seq_no;
 	unsigned int component_dequeued_frame_seq_no;
@@ -454,15 +500,14 @@ struct mtk_cam_ctx {
 
 	spinlock_t streaming_lock;
 	spinlock_t first_cq_lock;
+	struct mutex cleanup_lock;
 
 	struct mtk_cam_hsf_ctrl *hsf;
-	atomic_t watchdog_timeout_cnt;
-	atomic_t watchdog_cnt;
-	atomic_t watchdog_dumped;
-	atomic_t watchdog_dump_cnt;
-	u64 watchdog_time_diff_ns;
+	/* Watchdog data */
+	spinlock_t watchdog_pipe_lock;
+	unsigned int enabled_watchdog_pipe;
 	struct timer_list watchdog_timer;
-	struct work_struct watchdog_work;
+	struct mtk_cam_watchdog_data watchdog_data[MTKCAM_SUBDEV_MAX];
 
 	/* To support debug dump */
 	struct mtkcam_ipi_config_param config_params;
@@ -483,6 +528,9 @@ struct mtk_cam_device {
 	//struct platform_device *scp_pdev; /* only for scp case? */
 	phandle rproc_phandle;
 	struct rproc *rproc_handle;
+
+	phandle rproc_ccu_phandle;
+	struct rproc *rproc_ccu_handle;
 
 	struct workqueue_struct *link_change_wq;
 	unsigned int composer_cnt;
@@ -542,7 +590,7 @@ mtk_cam_ctrl_state_get_req(struct mtk_camsys_ctrl_state *state)
 static inline int
 mtk_cam_req_get_num_s_data(struct mtk_cam_request *req, int pipe_id)
 {
-	if (pipe_id < 0 || pipe_id > MTKCAM_SUBDEV_MAX)
+	if (!p_data_check(pipe_id))
 		return 0;
 
 	return req->p_data[pipe_id].s_data_num;
@@ -555,13 +603,15 @@ mtk_cam_req_get_num_s_data(struct mtk_cam_request *req, int pipe_id)
 static inline struct mtk_cam_request_stream_data*
 mtk_cam_req_get_s_data_no_chk(struct mtk_cam_request *req, int pipe_id, int idx)
 {
+	if (!req || !p_data_check(pipe_id))
+		return NULL;
 	return &req->p_data[pipe_id].s_data[idx];
 }
 
 static inline struct mtk_cam_request_stream_data*
 mtk_cam_req_get_s_data(struct mtk_cam_request *req, int pipe_id, int idx)
 {
-	if (!req || pipe_id < 0 || pipe_id > MTKCAM_SUBDEV_MAX)
+	if (!req || !p_data_check(pipe_id))
 		return NULL;
 
 	if (idx < 0 || idx >= req->p_data[pipe_id].s_data_num)
@@ -627,7 +677,8 @@ mtk_cam_s_data_get_raw_pipe_data(struct mtk_cam_request_stream_data *s_data)
 {
 	if (!is_raw_subdev(s_data->pipe_id))
 		return NULL;
-
+	if (!raw_pipe_data_check(s_data->pipe_id))
+		return NULL;
 	return &s_data->req->raw_pipe_data[s_data->pipe_id];
 }
 
@@ -636,7 +687,8 @@ mtk_cam_s_data_get_res(struct mtk_cam_request_stream_data *s_data)
 {
 	if (s_data == NULL)
 		return NULL;
-
+	if (!raw_pipe_data_check(s_data->pipe_id))
+		return NULL;
 	if (!is_raw_subdev(s_data->pipe_id))
 		return NULL;
 
@@ -648,7 +700,8 @@ mtk_cam_s_data_get_res_feature(struct mtk_cam_request_stream_data *s_data)
 {
 	if (s_data == NULL)
 		return 0;
-
+	if (!raw_pipe_data_check(s_data->pipe_id))
+		return 0;
 	if (!is_raw_subdev(s_data->pipe_id))
 		return 0;
 
@@ -810,6 +863,8 @@ static inline void mtk_cam_fs_reset(struct mtk_cam_frame_sync *fs)
 	fs->target = 0;
 	fs->on_cnt = 0;
 	fs->off_cnt = 0;
+	fs->update_ctx = 0;
+	fs->update_value = 0;
 }
 
 static inline struct device *mtk_cam_find_raw_dev(struct mtk_cam_device *cam,
@@ -841,9 +896,9 @@ void mtk_cam_complete_sensor_hdl(struct mtk_cam_request_stream_data *s_data);
 int mtk_cam_ctx_stream_on(struct mtk_cam_ctx *ctx);
 int mtk_cam_ctx_stream_off(struct mtk_cam_ctx *ctx);
 bool watchdog_scenario(struct mtk_cam_ctx *ctx);
-void mtk_ctx_watchdog_kick(struct mtk_cam_ctx *ctx);
-void mtk_ctx_watchdog_start(struct mtk_cam_ctx *ctx, int timeout_cnt);
-void mtk_ctx_watchdog_stop(struct mtk_cam_ctx *ctx);
+void mtk_ctx_watchdog_kick(struct mtk_cam_ctx *ctx, int pipe_id);
+void mtk_ctx_watchdog_start(struct mtk_cam_ctx *ctx, int timeout_cnt, int pipe_id);
+void mtk_ctx_watchdog_stop(struct mtk_cam_ctx *ctx, int pipe_id, int ctx_streamoff);
 
 int mtk_cam_call_seninf_set_pixelmode(struct mtk_cam_ctx *ctx,
 				      struct v4l2_subdev *sd,
@@ -880,6 +935,18 @@ int mtk_cam_link_validate(struct v4l2_subdev *sd,
 			  struct media_link *link,
 			  struct v4l2_subdev_format *source_fmt,
 			  struct v4l2_subdev_format *sink_fmt);
+int mtk_cam_seninf_link_validate(struct v4l2_subdev *sd,
+			  struct media_link *link,
+			  struct v4l2_subdev_format *source_fmt,
+			  struct v4l2_subdev_format *sink_fmt);
+int mtk_cam_sv_link_validate(struct v4l2_subdev *sd,
+			  struct media_link *link,
+			  struct v4l2_subdev_format *source_fmt,
+			  struct v4l2_subdev_format *sink_fmt);
+int mtk_cam_mraw_link_validate(struct v4l2_subdev *sd,
+			  struct media_link *link,
+			  struct v4l2_subdev_format *source_fmt,
+			  struct v4l2_subdev_format *sink_fmt);
 
 struct mtk_cam_request *mtk_cam_get_req(struct mtk_cam_ctx *ctx,
 					unsigned int frame_seq_no);
@@ -898,6 +965,8 @@ int get_main_sv_pipe_id(struct mtk_cam_device *cam, int used_dev_mask);
 int get_sub_sv_pipe_id(struct mtk_cam_device *cam, int used_dev_mask);
 int get_last_sv_pipe_id(struct mtk_cam_device *cam, int used_dev_mask);
 
+int mtk_cam_dc_last_camsv(int raw_id);
+
 struct mtk_raw_device *get_master_raw_dev(struct mtk_cam_device *cam,
 					  struct mtk_raw_pipeline *pipe);
 struct mtk_raw_device *get_slave_raw_dev(struct mtk_cam_device *cam,
@@ -914,6 +983,6 @@ void isp_composer_destroy_session(struct mtk_cam_ctx *ctx);
 int PipeIDtoTGIDX(int pipe_id);
 void mstream_seamless_buf_update(struct mtk_cam_ctx *ctx,
 				struct mtk_cam_request *req, int pipe_id,
-				int previous_feature);
+				int prev_feature);
 
 #endif /*__MTK_CAM_H*/

@@ -42,7 +42,8 @@ static void mtk_inlinerotate_addon_config(struct mtk_ddp_comp *comp,
 				 union mtk_addon_config *addon_config,
 				 struct cmdq_pkt *handle)
 {
-	if (addon_config && addon_config->config_type.type == ADDON_DISCONNECT)
+	/* config inlinerot only when the first IR frame, bypass addon_connect */
+	if (addon_config)
 		return;
 
 	DDPINFO("%s+ handle:0x%x, comp->regs_pa:0x%x\n",
@@ -61,7 +62,7 @@ static void mtk_inlinerotate_addon_config(struct mtk_ddp_comp *comp,
 		comp->regs_pa + DISP_REG_INLINEROT_HEIGHT1,
 		64, ~0);
 
-	DDPINFO("comp->regs_pa:%x", comp->regs_pa);
+	DDPINFO("comp->regs_pa:%llx", comp->regs_pa);
 	DDPINFO("%s -\n", __func__);
 }
 
@@ -69,7 +70,7 @@ void mtk_inlinerotate_dump(struct mtk_ddp_comp *comp)
 {
 	void __iomem *baddr = comp->regs;
 
-	DDPDUMP("== DISP %s REGS:0x%x ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
+	DDPDUMP("== DISP %s REGS:0x%llx ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
 	DDPDUMP("DISP_REG_DISPSYS_SHADOW_CTRL  0x%08x: 0x%08x\n",
 		DISP_REG_DISPSYS_SHADOW_CTRL,
 		readl(baddr + DISP_REG_DISPSYS_SHADOW_CTRL));
@@ -85,6 +86,9 @@ void mtk_inlinerotate_dump(struct mtk_ddp_comp *comp)
 	DDPDUMP("DISP_REG_INLINEROT_HEIGHT1  0x%08x: 0x%08x\n",
 		DISP_REG_INLINEROT_HEIGHT1,
 		readl(baddr + DISP_REG_INLINEROT_HEIGHT1));
+	DDPDUMP("DISP_REG_INLINEROT_WDONE  0x%08x: 0x%08x\n",
+		DISP_REG_INLINEROT_WDONE,
+		readl(baddr + DISP_REG_INLINEROT_WDONE));
 }
 
 int mtk_inlinerotate_analysis(struct mtk_ddp_comp *comp)

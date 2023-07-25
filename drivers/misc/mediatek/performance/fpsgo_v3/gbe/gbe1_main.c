@@ -85,7 +85,7 @@ static void gbe_ctrl2comp_fstb_poll(struct hlist_head *list)
 	struct hlist_node *t;
 	int tid = 0;
 	int tgid = 0;
-	int boost = 0;
+	int boost = 0, should_boost;
 
 	if (!gbe_is_enable()) {
 		gbe_boost(KIR_GBE1, 0);
@@ -120,10 +120,18 @@ static void gbe_ctrl2comp_fstb_poll(struct hlist_head *list)
 			if (!sib)
 				continue;
 
+			if (boost)
+				break;
+
 			get_task_struct(sib);
 
 			hlist_for_each_entry(gbe_list_iter,
 					&gbe_boost_list, hlist) {
+
+				should_boost = 1;
+
+				if (boost)
+					break;
 
 				if ((!strncmp("*",
 					gbe_list_iter->process_name, 1) ||
@@ -132,10 +140,56 @@ static void gbe_ctrl2comp_fstb_poll(struct hlist_head *list)
 					!strncmp(sib->comm,
 					gbe_list_iter->thread_name, 15)) {
 
+					if (fpsgo_task_sched_runtime(sib) ==
+							gbe_list_iter->last_task_runtime &&
+							gbe_list_iter->tid == sib->pid) {
+
+						gbe_list_iter->last_task_runtime = 0;
+						continue;
+					}
+
 					gbe_list_iter->pid = tgid;
 					gbe_list_iter->tid = sib->pid;
 					gbe_list_iter->now_task_runtime =
 						fpsgo_task_sched_runtime(sib);
+
+					gbe_list_iter->cur_ts = gbe_get_time();
+					gbe_list_iter->runtime_percent =
+						1000ULL *
+#if BITS_PER_LONG == 32
+						div_u64((gbe_list_iter->now_task_runtime -
+						gbe_list_iter->last_task_runtime),
+						(gbe_list_iter->cur_ts - gbe_list_iter->last_ts));
+#else
+					(gbe_list_iter->now_task_runtime -
+					 gbe_list_iter->last_task_runtime) /
+						(gbe_list_iter->cur_ts - gbe_list_iter->last_ts);
+#endif
+					if (gbe_list_iter->now_task_runtime <
+						gbe_list_iter->last_task_runtime)
+						gbe_list_iter->runtime_percent = 0;
+
+					if (gbe_list_iter->runtime_percent > 0)
+						gbe_trace_count(gbe_list_iter->tid, 0,
+								gbe_list_iter->runtime_percent,
+								"runtime_percent");
+
+					if (gbe_list_iter->last_task_runtime == 0 &&
+						gbe_list_iter->boost_cnt)
+						should_boost = 0;
+
+					gbe_list_iter->last_task_runtime =
+						gbe_list_iter->now_task_runtime;
+					gbe_list_iter->last_ts = gbe_list_iter->cur_ts;
+
+					if (gbe_list_iter->runtime_percent >
+						gbe_list_iter->runtime_thrs &&
+						should_boost) {
+						boost = 1;
+						gbe_list_iter->boost_cnt++;
+						gbe_trace_count(gbe_list_iter->tid,
+							0, 1, "gbe_boost");
+					}
 				}
 			}
 
@@ -145,39 +199,6 @@ static void gbe_ctrl2comp_fstb_poll(struct hlist_head *list)
 		put_task_struct(tsk);
 
 		rcu_read_unlock();
-	}
-
-	hlist_for_each_entry(gbe_list_iter, &gbe_boost_list, hlist) {
-
-		gbe_list_iter->cur_ts = gbe_get_time();
-
-		gbe_list_iter->runtime_percent =
-			1000ULL *
-#if BITS_PER_LONG == 32
-			div_u64((gbe_list_iter->now_task_runtime -
-			 gbe_list_iter->last_task_runtime),
-			(gbe_list_iter->cur_ts - gbe_list_iter->last_ts));
-#else
-			(gbe_list_iter->now_task_runtime -
-			 gbe_list_iter->last_task_runtime) /
-			(gbe_list_iter->cur_ts - gbe_list_iter->last_ts);
-#endif
-
-		if (gbe_list_iter->runtime_percent)
-			gbe_trace_count(gbe_list_iter->tid, 0,
-				gbe_list_iter->runtime_percent,
-				"runtime_percent");
-
-		gbe_list_iter->last_task_runtime =
-			gbe_list_iter->now_task_runtime;
-		gbe_list_iter->last_ts = gbe_list_iter->cur_ts;
-
-		if (gbe_list_iter->runtime_percent >
-				gbe_list_iter->runtime_thrs) {
-			boost = 1;
-			gbe_list_iter->boost_cnt++;
-			gbe_trace_count(gbe_list_iter->tid, 0, 1, "gbe_boost");
-		}
 	}
 
 	hlist_for_each_entry_safe(iter, t,
@@ -240,11 +261,20 @@ void gbe_notify_fstb_poll(struct hlist_head *list)
 		(struct GBE_NOTIFIER_PUSH_TAG *)
 		kmalloc(sizeof(struct GBE_NOTIFIER_PUSH_TAG), GFP_ATOMIC);
 
+	if (!vpPush)
+		return;
+
 	if (!g_psNotifyWorkQueue) {
 		kfree(vpPush);
 		return;
 	}
 
+	mutex_lock(&gbe_list_lock);
+	if (!hlist_empty(&gbe_fstb_tid_list)) {
+		kfree(vpPush);
+		mutex_unlock(&gbe_list_lock);
+		return;
+	}
 
 	hlist_for_each_entry(fstb_iter, list, hlist) {
 
@@ -258,6 +288,7 @@ void gbe_notify_fstb_poll(struct hlist_head *list)
 
 	vpPush->ePushType = GBE_NOTIFIER_RTID;
 	vpPush->list = &gbe_fstb_tid_list;
+	mutex_unlock(&gbe_list_lock);
 
 	INIT_WORK(&vpPush->sWork, gbe_notifier_wq_cb);
 	queue_work(g_psNotifyWorkQueue, &vpPush->sWork);
@@ -344,19 +375,27 @@ static ssize_t gbe_enable1_store(struct kobject *kobj,
 		struct kobj_attribute *attr,
 		const char *buf, size_t count)
 {
-	char acBuffer[GBE_SYSFS_MAX_BUFF_SIZE];
+	char *acBuffer;
 	int arg;
 	int val = 0;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
 
 	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
 		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
 			if (kstrtoint(acBuffer, 0, &arg) == 0)
 				val = arg;
-			else
+			else {
+				kfree(acBuffer);
 				return count;
+			}
 		}
 	}
 
+	kfree(acBuffer);
 	enable_gbe(val);
 
 	return count;
@@ -369,9 +408,14 @@ static ssize_t gbe_boost_list1_show(struct kobject *kobj,
 	char *buf)
 {
 	struct GBE_BOOST_LIST *gbe_list_iter = NULL;
-	char temp[GBE_SYSFS_MAX_BUFF_SIZE] = "";
+	char *temp;
 	int pos = 0;
 	int length;
+
+	temp = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!temp)
+		return -ENOMEM;
 
 	length = scnprintf(temp + pos, GBE_SYSFS_MAX_BUFF_SIZE - pos,
 			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -399,17 +443,25 @@ static ssize_t gbe_boost_list1_show(struct kobject *kobj,
 		pos += length;
 	}
 
-	return scnprintf(buf, PAGE_SIZE, "%s", temp);
+	length = scnprintf(buf, PAGE_SIZE, "%s", temp);
+	kfree(temp);
+
+	return length;
 }
 
 static ssize_t gbe_boost_list1_store(struct kobject *kobj,
 		struct kobj_attribute *attr,
 		const char *buf, size_t count)
 {
-	char acBuffer[GBE_SYSFS_MAX_BUFF_SIZE];
+	char *acBuffer;
 	int ret = count;
 	char proc_name[16], thrd_name[16];
 	unsigned long long runtime_thrs;
+
+	acBuffer = kcalloc(GBE_SYSFS_MAX_BUFF_SIZE, sizeof(char),
+				GFP_KERNEL);
+	if (!acBuffer)
+		return -ENOMEM;
 
 	if ((count > 0) && (count < GBE_SYSFS_MAX_BUFF_SIZE)) {
 		if (scnprintf(acBuffer, GBE_SYSFS_MAX_BUFF_SIZE, "%s", buf)) {
@@ -428,6 +480,7 @@ static ssize_t gbe_boost_list1_store(struct kobject *kobj,
 	}
 
 err:
+	kfree(acBuffer);
 	return ret;
 }
 

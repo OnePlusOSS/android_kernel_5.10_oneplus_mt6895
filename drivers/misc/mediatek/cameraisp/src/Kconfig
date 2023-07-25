@@ -6,3 +6,11 @@ config MTK_CAMERA_ISP_RAW_SUPPORT
 	  processes and enhances the image raw data
 	  from the imgsensor.
 	  Disable if it is not supported or not wanted.
+
+config MTK_ISP_IRQ_CONTROLLER
+	tristate "[ISP] Image Signal Processor Irq Controller"
+	help
+	  Enable to build camera isp p1 driver which
+	  processes and enhances the image raw data
+	  from the imgsensor.
+	  Disable if it is not supported or not wanted.

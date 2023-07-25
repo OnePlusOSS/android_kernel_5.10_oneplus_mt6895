@@ -92,7 +92,6 @@ static struct i2c_driver _lcm_i2c_driver = {
  *****************************************************************************/
 
 #ifdef VENDOR_EDIT
-// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 extern void lcd_queue_load_tp_fw(void);
 #endif /*VENDOR_EDIT*/
 
@@ -693,7 +692,6 @@ static int jdi_prepare(struct drm_panel *panel)
 #endif
 
 #ifdef VENDOR_EDIT
-	// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 	lcd_queue_load_tp_fw();
 #endif
 
@@ -1044,6 +1042,11 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id_hfp(connector, mode);
 
+	if (m == NULL) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return -1;
+	}
+
 	if (drm_mode_vrefresh(m) == 60) {
 		ext->params = &ext_params;
 #if HFP_SUPPORT
@@ -1113,6 +1116,11 @@ static int mode_switch(struct drm_panel *panel,
 	struct drm_display_mode *m = get_mode_by_id_hfp(connector, dst_mode);
 
 	pr_info("%s cur_mode = %d dst_mode %d\n", __func__, cur_mode, dst_mode);
+
+	if (m == NULL) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return -1;
+	}
 
 	if (drm_mode_vrefresh(m) == 60) { /* 60 switch to 120 */
 		mode_switch_to_60(panel);

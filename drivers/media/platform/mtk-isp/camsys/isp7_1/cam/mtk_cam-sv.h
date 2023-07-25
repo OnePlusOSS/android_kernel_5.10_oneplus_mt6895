@@ -27,6 +27,8 @@
 #define CAMSV_EXP_ORDER_SHIFT 20
 #define CAMSV_GROUP_AMOUNT 4
 
+#define CAMSV_CHECK_TS 0
+
 enum mtkcam_sv_hw_path_control {
 	MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW = MTKCAM_IPI_HW_PATH_OFFLINE_M2M + 2,
 	MTKCAM_SV_SPECIAL_SCENARIO_EXT_ISP = MTKCAM_IPI_HW_PATH_OFFLINE_M2M + 3,
@@ -216,6 +218,7 @@ struct mtk_camsv_device {
 	atomic_t is_fifo_overflow;
 
 	unsigned int sof_count;
+	u64 last_sof_time_ns;
 	unsigned int frame_wait_to_process;
 	struct notifier_block notifier_blk;
 	unsigned int is_enqueued;
@@ -247,7 +250,6 @@ struct mtk_camsv_frame_params {
 	u64 sensor_img_tstamp[2];
 	u64 sensor_meta_tstamp[3];
 };
-
 static inline bool mtk_camsv_is_yuv_format(unsigned int fmt)
 {
 	bool ret = false;
@@ -297,9 +299,11 @@ unsigned int mtk_cam_sv_xsize_cal(
 int mtk_cam_sv_tg_config(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_top_config(
-	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
+	struct mtk_camsv_device *dev,
+	struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_dmao_config(struct mtk_camsv_device *dev,
-	struct mtkcam_ipi_input_param *cfg_in_param, int hw_scen, int raw_imgo_stride);
+	struct mtkcam_ipi_input_param *cfg_in_param, int hw_scen,
+	int raw_imgo_stride);
 int mtk_cam_sv_fbc_config(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 
@@ -324,19 +328,21 @@ int mtk_cam_sv_enquehwbuf(struct mtk_camsv_device *dev,
 bool mtk_cam_sv_finish_buf(struct mtk_cam_request_stream_data *s_data);
 int mtk_cam_find_sv_dev_index(struct mtk_cam_ctx *ctx, unsigned int idx);
 int mtk_cam_sv_update_all_buffer_ts(struct mtk_cam_ctx *ctx, u64 ts_ns);
-int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx);
+int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx, bool is_check_ts);
 int mtk_cam_sv_apply_next_buffer(struct mtk_cam_ctx *ctx, unsigned int pipe_id, u64 ts_ns);
 int mtk_cam_sv_rgbw_apply_next_buffer(
 	struct mtk_cam_request_stream_data *s_data);
 int mtk_cam_sv_apply_switch_buffers(struct mtk_cam_ctx *ctx);
 int mtk_cam_sv_write_rcnt(struct mtk_cam_ctx *ctx, unsigned int pipe_id);
 int mtk_cam_sv_write_rcnt_sv_dev(struct mtk_camsv_device *camsv_dev);
+bool mtk_cam_sv_is_zero_fbc_cnt(struct mtk_cam_ctx *ctx, unsigned int pipe_id);
 int mtk_cam_sv_cal_cfg_info(struct mtk_cam_ctx *ctx,
 	const struct v4l2_format *img_fmt, struct mtk_camsv_frame_params *params);
 int mtk_cam_sv_setup_cfg_info(struct mtk_camsv_device *dev,
 	struct mtk_cam_request_stream_data *s_data);
 int mtk_cam_sv_frame_no_inner(struct mtk_camsv_device *dev);
 int mtk_cam_sv_fbc(struct mtk_camsv_device *dev);
+void mtk_cam_sv_apply_frame_setting(struct mtk_cam_request_stream_data *s_data);
 #ifdef CAMSYS_TF_DUMP_71_1
 int mtk_camsv_translation_fault_callback(int port, dma_addr_t mva, void *data);
 #endif

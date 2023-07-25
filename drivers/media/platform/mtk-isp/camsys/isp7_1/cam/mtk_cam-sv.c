@@ -26,6 +26,7 @@
 #include "mtk_cam-pool.h"
 #include "mtk_cam-sv-regs.h"
 #include "mtk_cam-sv.h"
+#include "mtk_cam-regs.h"
 #include "mtk_camera-v4l2-controls.h"
 #include "mtk_camera-videodev2.h"
 
@@ -176,6 +177,8 @@ static int mtk_camsv_sd_subscribe_event(struct v4l2_subdev *subdev,
 		return v4l2_event_subscribe(fh, sub, 0, NULL);
 	case V4L2_EVENT_REQUEST_DRAINED:
 		return v4l2_event_subscribe(fh, sub, 0, NULL);
+	case V4L2_EVENT_EOS:
+		return v4l2_event_subscribe(fh, sub, 0, NULL);
 	default:
 		return -EINVAL;
 	}
@@ -214,6 +217,12 @@ static int mtk_camsv_sd_s_stream(struct v4l2_subdev *sd, int enable)
 			pipe->enabled_dmas |= pipe->vdev_nodes[i].desc.dma_port;
 		}
 	} else {
+		for (i = 0; i < ARRAY_SIZE(sv->devs); i++) {
+			if (pipe->enabled_sv & 1 << i) {
+				dev_info(sv->cam_dev, "%s: power off sv (%d)\n", __func__, i);
+				pm_runtime_put_sync(sv->devs[i]);
+			}
+		}
 		pipe->enabled_sv = 0;
 		pipe->enabled_dmas = 0;
 	}
@@ -385,6 +394,10 @@ static int mtk_camsv_set_fmt(struct v4l2_subdev *sd,
 	}
 
 	stream_data = mtk_cam_req_get_s_data_no_chk(cam_req, pipe->id, 0);
+	if (!stream_data) {
+		dev_info(cam->dev, "stream data is null\n");
+		return 0;
+	}
 	stream_data->pad_fmt_update |= (1 << fmt->pad);
 	stream_data->pad_fmt[fmt->pad] = *fmt;
 
@@ -453,7 +466,7 @@ static const struct v4l2_subdev_video_ops mtk_camsv_subdev_video_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops mtk_camsv_subdev_pad_ops = {
-	.link_validate = mtk_cam_link_validate,
+	.link_validate = mtk_cam_sv_link_validate,
 	.init_cfg = mtk_camsv_init_cfg,
 	.set_fmt = mtk_camsv_set_fmt,
 	.get_fmt = mtk_camsv_get_fmt,
@@ -716,6 +729,90 @@ static const struct mtk_cam_format_desc sv_stream_out_fmts[] = {
 			.pixelformat = V4L2_PIX_FMT_SRGGB14,
 		},
 	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SBGGR10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SBGGR12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SBGGR14,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGBRG10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGBRG12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGBRG14,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGRBG10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGRBG12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SGRBG14,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SRGGB10,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SRGGB12,
+		},
+	},
+	{
+		.vfmt.fmt.pix_mp = {
+			.width = SV_IMG_MAX_WIDTH,
+			.height = SV_IMG_MAX_HEIGHT,
+			.pixelformat = V4L2_PIX_FMT_SRGGB14,
+		},
+	},
 };
 
 #define MTK_CAMSV_TOTAL_CAPTURE_QUEUES 1
@@ -840,7 +937,7 @@ int mtk_cam_sv_pipeline_config(
 {
 	struct mtk_camsv_pipeline *sv_pipe = ctx->sv_pipe[idx];
 	struct mtk_camsv *sv = sv_pipe->sv;
-	unsigned int i;
+	unsigned int i, j;
 	int ret;
 
 	/* reset pm_runtime during streaming dynamic change */
@@ -859,15 +956,15 @@ int mtk_cam_sv_pipeline_config(
 
 	for (i = 0; i < ARRAY_SIZE(sv->devs); i++)
 		if (sv_pipe->enabled_sv & 1<<i)
-			pm_runtime_get_sync(sv->devs[i]);
+			ret = pm_runtime_get_sync(sv->devs[i]);
 
 	if (ret < 0) {
 		dev_dbg(sv->cam_dev,
 			"failed at pm_runtime_get_sync: %s\n",
 			dev_driver_string(sv->devs[i]));
-		for (i = i-1; i >= 0; i--)
-			if (sv_pipe->enabled_sv & 1<<i)
-				pm_runtime_put_sync(sv->devs[i]);
+		for (j = 0; j < i; j++)
+			if (sv_pipe->enabled_sv & 1<<j)
+				pm_runtime_put_sync(sv->devs[j]);
 		return ret;
 	}
 
@@ -1021,11 +1118,12 @@ unsigned int mtk_cam_sv_pak_sel(unsigned int pixel_fmt,
 	return pak.Raw;
 }
 
-unsigned int mtk_cam_sv_xsize_cal(struct mtkcam_ipi_input_param *cfg_in_param)
+unsigned int mtk_cam_sv_xsize_cal(
+	struct mtkcam_ipi_input_param *cfg_in_param)
 {
 
-	unsigned int size;
-	unsigned int divisor;
+	unsigned int size = 0;
+	unsigned int divisor = 0;
 
 	switch (cfg_in_param->fmt) {
 	case V4L2_PIX_FMT_SBGGR8:
@@ -1327,7 +1425,8 @@ int mtk_cam_sv_dmao_config(
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
 		if (raw_imgo_stride > mtk_cam_sv_xsize_cal(cfg_in_param)) {
 			dev_info(dev->dev, "Special feature:0x%x, raw/sv stride = %d(THIS)/%d\n",
-				hw_scen, raw_imgo_stride, mtk_cam_sv_xsize_cal(cfg_in_param));
+				hw_scen, raw_imgo_stride,
+				mtk_cam_sv_xsize_cal(cfg_in_param));
 			CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_STRIDE,
 				raw_imgo_stride);
 		}
@@ -1342,7 +1441,7 @@ int mtk_cam_sv_dmao_config(
 	CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_CROP, 0);
 
 	/* imgo con */
-	if (dev->id >= 0 && dev->id < 10) {
+	if (dev->id < 10) {
 		CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_CON0, 0x10000300);
 		CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_CON1, 0x00C00060);
 		CAMSV_WRITE_REG(dev->base + REG_CAMSV_IMGO_CON2, 0x01800120);
@@ -1596,18 +1695,40 @@ int mtk_cam_sv_enquehwbuf(
 int mtk_cam_get_sv_pixel_mode(struct mtk_cam_ctx *ctx, unsigned int idx)
 {
 	struct v4l2_format *img_fmt;
+	int pix_mode = 0;
 
 	img_fmt = &ctx->sv_pipe[idx]
 		->vdev_nodes[MTK_CAMSV_MAIN_STREAM_OUT-MTK_CAMSV_SINK_NUM].active_fmt;
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (mtk_camsv_is_yuv_format(img_fmt->fmt.pix_mp.pixelformat))
+		pix_mode = 0;
+	else if ((img_fmt->fmt.pix_mp.width % 8) == 0)
+		pix_mode = 3;
+	else if ((img_fmt->fmt.pix_mp.width % 4) == 0)
+		pix_mode = 2;
+	else if ((img_fmt->fmt.pix_mp.width % 2) == 0)
+		pix_mode = 1;
+	else
+		pix_mode = 0;
+
+	return pix_mode;
+#else
 	return (mtk_camsv_is_yuv_format(img_fmt->fmt.pix_mp.pixelformat)) ? 0 : 3;
+#endif
 }
 
 int mtk_cam_sv_write_rcnt(struct mtk_cam_ctx *ctx, unsigned int pipe_id)
 {
 	struct device *dev_sv;
-	dev_sv = ctx->cam->sv.devs[pipe_id - MTKCAM_SUBDEV_CAMSV_START];
-
+	if (sv_devs_check(pipe_id - MTKCAM_SUBDEV_CAMSV_START)) {
+		dev_sv = ctx->cam->sv.devs[pipe_id - MTKCAM_SUBDEV_CAMSV_START];
+	} else {
+		dev_info(ctx->cam->dev,
+		"[%s]pipe_id - MTKCAM_SUBDEV_CAMSV_START out of range\n"
+		, __func__);
+		return -1;
+	}
 	return mtk_cam_sv_write_rcnt_sv_dev(dev_get_drvdata(dev_sv));
 }
 
@@ -1621,6 +1742,26 @@ int mtk_cam_sv_write_rcnt_sv_dev(struct mtk_camsv_device *camsv_dev)
 	CAMSV_WRITE_REG(camsv_dev->base + REG_CAMSV_TOP_FBC_CNT_SET, reg.Raw);
 
 	return ret;
+}
+
+bool mtk_cam_sv_is_zero_fbc_cnt(struct mtk_cam_ctx *ctx,
+	unsigned int pipe_id)
+{
+	bool result = false;
+	struct mtk_camsv_device *camsv_dev;
+	if (sv_devs_check(pipe_id - MTKCAM_SUBDEV_CAMSV_START)) {
+		camsv_dev =
+			dev_get_drvdata(ctx->cam->sv.devs[pipe_id - MTKCAM_SUBDEV_CAMSV_START]);
+	} else {
+		dev_info(ctx->cam->dev, "[%s]pipe_id - MTKCAM_SUBDEV_CAMSV_START out of range\n"
+		, __func__);
+		return false;
+	}
+	if (CAMSV_READ_BITS(camsv_dev->base + REG_CAMSV_FBC_IMGO_CTL2,
+			CAMSV_FBC_IMGO_CTL2, IMGO_FBC_CNT) == 0)
+		result = true;
+
+	return result;
 }
 
 int mtk_cam_sv_cal_cfg_info(struct mtk_cam_ctx *ctx,
@@ -1711,6 +1852,42 @@ int mtk_cam_sv_fbc(struct mtk_camsv_device *dev)
 	return (fbc_imgo_ctl2 & 0x1FF0000) >> 16;
 }
 
+void mtk_cam_sv_apply_frame_setting(
+	struct mtk_cam_request_stream_data *s_data)
+{
+	struct mtk_cam_ctx *ctx;
+	struct mtk_camsv_device *camsv_dev;
+	unsigned int seq_no;
+	dma_addr_t base_addr;
+
+	ctx = mtk_cam_s_data_get_ctx(s_data);
+	if (!ctx) {
+		pr_debug("%s: ctx can't be null\n", __func__);
+		return;
+	}
+	if (sv_pipe_check(s_data->pipe_id - MTKCAM_SUBDEV_CAMSV_START)) {
+		camsv_dev = get_camsv_dev(ctx->cam,
+			&ctx->cam->sv.pipelines[s_data->pipe_id - MTKCAM_SUBDEV_CAMSV_START]);
+	} else {
+		dev_info(ctx->cam->dev,
+		"[%s]s_data->pipe_id - MTKCAM_SUBDEV_CAMSV_START out of range\n", __func__);
+		return;
+	}
+	if (s_data->req->pipe_used & (1 << s_data->pipe_id)) {
+		seq_no = s_data->frame_seq_no;
+		base_addr = s_data->sv_frame_params.img_out.buf[0][0].iova;
+		mtk_cam_sv_setup_cfg_info(camsv_dev, s_data);
+		mtk_cam_sv_enquehwbuf(camsv_dev, base_addr, seq_no);
+		mtk_cam_sv_vf_on(camsv_dev, 1);
+		if (watchdog_scenario(ctx))
+			mtk_ctx_watchdog_start(ctx, 4, s_data->pipe_id);
+	} else {
+		mtk_cam_sv_vf_on(camsv_dev, 0);
+		if (watchdog_scenario(ctx))
+			mtk_ctx_watchdog_stop(ctx, s_data->pipe_id, 0);
+	}
+}
+
 int mtk_cam_find_sv_dev_index(
 	struct mtk_cam_ctx *ctx,
 	unsigned int idx)
@@ -1745,7 +1922,7 @@ int mtk_cam_sv_update_all_buffer_ts(struct mtk_cam_ctx *ctx, u64 ts_ns)
 	return 1;
 }
 
-int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx)
+int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx, bool is_check_ts)
 {
 	unsigned int seq_no;
 	dma_addr_t base_addr;
@@ -1770,10 +1947,11 @@ int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx)
 		}
 		buf_entry = list_first_entry(&ctx->sv_using_buffer_list[i].list,
 				struct mtk_camsv_working_buf_entry, list_entry);
+
+#if STAGGER_CQ_LAST_SOF == 0
 		if (mtk_cam_sv_is_vf_on(camsv_dev) &&
-			(ctx->used_raw_num != 0)) {
-			if (buf_entry->is_stagger == 0 ||
-				(buf_entry->is_stagger == 1 && STAGGER_CQ_LAST_SOF == 0)) {
+			(ctx->used_raw_num != 0) && is_check_ts) {
+			if (buf_entry->is_stagger == 1) {
 				if ((buf_entry->ts_sv == 0) ||
 					((buf_entry->ts_sv < buf_entry->ts_raw) &&
 					((buf_entry->ts_raw - buf_entry->ts_sv) > 10000000))) {
@@ -1786,6 +1964,7 @@ int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx)
 				}
 			}
 		}
+#endif
 		list_del(&buf_entry->list_entry);
 		ctx->sv_using_buffer_list[i].cnt--;
 		spin_unlock(&ctx->sv_using_buffer_list[i].lock);
@@ -1807,15 +1986,10 @@ int mtk_cam_sv_apply_all_buffers(struct mtk_cam_ctx *ctx)
 					!mtk_cam_is_stagger(ctx) && !mtk_cam_is_stagger_m2m(ctx) &&
 					!mtk_cam_is_time_shared(ctx) && !mtk_cam_is_mstream(ctx))
 					mtk_cam_sv_write_rcnt(ctx, ctx->sv_pipe[i]->id);
-			} else {
-				if (ctx->sv_wq)
-					queue_work(ctx->sv_wq, &buf_entry->s_data->sv_work.work);
-			}
-		} else {
-			/* under seamless/sat case, to turn off vf */
-			if (ctx->sv_wq)
-				queue_work(ctx->sv_wq, &buf_entry->s_data->sv_work.work);
-		}
+			} else
+				mtk_cam_sv_apply_frame_setting(buf_entry->s_data);
+		} else
+			mtk_cam_sv_apply_frame_setting(buf_entry->s_data);
 	}
 
 	return 1;
@@ -1878,16 +2052,10 @@ int mtk_cam_sv_apply_next_buffer(struct mtk_cam_ctx *ctx,
 						!mtk_cam_is_time_shared(ctx) &&
 						!mtk_cam_is_mstream(ctx))
 						mtk_cam_sv_write_rcnt(ctx, ctx->sv_pipe[i]->id);
-				} else {
-					if (ctx->sv_wq)
-						queue_work(ctx->sv_wq,
-							&buf_entry->s_data->sv_work.work);
-				}
-			} else {
-				/* under seamless/sat case, to turn off vf */
-				if (ctx->sv_wq)
-					queue_work(ctx->sv_wq, &buf_entry->s_data->sv_work.work);
-			}
+				} else
+					mtk_cam_sv_apply_frame_setting(buf_entry->s_data);
+			} else
+				mtk_cam_sv_apply_frame_setting(buf_entry->s_data);
 			break;
 		}
 	}
@@ -1905,7 +2073,8 @@ int mtk_cam_sv_rgbw_apply_next_buffer(
 	int i, ret = 0;
 
 	for (i = MTKCAM_SUBDEV_CAMSV_START; i < MTKCAM_SUBDEV_CAMSV_END; i++) {
-		if (ctx->pipe->enabled_raw & (1 << i)) {
+		if ((ctx->pipe->enabled_raw & (1 << i))
+		&& sv_pipe_check(i - MTKCAM_SUBDEV_CAMSV_START)) {
 			camsv_dev = get_camsv_dev(
 				ctx->cam, &ctx->cam->sv.pipelines[i - MTKCAM_SUBDEV_CAMSV_START]);
 			base_addr = s_data->sv_frame_params.img_out.buf[0][0].iova;
@@ -1977,8 +2146,14 @@ int mtk_cam_sv_dev_config(
 	int ret, pad_idx;
 	int cfg_pixel_mode = pixelmode;
 	int stride;
+	int user_ctl_idx;
 
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
+		if (!ctx->pipe) {
+			dev_info(dev, "%s failed, ctx->pipe is null", __func__);
+			return -EINVAL;
+		}
+
 		if (hw_scen & (1 << MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW)) {
 			img_fmt = &ctx->pipe->vdev_nodes[
 				MTK_RAW_MAIN_STREAM_SV_1_OUT - MTK_RAW_SINK_NUM].active_fmt;
@@ -2017,14 +2192,13 @@ int mtk_cam_sv_dev_config(
 			pad_idx = PAD_SRC_RAW0;
 			mf = &ctx->pipe->cfg[MTK_RAW_SINK].mbus_fmt;
 		}
-		/* Use pixmode from raw pad */
-		mtk_cam_seninf_get_pixelmode(ctx->seninf, pad_idx, &cfg_pixel_mode);
 	} else {
-		img_fmt = &ctx->sv_pipe[idx]
+		user_ctl_idx = idx % MAX_SV_PIPES_PER_STREAM;
+		img_fmt = &ctx->sv_pipe[user_ctl_idx]
 			->vdev_nodes[MTK_CAMSV_MAIN_STREAM_OUT-MTK_CAMSV_SINK_NUM].active_fmt;
 		size_img_fmt = img_fmt;
-		pad_idx = ctx->sv_pipe[idx]->seninf_padidx;
-		mf = &ctx->sv_pipe[idx]->cfg[MTK_CAMSV_SINK].mbus_fmt;
+		pad_idx = ctx->sv_pipe[user_ctl_idx]->seninf_padidx;
+		mf = &ctx->sv_pipe[user_ctl_idx]->cfg[MTK_CAMSV_SINK].mbus_fmt;
 	}
 
 	/* Update cfg_in_param */
@@ -2041,11 +2215,11 @@ int mtk_cam_sv_dev_config(
 	stride = img_fmt->fmt.pix_mp.plane_fmt[0].bytesperline;
 	if (mtk_cam_is_ext_isp_yuv(ctx)) {
 		dev_info(dev, "yuv pipeline str:%d feature:%d\n",
-		stride, ctx->pipe->feature_active);
+		stride, (ctx->pipe) ? ctx->pipe->feature_active : 0);
 	}
 	dev_info(dev, "sink pad code:0x%x camsv's imgo w/h/stride:%d/%d/%d feature:%d\n", mf->code,
 		cfg_in_param.in_crop.s.w, cfg_in_param.in_crop.s.h,
-		stride, (ctx->used_raw_num) ? ctx->pipe->feature_active : 0);
+		stride, (ctx->used_raw_num && ctx->pipe) ? ctx->pipe->feature_active : 0);
 	cfg_in_param.raw_pixel_id = mtk_cam_get_sensor_pixel_id(mf->code);
 	cfg_in_param.subsample = 0;
 	cfg_in_param.fmt = img_fmt->fmt.pix_mp.pixelformat;
@@ -2057,12 +2231,18 @@ int mtk_cam_sv_dev_config(
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
 		pm_runtime_get_sync(cam->sv.devs[idx]);
 	} else {
-		ret = mtk_cam_sv_pipeline_config(ctx, idx, &cfg_in_param);
+		user_ctl_idx = idx % MAX_SV_PIPES_PER_STREAM;
+		ret = mtk_cam_sv_pipeline_config(ctx, user_ctl_idx, &cfg_in_param);
 		if (ret)
 			return ret;
 	}
 
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
+		if (!ctx->pipe) {
+			dev_info(dev, "%s failed, ctx->pipe is null", __func__);
+			return -EINVAL;
+		}
+
 		dev_sv = cam->sv.devs[idx];
 		if (dev_sv == NULL) {
 			dev_dbg(dev, "config camsv device not found\n");
@@ -2075,7 +2255,8 @@ int mtk_cam_sv_dev_config(
 		camsv_dev->pipeline->exp_order = exp_order;
 		camsv_dev->sof_count = 0;
 	} else {
-		dev_sv = mtk_cam_find_sv_dev(cam, ctx->used_sv_dev[idx]);
+		user_ctl_idx = idx % MAX_SV_PIPES_PER_STREAM;
+		dev_sv = mtk_cam_find_sv_dev(cam, ctx->used_sv_dev[user_ctl_idx]);
 		if (dev_sv == NULL) {
 			dev_dbg(dev, "config camsv device not found\n");
 			return -EINVAL;
@@ -2089,6 +2270,7 @@ int mtk_cam_sv_dev_config(
 		camsv_dev->pipeline->hw_scen = hw_scen;
 		camsv_dev->pipeline->master_pipe_id = 0;
 		camsv_dev->pipeline->exp_order = 0;
+		camsv_dev->sof_count = 0;
 	}
 
 	/* reset enqueued status */
@@ -2125,6 +2307,11 @@ int mtk_cam_sv_dev_stream_on(
 	int ret = 0;
 
 	if (hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO) {
+		//CAMSV_PIPELINE_NUM 16
+		if (idx >= CAMSV_PIPELINE_NUM) {
+			dev_info(dev, "index is too big\n");
+			return -1;
+		}
 		dev_sv = cam->sv.devs[idx];
 		if (dev_sv == NULL) {
 			dev_dbg(dev, "stream on camsv device not found\n");
@@ -2133,6 +2320,10 @@ int mtk_cam_sv_dev_stream_on(
 		camsv_dev = dev_get_drvdata(dev_sv);
 		camsv_dev->is_enqueued = 1;
 	} else {
+		if (idx >= MAX_SV_PIPES_PER_STREAM) {
+			dev_info(dev, "user control index is too big\n");
+			return -1;
+		}
 		dev_sv = mtk_cam_find_sv_dev(cam, ctx->used_sv_dev[idx]);
 		if (dev_sv == NULL) {
 			dev_dbg(dev, "stream on camsv device not found\n");
@@ -2146,17 +2337,25 @@ int mtk_cam_sv_dev_stream_on(
 			}
 	}
 
-	if (streaming)
+	if (streaming) {
 		ret = mtk_cam_sv_top_enable(camsv_dev);
+		if (watchdog_scenario(ctx) && camsv_dev->is_enqueued &&
+			!(hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO))
+			mtk_ctx_watchdog_start(ctx, 4,
+				camsv_dev->id + MTKCAM_SUBDEV_CAMSV_START);
+	}
 	else {
 		/* reset enqueued status */
 		camsv_dev->is_enqueued = 0;
+		if (watchdog_scenario(ctx) &&
+			!(hw_scen & MTK_CAMSV_SUPPORTED_SPECIAL_HW_SCENARIO))
+			mtk_ctx_watchdog_stop(ctx,
+				camsv_dev->id + MTKCAM_SUBDEV_CAMSV_START, 1);
 
 		ret = mtk_cam_sv_top_disable(camsv_dev) ||
 			mtk_cam_sv_fbc_disable(camsv_dev) ||
 			mtk_cam_sv_dmao_disable(camsv_dev) ||
 			mtk_cam_sv_tg_disable(camsv_dev);
-		pm_runtime_put_sync(camsv_dev->dev);
 	}
 
 	dev_info(dev, "camsv %d %s en(%d)\n", camsv_dev->id, __func__, streaming);
@@ -2187,7 +2386,7 @@ static int mtk_camsv_pipeline_register(
 	struct mtk_camsv_device *camsv_dev = dev_get_drvdata(dev);
 	struct v4l2_subdev *sd = &pipe->subdev;
 	struct mtk_cam_video_device *video;
-	unsigned int i;
+	unsigned int i, j;
 	int ret;
 
 	pipe->id = id;
@@ -2261,8 +2460,8 @@ static int mtk_camsv_pipeline_register(
 	return 0;
 
 fail_unregister_video:
-	for (i = i-1; i >= 0; i--)
-		mtk_cam_video_unregister(pipe->vdev_nodes + i);
+	for (j = 0; j < i; j++)
+		mtk_cam_video_unregister(pipe->vdev_nodes + j);
 
 	return ret;
 }
@@ -2477,6 +2676,7 @@ static irqreturn_t mtk_irq_camsv(int irq, void *data)
 	unsigned int drop_status, imgo_err_status, imgo_overr_status;
 	unsigned int fbc_imgo_status, imgo_addr, imgo_addr_msb;
 	unsigned int tg_sen_mode, dcif_set, tg_vf_con, tg_path_cfg;
+	unsigned int irq_flag = 0;
 	bool wake_thread = 0;
 
 	irq_status	= readl_relaxed(camsv_dev->base + REG_CAMSV_INT_STATUS);
@@ -2527,9 +2727,11 @@ static irqreturn_t mtk_irq_camsv(int irq, void *data)
 	/* Frame done */
 	if (irq_status & CAMSV_INT_SW_PASS1_DON_ST)
 		irq_info.irq_type |= (1 << CAMSYS_IRQ_FRAME_DONE);
+
 	/* Frame start */
 	if (irq_status & CAMSV_INT_TG_SOF_INT_ST) {
 		irq_info.irq_type |= (1 << CAMSYS_IRQ_FRAME_START);
+		camsv_dev->last_sof_time_ns = irq_info.ts_ns;
 		camsv_dev->sof_count++;
 		camsv_dev->sof_timestamp = ktime_get_boottime_ns();
 		if (camsv_dev->pipeline->hw_scen &
@@ -2542,12 +2744,12 @@ static irqreturn_t mtk_irq_camsv(int irq, void *data)
 		fbc_imgo_status, imgo_addr, dequeued_imgo_seq_no_inner,
 		dequeued_imgo_seq_no, tg_sen_mode, dcif_set, tg_vf_con, tg_path_cfg);
 	}
-
-	if (irq_info.irq_type && push_msgfifo(camsv_dev, &irq_info) == 0)
+	irq_flag = irq_info.irq_type;
+	if (irq_flag && push_msgfifo(camsv_dev, &irq_info) == 0)
 		wake_thread = 1;
 
 	/* Check ISP error status */
-	if (err_status) {
+	if (err_status && camsv_dev->sof_count > 1) {
 		struct mtk_camsys_irq_info err_info;
 
 		err_info.irq_type = 1 << CAMSYS_IRQ_ERROR;
@@ -2988,6 +3190,23 @@ static int mtk_camsv_runtime_suspend(struct device *dev)
 	dev_dbg(dev, "%s:disable clock\n", __func__);
 
 	disable_irq(camsv_dev->irq);
+
+	if (CAMSV_READ_BITS(camsv_dev->base + REG_CAMSV_TG_VF_CON,
+		CAMSV_TG_VF_CON, VFDATA_EN) == 1) {
+		dev_info(camsv_dev->dev, "%s: VF is on, turn off it when suspending",
+			__func__);
+		CAMSV_WRITE_BITS(camsv_dev->base + REG_CAMSV_TG_VF_CON,
+			CAMSV_TG_VF_CON, VFDATA_EN, 0);
+		mtk_cam_sv_toggle_tg_db(camsv_dev);
+	}
+
+	dev_info(camsv_dev->dev, "%s:tg_sen_mode:0x%x",
+		__func__,
+		readl_relaxed(camsv_dev->base_inner + REG_CAMSV_TG_SEN_MODE));
+	if (CAMSV_READ_BITS(camsv_dev->base_inner + REG_CAMSV_TG_SEN_MODE,
+		CAMSV_TG_SEN_MODE, CMOS_EN) == 1) {
+		mtk_smi_dbg_hang_detect("camsys-camsv");
+	}
 
 	for (i = 0; i < camsv_dev->num_clks; i++)
 		clk_disable_unprepare(camsv_dev->clks[i]);

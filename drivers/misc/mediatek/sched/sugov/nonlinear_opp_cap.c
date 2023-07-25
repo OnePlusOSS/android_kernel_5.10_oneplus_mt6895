@@ -6,15 +6,28 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/cpumask.h>
+#include <linux/of.h>
 #include <linux/percpu.h>
 #include <sched/sched.h>
 #include "cpufreq.h"
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+#include "sugov_trace.h"
+#endif
+#include "mtk_unified_power.h"
 
 #if IS_ENABLED(CONFIG_MTK_OPP_CAP_INFO)
 static void __iomem *sram_base_addr;
 static struct pd_capacity_info *pd_capacity_tbl;
 static int pd_count;
 static int entry_count;
+static bool has_eas_info_node;
+
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+unsigned int get_nr_caps(int cluster_id){
+	return pd_capacity_tbl[cluster_id].nr_caps;
+}
+EXPORT_SYMBOL_GPL(get_nr_caps);
+#endif
 
 unsigned long pd_get_opp_capacity(int cpu, int opp)
 {
@@ -38,6 +51,33 @@ unsigned long pd_get_opp_capacity(int cpu, int opp)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(pd_get_opp_capacity);
+
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+unsigned int cpufreq_get_cpu_freq(int cpu, int idx)
+{
+#ifndef CONFIG_NONLINEAR_FREQ_CTL
+	return 0;
+#else
+	struct em_perf_domain *pd;
+	int opp;
+	int first_freq, last_freq;
+	pd = em_cpu_get(cpu);
+	if(!pd){
+		pr_err("pd is null\n");
+		return 0;
+	}
+	first_freq = pd->table[0].frequency;
+	last_freq = pd->table[pd->nr_perf_states - 1].frequency;
+
+	if (first_freq > last_freq)
+		opp = idx;
+	else
+		opp = pd->nr_perf_states - idx - 1;
+	return (int)pd->table[opp].frequency;
+#endif
+}
+EXPORT_SYMBOL(cpufreq_get_cpu_freq);
+#endif
 
 static void free_capacity_table(void)
 {
@@ -66,6 +106,7 @@ static int init_capacity_table(void)
 	long next_cap, k;
 	struct pd_capacity_info *pd_info;
 	struct em_perf_domain *pd;
+	struct upower_tbl *tbl = NULL;
 
 	for (i = 0; i < pd_count; i++) {
 		pd_info = &pd_capacity_tbl[i];
@@ -73,9 +114,24 @@ static int init_capacity_table(void)
 		pd = em_cpu_get(cpu);
 		if (!pd)
 			goto err;
+		if (!has_eas_info_node) {
+#if IS_ENABLED(CONFIG_MTK_UNIFIED_POWER)
+			tbl = upower_get_core_tbl(cpu);
+#endif
+			if (!tbl)
+				goto err;
+		}
 		for (j = 0; j < pd_info->nr_caps; j++) {
-			cap = ioread16(base + offset);
-			next_cap = ioread16(base + offset + CAPACITY_ENTRY_SIZE);
+			if (has_eas_info_node) {
+				cap = ioread16(base + offset);
+				next_cap = ioread16(base + offset + CAPACITY_ENTRY_SIZE);
+			} else {
+				cap = tbl->row[pd_info->nr_caps - j - 1].cap;
+				if (j == pd_info->nr_caps - 1)
+					next_cap = -1;
+				else
+					next_cap = tbl->row[pd_info->nr_caps - j - 2].cap;
+			}
 			if (cap == 0 || next_cap == 0)
 				goto err;
 
@@ -109,11 +165,12 @@ static int init_capacity_table(void)
 		}
 
 		/* repeated last cap 0 between each cluster */
-		end_cap = ioread16(base + offset);
-		if (end_cap != cap)
-			goto err;
+		if (has_eas_info_node) {
+			end_cap = ioread16(base + offset);
+			if (end_cap != cap)
+				goto err;
+		}
 		offset += CAPACITY_ENTRY_SIZE;
-
 		for_each_cpu(j, &pd_info->cpus) {
 			if (per_cpu(cpu_scale, j) != pd_info->caps[0]) {
 				pr_info("per_cpu(cpu_scale, %d)=%d, pd_info->caps[0]=%d\n",
@@ -236,10 +293,22 @@ int init_opp_cap_info(struct proc_dir_entry *dir)
 {
 	int ret;
 	struct proc_dir_entry *entry;
+	struct device_node *dn = NULL;
 
-	ret = init_sram_mapping();
-	if (ret)
-		return ret;
+	dn = of_find_node_by_name(NULL, "eas_info");
+	if (dn) {
+		pr_info("Get info from sram!\n");
+		has_eas_info_node = true;
+	} else {
+		pr_info("Get info from API!\n");
+		has_eas_info_node = false;
+	}
+
+	if (has_eas_info_node) {
+		ret = init_sram_mapping();
+		if (ret)
+			return ret;
+	}
 
 	ret = alloc_capacity_table();
 	if (ret)
@@ -281,6 +350,8 @@ void mtk_arch_set_freq_scale(void *data, const struct cpumask *cpus,
 
 	cap = pd_get_opp_capacity(cpu, opp);
 	max_cap = pd_get_opp_capacity(cpu, 0);
+	if (max_cap == 0)
+		return;
 
 	*scale = SCHED_CAPACITY_SCALE * cap / max_cap;
 }
@@ -309,15 +380,48 @@ unsigned int get_sched_capacity_margin_dvfs(void)
 }
 EXPORT_SYMBOL_GPL(get_sched_capacity_margin_dvfs);
 
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+#define DEFAULT_CAP_MARGIN_DVFS 1280 /* ~20% margin */
+unsigned int capacity_margin_dvfs = DEFAULT_CAP_MARGIN_DVFS;
+bool capacity_margin_dvfs_changed = false;
+
+void set_capacity_margin_dvfs_changed(bool changed)
+{
+	capacity_margin_dvfs_changed = changed;
+}
+EXPORT_SYMBOL(set_capacity_margin_dvfs_changed);
+
+#endif
+
 void mtk_map_util_freq(void *data, unsigned long util, unsigned long freq,
 				struct cpumask *cpumask, unsigned long *next_freq)
 {
 	int i, j, cap;
 	struct pd_capacity_info *info;
 	unsigned long temp_util;
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+	unsigned long target_util;
+	struct sugov_policy *sg_policy = (struct sugov_policy *)data;
+#endif
 
 	temp_util = util;
+
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+	if (sg_policy) {
+		if (!capacity_margin_dvfs_changed) {
+			target_util = choose_util(sg_policy, util);
+			if (target_util >= 0)
+				util = target_util;
+			trace_sugov_next_util_tl(sg_policy->policy->cpu, util, arch_scale_cpu_capacity(sg_policy->policy->cpu), target_util);
+		} else {
+			util = (util * util_scale) >> SCHED_CAPACITY_SHIFT;
+		}
+	} else {
+		util = (util * util_scale) >> SCHED_CAPACITY_SHIFT;
+	}
+#else
 	util = (util * util_scale) >> SCHED_CAPACITY_SHIFT;
+#endif
 
 	for (i = 0; i < pd_count; i++) {
 		info = &pd_capacity_tbl[i];
@@ -349,7 +453,8 @@ void mtk_map_util_freq(void *data, unsigned long util, unsigned long freq,
 		}
 		policy->cached_target_freq = *next_freq;
 		policy->cached_resolved_idx = j;
-		sg_policy->cached_raw_freq = map_util_freq(temp_util, freq, cap);
+		if (cap != 0)
+			sg_policy->cached_raw_freq = map_util_freq(temp_util, freq, cap);
 	}
 }
 EXPORT_SYMBOL_GPL(mtk_map_util_freq);

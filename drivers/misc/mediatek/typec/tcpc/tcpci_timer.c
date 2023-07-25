@@ -1202,6 +1202,9 @@ static inline void tcpc_reset_timer_range(
 		if (mask & RT_MASK64(i)) {
 			hrtimer_try_to_cancel(&tcpc->tcpc_timer[i]);
 			tcpc_clear_timer_enable_mask(tcpc, i);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+			atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 		}
 	}
 
@@ -1225,7 +1228,11 @@ void tcpc_enable_wakeup_timer(struct tcpc_device *tcpc, bool en)
 void tcpc_enable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 {
 	uint32_t r, mod, tout;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	uint64_t mask_curr, mask_prev;
 
+	mask_prev = tcpc_get_timer_enable_mask(tcpc);
+#endif
 	TCPC_TIMER_EN_DBG(tcpc, timer_id);
 	if (timer_id >= PD_TIMER_NR) {
 		PD_BUG_ON(1);
@@ -1236,7 +1243,13 @@ void tcpc_enable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 		tcpc_reset_timer_range(tcpc, TYPEC_TIMER_START_ID, PD_TIMER_NR);
 
 	tcpc_set_timer_enable_mask(tcpc, timer_id);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	mask_curr = tcpc_get_timer_enable_mask(tcpc);
+	if (mask_prev ^ mask_curr)
+		atomic_inc(&tcpc->suspend_pending);
+	else
+		atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 	tout = tcpc_timer_timeout[timer_id];
 #if PD_DYNAMIC_SENDER_RESPONSE
 	if ((timer_id == PD_TIMER_SENDER_RESPONSE) &&
@@ -1273,6 +1286,9 @@ void tcpc_disable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 	if (mask & RT_MASK64(timer_id)) {
 		hrtimer_try_to_cancel(&tcpc->tcpc_timer[timer_id]);
 		tcpc_clear_timer_enable_mask(tcpc, timer_id);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 	}
 }
 
@@ -1306,6 +1322,9 @@ static void tcpc_handle_timer_triggered(struct tcpc_device *tcpc)
 	uint64_t triggered_timer = tcpc_get_timer_tick(tcpc);
 	uint64_t enable_mask = tcpc_get_timer_enable_mask(tcpc);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	atomic_inc(&tcpc->suspend_pending);
+#endif
 #if IS_ENABLED(CONFIG_USB_POWER_DELIVERY)
 	for (i = 0; i < PD_PE_TIMER_END_ID; i++) {
 		if (triggered_timer & RT_MASK64(i)) {
@@ -1329,7 +1348,9 @@ static void tcpc_handle_timer_triggered(struct tcpc_device *tcpc)
 		}
 	}
 	mutex_unlock(&tcpc->typec_lock);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 }
 
 static int tcpc_timer_thread_fn(void *data)
@@ -1370,7 +1391,7 @@ int tcpci_timer_init(struct tcpc_device *tcpc)
 		tcpc->tcpc_timer[i].function = tcpc_timer_call[i];
 	}
 	tcpc->wakeup_wake_lock =
-		wakeup_source_register(&tcpc->dev, "tcpc_wakeup_wake_lock");
+		wakeup_source_register(NULL, "tcpc_wakeup_wake_lock");
 	INIT_DELAYED_WORK(&tcpc->wake_up_work, wake_up_work_func);
 	alarm_init(&tcpc->wake_up_timer, ALARM_REALTIME, tcpc_timer_wakeup);
 

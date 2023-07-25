@@ -21,6 +21,9 @@
 #include <linux/of_address.h>
 #include <sched/sched.h>
 #include "sched_sys_common.h"
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_TASK_SCHED)
+#include <../kernel/oplus_cpu/sched/task_sched/task_sched_info.h>
+#endif
 
 DEFINE_MUTEX(sched_core_pause_mutex);
 
@@ -59,6 +62,10 @@ int sched_pause_cpu(int cpu)
 		pr_info("[Core Pause]Pause success: cpu=%d, pause=0x%lx, active=0x%lx, online=0x%lx\n",
 			cpu, cpu_pause_mask.bits[0], cpu_active_mask->bits[0],
 			cpu_online_mask->bits[0]);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_TASK_SCHED)
+		update_cpu_isolate_info(cpu, cpu_isolate);
+#endif
 	}
 	mutex_unlock(&sched_core_pause_mutex);
 
@@ -79,6 +86,8 @@ int sched_resume_cpu(int cpu)
 	if (cpumask_test_cpu(cpu, cpu_active_mask)) {
 		pr_info("[Core Pause]Already Resume: cpu=%d, active=0x%lx, online=0x%lx\n",
 				cpu, cpu_active_mask->bits[0], cpu_online_mask->bits[0]);
+
+
 		mutex_unlock(&sched_core_pause_mutex);
 		return err;
 	}
@@ -97,6 +106,10 @@ int sched_resume_cpu(int cpu)
 		pr_info("[Core Pause]Resume success: cpu=%d, resume=0x%lx, active=0x%lx, online=0x%lx\n",
 				cpu, cpu_resume_mask.bits[0], cpu_active_mask->bits[0],
 				cpu_online_mask->bits[0]);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_TASK_SCHED)
+                update_cpu_isolate_info(cpu, cpu_unisolate);
+#endif
 	}
 	mutex_unlock(&sched_core_pause_mutex);
 

@@ -74,7 +74,8 @@ static int regulator_trace_consumers(struct regulator_dev *rdev, int qos_class)
 	list_for_each_entry(regulator, &rdev->consumer_list, list) {
 		voltage = &regulator->voltage[PM_SUSPEND_ON];
 		devname = regulator->dev ? dev_name(regulator->dev) : "deviceless";
-		trace_mtk_pm_qos_update_request(qos_class, voltage->min_uV / 1000, devname);
+		trace_mtk_pm_qos_update_request_regulator(qos_class,
+			voltage->min_uV / 1000, devname);
 	}
 	return 0;
 }
@@ -285,6 +286,45 @@ static const struct dvfsrc_regulator_init_data regulator_mt6855_data = {
 	.regulator_info = &mt6855_regulators[0],
 };
 
+static const unsigned int mt6765_voltages[] = {
+	650000,
+	700000,
+	700000,
+	800000,
+};
+
+static struct dvfsrc_regulator mt6765_regulators[] = {
+	MT_DVFSRC_REGULAR("dvfsrc-vcore", VCORE,
+		mt6765_voltages),
+	MT_DVFSRC_REGULAR("dvfsrc-vscp", VSCP,
+		mt6765_voltages),
+};
+
+static const struct dvfsrc_regulator_init_data regulator_mt6765_data = {
+	.size = ARRAY_SIZE(mt6765_regulators),
+	.regulator_info = &mt6765_regulators[0],
+};
+
+static const unsigned int mt6768_voltages[] = {
+	650000,
+	0,
+	700000,
+	800000,
+};
+
+static struct dvfsrc_regulator mt6768_regulators[] = {
+	MT_DVFSRC_REGULAR("dvfsrc-vcore", VCORE,
+		mt6768_voltages),
+	MT_DVFSRC_REGULAR("dvfsrc-vscp", VSCP,
+		mt6768_voltages),
+};
+
+static const struct dvfsrc_regulator_init_data regulator_mt6768_data = {
+	.size = ARRAY_SIZE(mt6768_regulators),
+	.regulator_info = &mt6768_regulators[0],
+};
+
+/* MT6765  will share MT6768 driver data due to same IP */
 
 static const struct of_device_id mtk_dvfsrc_regulator_match[] = {
 	{
@@ -323,6 +363,12 @@ static const struct of_device_id mtk_dvfsrc_regulator_match[] = {
 	}, {
 		.compatible = "mediatek,mt6855-dvfsrc",
 		.data = &regulator_mt6855_data,
+	}, {
+		.compatible = "mediatek,mt6768-dvfsrc",
+		.data = &regulator_mt6768_data,
+	}, {
+		.compatible = "mediatek,mt6765-dvfsrc",
+		.data = &regulator_mt6768_data,
 	}, {
 		/* sentinel */
 	},

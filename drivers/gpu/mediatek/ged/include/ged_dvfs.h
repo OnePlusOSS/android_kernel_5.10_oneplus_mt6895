@@ -90,6 +90,18 @@ struct GED_DVFS_BW_DATA {
 
 #define MAX_BW_PROFILE 5
 
+#define MAX_OPP_LOGS_COLUMN_DIGITS 64
+struct GED_DVFS_OPP_STAT {
+	union {
+		uint32_t *aTrans;
+		uint32_t ui32Freq;
+	} uMem;
+
+	/* unit 1us */
+	uint64_t ui64Active;
+	uint64_t ui64Idle;
+};
+
 struct GpuUtilization_Ex {
 	unsigned int util_active;
 	unsigned int util_3d;
@@ -135,14 +147,24 @@ GED_ERROR  ged_dvfs_probe_signal(int signo);
 
 void ged_dvfs_gpu_clock_switch_notify(bool bSwitch);
 
+void ged_dvfs_reset_opp_cost(int oppsize);
+void ged_dvfs_update_opp_cost(unsigned int loading,	unsigned int TSDiff_us,
+		unsigned long long cur_us, unsigned int idx);
+int ged_dvfs_query_opp_cost(struct GED_DVFS_OPP_STAT *psReport,
+		int i32NumOpp, bool bStript);
+int ged_dvfs_init_opp_cost(void);
+
 GED_ERROR ged_dvfs_system_init(void);
 void ged_dvfs_system_exit(void);
 unsigned long ged_dvfs_get_last_commit_idx(void);
 
+bool ged_dvfs_gpu_freq_commit(unsigned long ui32NewFreqID,
+	unsigned long ui32NewFreq, GED_DVFS_COMMIT_TYPE eCommitType);
+
 extern void (*ged_kpi_set_gpu_dvfs_hint_fp)(int t_gpu_target,
 	int boost_accum_gpu);
 
-extern int (*ged_kpi_gpu_dvfs_fp)(int t_gpu, int t_gpu_target,
+extern int (*ged_kpi_gpu_dvfs_fp)(int t_gpu_done_interval, int t_gpu_target,
 	int target_fps_margin, unsigned int force_fallback);
 extern void (*ged_kpi_trigger_fb_dvfs_fp)(void);
 extern int (*ged_kpi_check_if_fallback_mode_fp)(void);
@@ -171,8 +193,13 @@ unsigned int ged_dvfs_get_tb_dvfs_margin_mode(void);
 #define LOADING_MAX_3DTA_COM 1
 #define LOADING_MAX_3DTA 2
 
+#define WORKLOAD_ACTIVE 0
+#define WORKLOAD_3D 1
+
 extern void (*mtk_dvfs_loading_mode_fp)(int i32LoadingMode);
 extern int (*mtk_get_dvfs_loading_mode_fp)(void);
+extern void (*mtk_dvfs_workload_mode_fp)(int i32WorkloadMode);
+extern int (*mtk_get_dvfs_workload_mode_fp)(void);
 extern void ged_get_gpu_utli_ex(struct GpuUtilization_Ex *util_ex);
 #ifndef MAX
 #define MAX(x, y)	((x) < (y) ? (y) : (x))

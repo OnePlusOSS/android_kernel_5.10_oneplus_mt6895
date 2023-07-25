@@ -9,6 +9,7 @@
 #if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
 #include <mt-plat/aee.h>
 #endif
+#include <soc/mediatek/emi.h>
 #include "mdee_dumper_v3.h"
 #include "ccci_config.h"
 #include "ccci_common_config.h"
@@ -50,6 +51,16 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	int md_dbg_dump_flag = per_md_data->md_dbg_dump_flag;
 #endif
 
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	int temp_i;
+	int checkID = 0;
+	unsigned int hashId = 0;
+	char *logBuf;
+	char *aed_str_for_hash = NULL;
+	//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
+	int ret = 0;
+
 	buff = kmalloc(AED_STR_LEN, GFP_ATOMIC);
 	if (buff == NULL) {
 		CCCI_ERROR_LOG(md_id, FSM, "Fail alloc Mem for buff!\n");
@@ -64,9 +75,51 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	if (info_str_len > AED_STR_LEN)
 		/* Cut string length to AED_STR_LEN */
 		buff[AED_STR_LEN - 1] = '\0';
-	snprintf(buff, AED_STR_LEN, "md%d:%s%s%s",
+	ret = scnprintf(buff, AED_STR_LEN, "md%d:%s%s%s",
 		md_id + 1, aed_str, mdee->ex_start_time, img_inf);
+	if (ret < 0 || ret >= AED_STR_LEN) {
+		CCCI_ERROR_LOG(md_id, FSM,
+			"%s-%d:scnprintf fail,ret = %d\n", __func__, __LINE__, ret);
+		goto err_exit1;
+	}
 	memset(mdee->ex_start_time, 0x0, sizeof(mdee->ex_start_time));
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	#define MCU_CORE_MSG "(MCU_core"
+	aed_str_for_hash = aed_str;
+	if( aed_str_for_hash != NULL ) {
+		if( (strncmp(aed_str_for_hash, MCU_CORE_MSG, strlen(MCU_CORE_MSG)) == 0) ) {
+			while(aed_str_for_hash[0] != '\n') {
+				++aed_str_for_hash;
+			}
+			++aed_str_for_hash; //skip '\n'
+		}
+		hashId = BKDRHash(aed_str_for_hash, strlen(aed_str_for_hash));
+	}
+	else {
+		CCCI_ERROR_LOG(md_id, FSM, "aed_str_for_hash is null!!");
+	}
+	logBuf = vmalloc(BUF_LOG_LENGTH);
+	if ((logBuf != NULL)&&(aed_str_for_hash != NULL)) {
+		for (temp_i = 0 ; (temp_i < BUF_LOG_LENGTH) && (temp_i < strlen(aed_str_for_hash)) ; temp_i++) {
+			if(aed_str_for_hash[temp_i] == '\n') {
+				checkID++;
+				CCCI_ERROR_LOG(md_id, FSM, "checkID = %d",checkID);
+				if(2 == checkID) {
+					logBuf[temp_i] = '\0';
+					break;
+				}
+				logBuf[temp_i] = ' ';
+			} else {
+					logBuf[temp_i] = aed_str_for_hash[temp_i];
+			}
+			//end
+		}
+		logBuf[BUF_LOG_LENGTH - 1] = '\0';
+		CCCI_NORMAL_LOG(md_id, FSM, "modem crash wirte to critical log. hashid = %u, cause = %s.", hashId, logBuf);
+		mm_keylog_write_modemdump(hashId, logBuf, MODEM_MONITOR_ID, "modem");
+		vfree(logBuf);
+	}
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 	/* MD ID must sync with aee_dump_ccci_debug_info() */
  err_exit1:
 	if (dump_flag & CCCI_AED_DUMP_CCIF_REG) {
@@ -82,7 +135,7 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 		ex_log_len = mdss_dbg->size;
 		if (md && md->hw_info && md->hw_info->md_l2sram_base) {
 			md_dump_addr = md->hw_info->md_l2sram_base;
-			md_dump_len = MD_L2SRAM_SIZE;
+			md_dump_len = MD_L2SRAM_SIZE_V3;
 		}
 	}
 	if (dump_flag & CCCI_AED_DUMP_EX_PKT) {
@@ -140,7 +193,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 	switch (debug_info->type) {
 	case MD_EX_CLASS_ASSET:
 		/* assert: file name+line number+code*3 */
-		snprintf(ex_info, EE_BUF_LEN_UMOLY,
+		scnprintf(ex_info, EE_BUF_LEN_UMOLY,
 			"(%s)\n[%s] file:%s line:%d\np1:0x%08x\np2:0x%08x\np3:0x%08x\n\n",
 			debug_info->core_name, debug_info->name,
 			debug_info->dump_assert.file_name,
@@ -148,6 +201,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 			debug_info->dump_assert.parameters[0],
 			debug_info->dump_assert.parameters[1],
 			debug_info->dump_assert.parameters[2]);
+
 		CCCI_ERROR_LOG(md_id, FSM, "filename = %s\n",
 			debug_info->dump_assert.file_name);
 		CCCI_ERROR_LOG(md_id, FSM, "line = %d\n",
@@ -160,7 +214,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 		break;
 	case MD_EX_CLASS_FATAL:
 		/* fatal:  */
-		snprintf(ex_info, EE_BUF_LEN_UMOLY,
+		scnprintf(ex_info, EE_BUF_LEN_UMOLY,
 			 "(%s)%s\n[%s] err_code1:0x%08X err_code2:0x%08X err_code3:0x%08X\n%s%s\n%s\n",
 			debug_info->core_name,
 			debug_info->dump_fatal.err_sec, debug_info->name,
@@ -170,13 +224,14 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 			debug_info->dump_fatal.offender,
 			debug_info->dump_fatal.ExStr,
 			debug_info->dump_fatal.fatal_fname);
+
 		ex_info_temp = kmalloc(EE_BUF_LEN_UMOLY, GFP_ATOMIC);
 		if (ex_info_temp == NULL) {
 			CCCI_ERROR_LOG(md_id, FSM,
 				"Fail alloc Mem for ex_info_temp!\n");
 			break;
 		}
-		snprintf(ex_info_temp, EE_BUF_LEN_UMOLY, "%s", ex_info);
+		scnprintf(ex_info_temp, EE_BUF_LEN_UMOLY, "%s", ex_info);
 		if (debug_info->dump_fatal.err_code1 == 0x3104) {
 			mem_layout = ccci_md_get_mem(mdee->md_id);
 			if (mem_layout == NULL) {
@@ -184,7 +239,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 				kfree(ex_info_temp);
 				return;
 			}
-			snprintf(ex_info, EE_BUF_LEN_UMOLY,
+			scnprintf(ex_info, EE_BUF_LEN_UMOLY,
 			"%s%s, MD base = 0x%08X\n\n", ex_info_temp,
 			mdee->ex_mpu_string,
 			(unsigned int)mem_layout->md_bank0.base_ap_view_phy);
@@ -201,7 +256,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 		break;
 	case MD_EX_CLASS_CUSTOM:
 		/* fatal:  */
-		snprintf(ex_info, EE_BUF_LEN_UMOLY,
+		scnprintf(ex_info, EE_BUF_LEN_UMOLY,
 			 "(%s)%s\n[%s] err_code1:0x%08X err_code2:0x%08X err_code3:0x%08X\n%s%s\n%s\nP1:0x%08X\nP2:0x%08X\nP3:0x%08X\n",
 			debug_info->core_name,
 			debug_info->dump_fatal.err_sec, debug_info->name,
@@ -214,6 +269,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 			debug_info->dump_fatal.err_code1,
 			debug_info->dump_fatal.err_code2,
 			debug_info->dump_fatal.err_code3);
+
 		CCCI_ERROR_LOG(md_id, FSM,
 			"fatal custom error code 1,2,3 = [0x%08X, 0x%08X, 0x%08X]%s\n",
 			debug_info->dump_fatal.err_code1,
@@ -222,7 +278,7 @@ static void mdee_output_debug_info_to_buf(struct ccci_fsm_ee *mdee,
 			debug_info->dump_fatal.offender);
 		break;
 	default:
-		snprintf(ex_info, EE_BUF_LEN_UMOLY, "%s\n[%s]\n",
+		scnprintf(ex_info, EE_BUF_LEN_UMOLY, "%s\n[%s]\n",
 			debug_info->core_name, debug_info->name);
 		break;
 	}
@@ -268,8 +324,8 @@ static void mdee_info_dump_v3(struct ccci_fsm_ee *mdee)
 	case MD_EE_CASE_ONLY_EX:
 	case MD_EE_CASE_ONLY_SWINT:
 		mdee_output_debug_info_to_buf(mdee, debug_info, ex_info);
-		snprintf(ex_info_temp, EE_BUF_LEN_UMOLY, "%s", ex_info);
-		snprintf(ex_info, EE_BUF_LEN_UMOLY, "%s%s", ex_info_temp,
+		scnprintf(ex_info_temp, EE_BUF_LEN_UMOLY, "%s", ex_info);
+		scnprintf(ex_info, EE_BUF_LEN_UMOLY, "%s%s", ex_info_temp,
 			mdee_more_inf_str[dumper->more_info]);
 		break;
 	case MD_EE_CASE_NO_RESPONSE:
@@ -279,7 +335,7 @@ static void mdee_info_dump_v3(struct ccci_fsm_ee *mdee)
 		db_opt |= (unsigned int)DB_OPT_FTRACE;
 		/* fall through */
 	case MD_EE_CASE_WDT:
-		if (snprintf(ex_info, EE_BUF_LEN_UMOLY, "%s",
+		if (scnprintf(ex_info, EE_BUF_LEN_UMOLY, "%s",
 			mdee_more_inf_str[dumper->more_info]) < 0)
 			ex_info[0] = 0;
 		break;
@@ -289,8 +345,8 @@ static void mdee_info_dump_v3(struct ccci_fsm_ee *mdee)
 	}
 
 	if (debug_info->ELM_status != NULL) {
-		snprintf(ex_info_temp, EE_BUF_LEN_UMOLY, "%s", ex_info);
-		snprintf(ex_info, EE_BUF_LEN_UMOLY, "%s%s", ex_info_temp,
+		scnprintf(ex_info_temp, EE_BUF_LEN_UMOLY, "%s", ex_info);
+		scnprintf(ex_info, EE_BUF_LEN_UMOLY, "%s%s", ex_info_temp,
 			debug_info->ELM_status);/* ELM status */
 	}
 
@@ -313,7 +369,7 @@ static void mdee_info_dump_v3(struct ccci_fsm_ee *mdee)
 			md_cd_lock_modem_clock_src(1);
 
 			ccci_util_mem_dump(md_id, CCCI_DUMP_MEM_DUMP,
-				md->hw_info->md_l2sram_base, MD_L2SRAM_SIZE);
+				md->hw_info->md_l2sram_base, MD_L2SRAM_SIZE_V3);
 
 			md_cd_lock_modem_clock_src(0);
 		}
@@ -403,10 +459,10 @@ static int mdee_set_core_name(int md_id, char *core_name,
 		brief_info =  &ex_overview->ex_info;
 		temp_sys_inf_1 = brief_info->system_info1;
 		temp_sys_inf_2 = brief_info->system_info2;
-		if (snprintf(core_name_temp,
+		if (scnprintf(core_name_temp,
 			MD_CORE_NAME_DEBUG, "%s", core_name) < 0)
 			core_name_temp[0] = 0;
-		snprintf(core_name, MD_CORE_NAME_DEBUG,
+		scnprintf(core_name, MD_CORE_NAME_DEBUG,
 		"%s_core%d,vpe%d,tc%d(VPE%d)", core_name_temp,
 		(temp_sys_inf_1>>1), (temp_sys_inf_1&0x1),
 		temp_sys_inf_2, temp_sys_inf_1);
@@ -558,7 +614,7 @@ static void md_ee_set_fatal_para(struct ex_fatal_v3 *fatal_src,
 		&& (fatal_src->offender[0] != 0)) {
 		strmncopy(fatal_src->offender, temp_str,
 			sizeof(fatal_src->offender), sizeof(temp_str));
-		snprintf(fata_tar->offender, sizeof(fata_tar->offender),
+		scnprintf(fata_tar->offender, sizeof(fata_tar->offender),
 			"MD Offender:%s\n", temp_str);
 		CCCI_NORMAL_LOG(-1, FSM, "offender: %s\n",
 			     fata_tar->offender);
@@ -577,7 +633,7 @@ static void md_ee_set_fatal_para(struct ex_fatal_v3 *fatal_src,
 	if (ex_type == MD_EX_CLASS_CUSTOM)
 		fatal_fname_prefix = "Original Offending File: ";
 	if (fatal_src->is_filename_supported == 0x01) {
-		snprintf(fata_tar->fatal_fname, EX_BRIEF_FATALERR_SIZE,
+		scnprintf(fata_tar->fatal_fname, EX_BRIEF_FATALERR_SIZE,
 			"%s%s", fatal_fname_prefix, fatal_src->filename);
 
 		string_len = strlen(fatal_fname_prefix) +
@@ -626,8 +682,9 @@ static void mdee_info_prepare_v3(struct ccci_fsm_ee *mdee)
 	if ((ex_overview->overview_verno&0xFFFF0000) != 0xAB000000
 		|| ex_overview->core_num > MD_CORE_TOTAL_NUM) {
 		debug_info->type = MD_EX_CLASS_INVALID;
-		snprintf(debug_info->core_name, sizeof(debug_info->core_name),
+		scnprintf(debug_info->core_name, sizeof(debug_info->core_name),
 			"%s", "MCU_core0,vpe0,tc0(VPE0)");
+
 		debug_info->name = "INVALID_EXCEPTION_TYPE";
 		return;
 	}
@@ -698,7 +755,7 @@ static void md_HS1_Fail_dump(int md_id, char *ex_info, unsigned int len)
 		"md_boot_stats0 /1 / bootuptrace:0x%X / 0x%X / 0x%X\n",
 		reg_value[0], reg_value[1], ccif_sram[0]);
 	if ((reg_value[0] == 0) && (ccif_sram[0] == 0)) {
-		snprintf(ex_info, len,
+		scnprintf(ex_info, len,
 			"\n[Others] MD_BOOT_UP_FAIL(HS%d - MD poweron failed)\n"
 			"boot_status0: 0x%x\nboot_status1: 0x%x\n"
 			"MD Offender:DVFS\n",
@@ -709,7 +766,7 @@ static void md_HS1_Fail_dump(int md_id, char *ex_info, unsigned int len)
 				(reg_value[0] >= 0x53310000 &&
 				reg_value[0] <= 0x533100FF)) &&
 				(md->hw_info->plat_val->md_gen >= 6295)) {
-		snprintf(ex_info, len,
+		scnprintf(ex_info, len,
 			"\n[Others] MD_BOOT_UP_FAIL(HS%d)\n",
 			1);
 		ccci_md_dump_info(md_id,
@@ -722,7 +779,7 @@ static void md_HS1_Fail_dump(int md_id, char *ex_info, unsigned int len)
 				(reg_value[0] >= 0x53310000 &&
 				reg_value[0] <= 0x533100FF)) &&
 				(md->hw_info->plat_val->md_gen < 6295)) {
-		snprintf(ex_info, len,
+		scnprintf(ex_info, len,
 			"\n[Others] MD_BOOT_UP_FAIL(HS%d)\n",
 			1);
 		ccci_md_dump_info(md_id,
@@ -737,7 +794,7 @@ static void md_HS1_Fail_dump(int md_id, char *ex_info, unsigned int len)
 	 * reg_value[0] <= 0x5331FFFF))
 	 * or else
 	 */
-		snprintf(ex_info, len,
+		scnprintf(ex_info, len,
 			"\n[Others] MD_BOOT_UP_FAIL(HS%d - MD bootrom failed)\n"
 			"boot_status0: 0x%x\nboot_status1: 0x%x\n"
 			"MD Offender:BOOTROM\n",
@@ -773,7 +830,7 @@ static void mdee_dumper_v3_dump_ee_info(struct ccci_fsm_ee *mdee,
 			CCCI_AED_DUMP_CCIF_REG | CCCI_AED_DUMP_EX_MEM,
 			ex_info, DB_OPT_DEFAULT | DB_OPT_FTRACE);
 		} else if (md_state == BOOT_WAITING_FOR_HS2) {
-			snprintf(ex_info, EE_BUF_LEN,
+			scnprintf(ex_info, EE_BUF_LEN,
 				"\n[Others] MD_BOOT_UP_FAIL(HS%d)\n", 2);
 			/* Handshake 2 fail */
 			CCCI_MEM_LOG_TAG(md_id, FSM, "Dump MD EX log\n");
@@ -788,7 +845,7 @@ static void mdee_dumper_v3_dump_ee_info(struct ccci_fsm_ee *mdee,
 					md_cd_lock_modem_clock_src(1);
 
 					ccci_util_mem_dump(md_id, CCCI_DUMP_MEM_DUMP,
-						md->hw_info->md_l2sram_base, MD_L2SRAM_SIZE);
+						md->hw_info->md_l2sram_base, MD_L2SRAM_SIZE_V3);
 
 					md_cd_lock_modem_clock_src(0);
 				}
@@ -809,7 +866,7 @@ static void mdee_dumper_v3_dump_ee_info(struct ccci_fsm_ee *mdee,
 				md_cd_lock_modem_clock_src(1);
 
 				ccci_util_mem_dump(md_id, CCCI_DUMP_MEM_DUMP,
-					md->hw_info->md_l2sram_base, MD_L2SRAM_SIZE);
+					md->hw_info->md_l2sram_base, MD_L2SRAM_SIZE_V3);
 
 				md_cd_lock_modem_clock_src(0);
 			}
@@ -827,11 +884,57 @@ static struct md_ee_ops mdee_ops_v3 = {
 	.dump_ee_info = &mdee_dumper_v3_dump_ee_info,
 	.set_ee_pkg = &mdee_dumper_v3_set_ee_pkg,
 };
+
+#if IS_ENABLED(CONFIG_MTK_EMI)
+static void mdee_dumper_v3_emimpu_callback(
+		const char *vio_msg)
+{
+	int has_write = 0;
+	int md_state;
+	struct ccci_fsm_ctl *ctl = fsm_get_entity_by_md_id(0);
+	struct ccci_modem *md = ccci_md_get_modem_by_id(0);
+
+	if (vio_msg)
+		CCCI_NORMAL_LOG(0, FSM,
+			"%s: %s\n", __func__, vio_msg);
+	else {
+		CCCI_ERROR_LOG(0, FSM,
+			"%s: msg is null\n", __func__);
+		return;
+	}
+
+	if (md) {
+		md_state = ccci_fsm_get_md_state(md->index);
+		if (md_state != INVALID && md_state != GATED &&
+			md_state != WAITING_TO_STOP) {
+			if (md->ops->dump_info)
+				md->ops->dump_info(md, DUMP_FLAG_REG, NULL, 0);
+		}
+	}
+
+	if (ctl) {
+		memset(ctl->ee_ctl.ex_mpu_string, 0x0,
+			sizeof(ctl->ee_ctl.ex_mpu_string));
+		has_write = scnprintf(&ctl->ee_ctl.ex_mpu_string[0],
+			MD_EX_MPU_STR_LEN,
+			"%s\n", vio_msg);
+		if (has_write <= 0)
+			return;
+	}
+}
+#endif
+
 int mdee_dumper_v3_alloc(struct ccci_fsm_ee *mdee)
 {
-	struct mdee_dumper_v3 *dumper;
+	struct mdee_dumper_v3 *dumper = NULL;
 	int md_id = mdee->md_id;
-
+#if IS_ENABLED(CONFIG_MTK_EMI)
+	if (mtk_emimpu_md_handling_register(
+			&mdee_dumper_v3_emimpu_callback))
+		CCCI_ERROR_LOG(md_id, FSM,
+			"%s: mtk_emimpu_md_handling_register fail\n",
+			__func__);
+#endif
 	/* Allocate port_proxy obj and set all member zero */
 	dumper = kzalloc(sizeof(struct mdee_dumper_v3), GFP_KERNEL);
 	if (dumper == NULL) {
@@ -843,4 +946,3 @@ int mdee_dumper_v3_alloc(struct ccci_fsm_ee *mdee)
 	mdee->ops = &mdee_ops_v3;
 	return 0;
 }
-

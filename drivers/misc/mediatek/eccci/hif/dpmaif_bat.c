@@ -46,6 +46,7 @@ struct temp_skb_info {
 struct temp_page_info {
 	struct page *page;
 	unsigned long long base_addr;
+	unsigned long offset;
 };
 
 #define MAX_INFO_COUNT 1000
@@ -123,7 +124,7 @@ fast_retry:
 	if (dma_mapping_error(ccci_md_get_dev_by_id(dpmaif_ctrl->md_id),
 				(*p_base_addr))) {
 		CCCI_ERROR_LOG(-1, TAG,
-			"[%s] error: dma mapping fail: %d!\n",
+			"[%s] error: dma mapping fail: %ld!\n",
 			__func__, skb_data_size(*ppskb));
 
 		ccci_free_skb(*ppskb);
@@ -187,13 +188,13 @@ static inline int get_skb_info_from_tbl(struct temp_skb_info *skb_info)
 static inline int page_alloc(
 		struct page **pp_page,
 		unsigned long long *p_base_addr,
+		unsigned long *offset,
 		unsigned int pkt_buf_sz,
 		int blocking)
 {
 	unsigned int rty_cnt = 0;
 	int size = L1_CACHE_ALIGN(pkt_buf_sz);
 	void *data;
-	unsigned long offset;
 
 fast_retry:
 	data = netdev_alloc_frag(size);/* napi_alloc_frag(size) */
@@ -209,12 +210,12 @@ fast_retry:
 	}
 
 	(*pp_page) = virt_to_head_page(data);
-	offset = data - page_address((*pp_page));
+	(*offset) = data - page_address((*pp_page));
 
 	/* Get physical address of the RB */
 	(*p_base_addr) = dma_map_page(
 				ccci_md_get_dev_by_id(dpmaif_ctrl->md_id),
-				(*pp_page), offset,
+				(*pp_page), *offset,
 				pkt_buf_sz,
 				DMA_FROM_DEVICE);
 
@@ -269,7 +270,7 @@ static inline void alloc_page_to_tbl(int page_cnt, int blocking)
 	for (i = 0; i < alloc_cnt; i++) {
 		page_info = &g_page_tbl[cur_tbl_idx];
 		if (page_alloc(&page_info->page, &page_info->base_addr,
-						pkt_buf_sz, blocking))
+				&page_info->offset, pkt_buf_sz, blocking))
 			break;
 		/*
 		 * The wmb() flushes writes to dram before read g_skb_tbl data.
@@ -290,8 +291,6 @@ static struct dpmaif_bat_request *ccci_dpmaif_bat_create(void)
 
 	if (!bat_req)
 		CCCI_ERROR_LOG(-1, TAG, "alloc bat fail.\n");
-
-	memset(bat_req, 0, sizeof(struct dpmaif_bat_request));
 
 	return bat_req;
 }
@@ -449,20 +448,23 @@ static inline int alloc_bat_page(
 	unsigned long long data_base_addr;
 	int ret;
 	struct temp_page_info page_info;
+	unsigned long offset;
 
 	if (!get_page_info_from_tbl(&page_info)) {
 		bat_page->page = page_info.page;
 		data_base_addr = page_info.base_addr;
+		offset = page_info.offset;
 
 	} else {
 		ret = page_alloc(&bat_page->page, &data_base_addr,
-				pkt_buf_sz, blocking);
+			&offset, pkt_buf_sz, blocking);
 		if (ret)
 			return ret;
 	}
 
 	bat_page->data_phy_addr = data_base_addr;
 	bat_page->data_len = pkt_buf_sz;
+	bat_page->offset = offset;
 
 	cur_bat->buffer_addr_ext = (data_base_addr >> 32) & 0xFF;
 	cur_bat->p_buffer_addr = (unsigned int)(data_base_addr & 0xFFFFFFFF);

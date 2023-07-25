@@ -26,6 +26,10 @@
 #include "tcpm.h"
 #endif
 
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+extern int set_chr_enable_otg(unsigned int enable);
+#endif
+
 static const unsigned int usb_extcon_cable[] = {
 	EXTCON_USB,
 	EXTCON_USB_HOST,
@@ -243,14 +247,27 @@ static int mtk_extcon_tcpc_notifier(struct notifier_block *nb,
 	struct mtk_extcon_info *extcon =
 			container_of(nb, struct mtk_extcon_info, tcpc_nb);
 	struct device *dev = extcon->dev;
+#ifndef OPLUS_FEATURE_CHG_BASIC
 	bool vbus_on;
+#endif
 
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+    bool vbus_on;
+#endif
 	switch (event) {
 	case TCP_NOTIFY_SOURCE_VBUS:
+#ifndef OPLUS_FEATURE_CHG_BASIC
 		dev_info(dev, "source vbus = %dmv\n",
 				 noti->vbus_state.mv);
 		vbus_on = (noti->vbus_state.mv) ? true : false;
 		mtk_usb_extcon_set_vbus(extcon, vbus_on);
+#endif
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+		dev_info(dev, "source vbus = %dmv\n",
+				 noti->vbus_state.mv);
+		vbus_on = (noti->vbus_state.mv) ? true : false;
+        set_chr_enable_otg(vbus_on);
+#endif
 		break;
 	case TCP_NOTIFY_TYPEC_STATE:
 		dev_info(dev, "old_state=%d, new_state=%d\n",
@@ -282,12 +299,12 @@ static int mtk_extcon_tcpc_notifier(struct notifier_block *nb,
 		dev_info(dev, "%s dr_swap, new role=%d\n",
 				__func__, noti->swap_state.new_role);
 		if (noti->swap_state.new_role == PD_ROLE_UFP &&
-				extcon->c_role == USB_ROLE_HOST) {
+				extcon->c_role != USB_ROLE_DEVICE) {
 			dev_info(dev, "switch role to device\n");
 			mtk_usb_extcon_set_role(extcon, USB_ROLE_NONE);
 			mtk_usb_extcon_set_role(extcon, USB_ROLE_DEVICE);
 		} else if (noti->swap_state.new_role == PD_ROLE_DFP &&
-				extcon->c_role == USB_ROLE_DEVICE) {
+				extcon->c_role != USB_ROLE_HOST) {
 			dev_info(dev, "switch role to host\n");
 			mtk_usb_extcon_set_role(extcon, USB_ROLE_NONE);
 			mtk_usb_extcon_set_role(extcon, USB_ROLE_HOST);

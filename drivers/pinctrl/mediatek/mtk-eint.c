@@ -23,7 +23,8 @@
 #include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
-
+#include <soc/oplus/system/oplus_project.h>
+//#endif
 #include "mtk-eint.h"
 
 #define MTK_EINT_EDGE_SENSITIVE           0
@@ -648,7 +649,11 @@ int mtk_eint_set_debounce(struct mtk_eint *eint, unsigned long eint_num,
 	reg = eint->instances[instance].base;
 	set_offset = (index / 4) * 4 + eint->comp->regs->dbnc_set;
 	clr_offset = (index / 4) * 4 + eint->comp->regs->dbnc_clr;
-
+	if ((get_project() == 22021 || get_project() == 22221) && (eint_num == 15)) {
+		dev_err(eint->dev, "litre: %s  the project is 22021,not need to set sdio debounce %d\n",
+			__func__,eint_num);
+		return -EINVAL;
+	}
 	if (!mtk_eint_can_en_debounce(eint, eint_num))
 		return -EINVAL;
 

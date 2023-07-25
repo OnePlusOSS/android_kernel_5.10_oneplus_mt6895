@@ -13,13 +13,8 @@
 #define AED_STR_LEN		(2048)/* 0x800 */
 #define EE_BUF_LEN		(256)/* 0x100 */
 
-#if (MD_GENERATION >= 6297)
 #define MD_CORE_TOTAL_NUM   (12)
-#elif (MD_GENERATION >= 6293)
-#define MD_CORE_TOTAL_NUM   (8)
-#else
-#define MD_CORE_TOTAL_NUM   (9)
-#endif
+
 #define MIPS_VPE_NUM	(12)
 #define MD_CORE_NAME_LEN    (11)
 /* +1 for end '\0', +5 for 16, +16 for str TDD FDD */
@@ -231,5 +226,14 @@ struct mdee_dumper_v5 {
 	/* request by modem, change to 2k: include struct ex_PL_log*/
 	unsigned char ex_pl_info[MD_HS1_FAIL_DUMP_SIZE];
 };
+
+//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+#define MODEM_MONITOR_ID          509    //modem crash
+#define BUF_LOG_LENGTH            2148
+unsigned int BKDRHash(const char* str, unsigned int len);
+extern void mm_keylog_write_modemdump(unsigned int hashId, const char *cause, int id, char *subsys);
+
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
 #endif	/* __MDEE_DUMPER_V5_H__ */
 

@@ -26,6 +26,9 @@
 #include <linux/cpuidle.h>
 #include <linux/pm_qos.h>
 #include <uapi/linux/sched/types.h>
+#include <linux/hrtimer.h>
+#include <linux/ktime.h>
+
 
 #include <lpm.h>
 #include <lpm_module.h>
@@ -33,6 +36,7 @@
 #include <lpm_type.h>
 #include <lpm_call_type.h>
 #include <lpm_dbg_common_v1.h>
+#include <mtk_cpuidle_status.h>
 
 #include "lpm_plat.h"
 #include "lpm_plat_comm.h"
@@ -44,16 +48,17 @@ static struct cpumask abort_cpumask;
 static DEFINE_SPINLOCK(lpm_abort_locker);
 static struct pm_qos_request lpm_qos_request;
 
-long long before_md_sleep_time;
-long long after_md_sleep_time;
-
 #define S2IDLE_STATE_NAME "s2idle"
-
+#if !IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
 #if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
-#define MD_SLEEP_INFO_SMEM_OFFEST (4)
 u32 *share_mem;
 struct md_sleep_status before_md_sleep_status;
 struct md_sleep_status after_md_sleep_status;
+#define MD_GUARD_NUMBER 0x536C702E
+#define GET_RECORD_CNT1(n) ((n >> 32) & 0xFFFFFFFF)
+#define GET_RECORD_CNT2(n) (n & 0xFFFFFFFF)
+#define GET_GUARD_L(n) (n & 0xFFFFFFFF)
+#define GET_GUARD_H(n) ((n >> 32) & 0xFFFFFFFF)
 #endif
 
 static void get_md_sleep_time_addr(void)
@@ -84,8 +89,6 @@ static void get_md_sleep_time_addr(void)
 			 __func__, __LINE__);
 		return;
 	}
-
-	share_mem = share_mem + MD_SLEEP_INFO_SMEM_OFFEST;
 #endif
 }
 
@@ -106,12 +109,40 @@ static void get_md_sleep_time(struct md_sleep_status *md_data)
 }
 #endif
 #if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+static int is_md_sleep_info_valid(struct md_sleep_status *md_data)
+{
+	u32 guard_l = GET_GUARD_L(md_data->guard_sleep_cnt1);
+	u32 guard_h = GET_GUARD_H(md_data->guard_sleep_cnt2);
+	u32 cnt1 = GET_RECORD_CNT1(md_data->guard_sleep_cnt1);
+	u32 cnt2 = GET_RECORD_CNT2(md_data->guard_sleep_cnt2);
+
+	if ((guard_l != MD_GUARD_NUMBER) || (guard_h != MD_GUARD_NUMBER))
+		return 0;
+
+	if (cnt1 != cnt2)
+		return 0;
+
+	return 1;
+}
+
 static void log_md_sleep_info(void)
 {
 
 #define LOG_BUF_SIZE	256
 	char log_buf[LOG_BUF_SIZE] = { 0 };
 	int log_size = 0;
+
+	if (!is_md_sleep_info_valid(&before_md_sleep_status)
+		|| !is_md_sleep_info_valid(&after_md_sleep_status)) {
+		pr_info("[name:spm&][SPM] MD sleep info. is not valid");
+		return;
+	}
+
+	if (GET_RECORD_CNT1(after_md_sleep_status.guard_sleep_cnt1)
+		== GET_RECORD_CNT1(before_md_sleep_status.guard_sleep_cnt1)) {
+		pr_info("[name:spm&][SPM] MD sleep info. is not updated");
+		return;
+	}
 
 	if (after_md_sleep_status.sleep_time >= before_md_sleep_status.sleep_time) {
 		pr_info("[name:spm&][SPM] md_slp_duration = %llu (32k)\n",
@@ -149,7 +180,7 @@ static void log_md_sleep_info(void)
 	}
 }
 #endif
-
+#endif
 static inline int lpm_suspend_common_enter(unsigned int *susp_status)
 {
 	unsigned int status = PLAT_VCORE_LP_MODE
@@ -244,24 +275,20 @@ void lpm_suspend_s2idle_reflect(int cpu,
 {
 	if (cpumask_weight(&s2idle_cpumask) == num_online_cpus()) {
 
+
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+		/* show md sleep status */
+		get_md_sleep_time(&after_md_sleep_status);
+#if !IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+		log_md_sleep_info();
+#endif
+#endif
 		__lpm_suspend_reflect(LPM_SUSPEND_S2IDLE,
 					 cpu, issuer);
-	pr_info("[name:spm&][%s:%d] - resume\n",
+		pr_info("[name:spm&][%s:%d] - resume\n",
 			__func__, __LINE__);
 
-	if ((after_md_sleep_time >= 0) && (after_md_sleep_time >= before_md_sleep_time))
-		pr_info("[name:spm&][SPM] md_slp_duration = %lld",
-			after_md_sleep_time - before_md_sleep_time);
-	else
-		pr_info("[name:spm&][SPM] md share memory is NULL");
-#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
-	/* show md sleep status */
-	get_md_sleep_time(&after_md_sleep_status);
-	log_md_sleep_info();
-#endif
-
-	pm_system_wakeup();
-
+		pm_system_wakeup();
 	}
 	cpumask_clear_cpu(cpu, &s2idle_cpumask);
 }
@@ -290,28 +317,39 @@ struct mtk_lpm_abort_control {
 };
 static struct mtk_lpm_abort_control mtk_lpm_ac[CPU_NUMBER];
 static int mtk_lpm_in_suspend;
+static struct hrtimer lpm_hrtimer[NR_CPUS];
+static enum hrtimer_restart lpm_hrtimer_timeout(struct hrtimer *timer)
+{
+	if (mtk_lpm_in_suspend) {
+		pr_info("[name:spm&][SPM] wakeup system due to not entering suspend\n");
+		pm_system_wakeup();
+	}
+	return HRTIMER_NORESTART;
+}
 static int mtk_lpm_monitor_thread(void *data)
 {
 	struct sched_param param = {.sched_priority = 99 };
 	struct mtk_lpm_abort_control *lpm_ac;
+	ktime_t kt;
 
 	lpm_ac = (struct mtk_lpm_abort_control *)data;
+	kt = ktime_set(5, 100000);
 
 	sched_setscheduler(current, SCHED_FIFO, &param);
 	allow_signal(SIGKILL);
 
-	msleep_interruptible(5000);
-
-	pm_system_wakeup();
-	if (mtk_lpm_in_suspend == 1)
-		pr_info("[name:spm&][SPM] wakeup system due to not entering suspend(%d)\n",
-				lpm_ac->cpu);
+	if (mtk_lpm_in_suspend) {
+		hrtimer_start(&lpm_hrtimer[lpm_ac->cpu], kt, HRTIMER_MODE_REL);
+		msleep_interruptible(5000);
+		hrtimer_cancel(&lpm_hrtimer[lpm_ac->cpu]);
+	} else {
+		msleep_interruptible(5000);
+	}
 
 	spin_lock(&lpm_abort_locker);
 	if (cpumask_test_cpu(lpm_ac->cpu, &abort_cpumask))
 		cpumask_clear_cpu(lpm_ac->cpu, &abort_cpumask);
 	spin_unlock(&lpm_abort_locker);
-
 	do_exit(0);
 }
 
@@ -321,6 +359,7 @@ static int lpm_spm_suspend_pm_event(struct notifier_block *notifier,
 {
 	struct timespec64 ts;
 	struct rtc_time tm;
+	int ret;
 	int cpu;
 
 	ktime_get_ts64(&ts);
@@ -334,20 +373,34 @@ static int lpm_spm_suspend_pm_event(struct notifier_block *notifier,
 	case PM_POST_HIBERNATION:
 		return NOTIFY_DONE;
 	case PM_SUSPEND_PREPARE:
+		ret = mtk_s2idle_state_enable(1);
+		if (ret)
+			return NOTIFY_BAD;
+		cpu_hotplug_disable();
 		suspend_online_cpus = num_online_cpus();
 		cpumask_clear(&abort_cpumask);
 		mtk_lpm_in_suspend = 1;
 		get_online_cpus();
 		for_each_online_cpu(cpu) {
-			cpumask_set_cpu(cpu, &abort_cpumask);
 			mtk_lpm_ac[cpu].ts = kthread_create(mtk_lpm_monitor_thread,
 					&mtk_lpm_ac[cpu], "LPM-%d", cpu);
 			mtk_lpm_ac[cpu].cpu = cpu;
 			if (!IS_ERR(mtk_lpm_ac[cpu].ts)) {
+				cpumask_set_cpu(cpu, &abort_cpumask);
 				kthread_bind(mtk_lpm_ac[cpu].ts, cpu);
 				wake_up_process(mtk_lpm_ac[cpu].ts);
 			} else {
-				pr_info("[name:spm&][SPM] create LPM monitor thread fail\n");
+				pr_info("[name:spm&][SPM] create LPM monitor thread %d fail\n",
+											cpu);
+				mtk_lpm_in_suspend = 0;
+				/* terminate previously created threads */
+				spin_lock(&lpm_abort_locker);
+				if (!cpumask_empty(&abort_cpumask)) {
+					for_each_cpu(cpu, &abort_cpumask) {
+						send_sig(SIGKILL, mtk_lpm_ac[cpu].ts, 0);
+					}
+				}
+				spin_unlock(&lpm_abort_locker);
 				put_online_cpus();
 				return NOTIFY_BAD;
 			}
@@ -356,6 +409,9 @@ static int lpm_spm_suspend_pm_event(struct notifier_block *notifier,
 		put_online_cpus();
 		return NOTIFY_DONE;
 	case PM_POST_SUSPEND:
+		cpu_hotplug_enable();
+		/* make sure the rest of callback proceeds*/
+		mtk_s2idle_state_enable(0);
 		mtk_lpm_in_suspend = 0;
 		spin_lock(&lpm_abort_locker);
 		if (!cpumask_empty(&abort_cpumask)) {
@@ -377,9 +433,8 @@ static struct notifier_block lpm_spm_suspend_pm_notifier_func = {
 
 #define MTK_LPM_SLEEP_COMPATIBLE_STRING "mediatek,sleep"
 static int spm_irq_number = -1;
-static irqreturn_t spm_irq0_handler(int irq, void *dev_id)
+static irqreturn_t spm_irq_handler(int irq, void *dev_id)
 {
-	pm_system_wakeup();
 	return IRQ_HANDLED;
 }
 
@@ -410,15 +465,19 @@ static int lpm_init_spm_irq(void)
 		pr_info("[name:spm&][SPM] failed to get spm irq\n");
 		goto FINISHED;
 	}
-/* Do not re-register spm irq handler again when TWAM presents */
-#if !IS_ENABLED(CONFIG_MTK_SPMTWAM)
-	ret = request_irq(irq, spm_irq0_handler,
-		IRQF_NO_SUSPEND, "spm-irq", NULL);
+
+	ret = request_irq(irq, spm_irq_handler, 0, "spm-irq", NULL);
 	if (ret) {
 		pr_info("[name:spm&][SPM] failed to install spm irq handler, ret = %d\n", ret);
 		goto FINISHED;
 	}
-#endif
+
+	ret = enable_irq_wake(irq);
+	if (ret) {
+		pr_info("[name:spm&][SPM] failed to enable spm irq wake, ret = %d\n", ret);
+		goto FINISHED;
+	}
+
 	/* tell ATF spm driver that spm irq pending number */
 	spm_irq_number = virq_to_hwirq(irq);
 	ret = lpm_smc_spm(MT_SPM_SMC_UID_SET_PENDING_IRQ_INIT,
@@ -454,12 +513,15 @@ static int lpm_s2idle_barrier(void)
 
 	cpu_latency_qos_add_request(&lpm_qos_request, s2idle_block_value);
 
+	mtk_s2idle_state_enable(0);
+
 	return 0;
 }
 
 int __init lpm_model_suspend_init(void)
 {
 	int ret;
+	int i;
 
 	int suspend_type = lpm_suspend_type_get();
 
@@ -483,8 +545,9 @@ int __init lpm_model_suspend_init(void)
 
 	cpumask_clear(&s2idle_cpumask);
 
+#if !IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
 	get_md_sleep_time_addr();
-
+#endif
 #if IS_ENABLED(CONFIG_PM)
 	ret = register_pm_notifier(&lpm_spm_suspend_pm_notifier_func);
 	if (ret) {
@@ -498,6 +561,10 @@ int __init lpm_model_suspend_init(void)
 		return ret;
 	}
 
+	for (i = 0; i < CPU_NUMBER; i++) {
+		hrtimer_init(&lpm_hrtimer[i], CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+		lpm_hrtimer[i].function = lpm_hrtimer_timeout;
+	}
 #endif /* CONFIG_PM */
 
 	return 0;

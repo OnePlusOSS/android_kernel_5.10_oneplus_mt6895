@@ -22424,8 +22424,8 @@ enum {
 	MT6338_DLSRC_44100HZ = 0x7,
 	MT6338_DLSRC_48000HZ = 0x8,
 	MT6338_DLSRC_96000HZ = 0x9,
-	MT6338_DLSRC_192000HZ = 0x10,
-	MT6338_DLSRC_384000HZ = 11,
+	MT6338_DLSRC_192000HZ = 0xa,
+	MT6338_DLSRC_384000HZ = 0xb,
 };
 
 enum {
@@ -22748,9 +22748,14 @@ struct mt6338_priv {
 	int hp_gain_ctl;
 	int hp_hifi_mode;
 	int hp_plugged;
+#ifdef OPLUS_ARCH_EXTENDS
+	int hp_volume_flag;
+	int mic_adc_flag;
+#endif
 	int mtkaif_protocol;
 	int dmic_one_wire_mode;
 	int mic_hifi_mode;
+	int mic_ulcf_en;
 	unsigned int vd105;
 
 	/* hw version */

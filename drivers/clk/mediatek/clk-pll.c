@@ -60,7 +60,11 @@ struct mtk_clk_pll {
 	struct regmap	*hwv_regmap;
 };
 
+#if IS_ENABLED(CONFIG_MEDIATEK_FHCTL_V1)
+bool (*mtk_fh_set_rate)(int pll_id, unsigned long dds, int postdiv) = NULL;
+#else
 bool (*mtk_fh_set_rate)(const char *name, unsigned long dds, int postdiv) = NULL;
+#endif
 EXPORT_SYMBOL(mtk_fh_set_rate);
 
 static inline struct mtk_clk_pll *to_mtk_clk_pll(struct clk_hw *hw)
@@ -220,9 +224,13 @@ static int mtk_pll_set_rate(struct clk_hw *hw, unsigned long rate,
 	u32 postdiv;
 
 	mtk_pll_calc_values(pll, &pcw, &postdiv, rate, parent_rate);
+#if IS_ENABLED(CONFIG_MEDIATEK_FHCTL_V1)
+	if (!mtk_fh_set_rate || !mtk_fh_set_rate(pll->data->id, pcw, postdiv))
+		mtk_pll_set_rate_regs(pll, pcw, postdiv);
+#else
 	if (!mtk_fh_set_rate || !mtk_fh_set_rate(pll->data->name, pcw, postdiv))
 		mtk_pll_set_rate_regs(pll, pcw, postdiv);
-
+#endif
 	return 0;
 }
 
@@ -370,7 +378,7 @@ static int mtk_hwv_pll_is_prepared(struct clk_hw *hw)
 static int mtk_hwv_pll_prepare(struct clk_hw *hw)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
-	u32 val, val2;
+	u32 val = 0, val2 = 0;
 	int i = 0;
 
 	/* wait for irq idle */
@@ -440,7 +448,7 @@ err_hwv_prepare:
 static void mtk_hwv_pll_unprepare(struct clk_hw *hw)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
-	u32 val, val2;
+	u32 val = 0, val2 = 0;
 	int i = 0;
 
 	/* wait for irq idle */

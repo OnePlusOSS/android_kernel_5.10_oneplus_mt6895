@@ -55,6 +55,28 @@ enum dbg_ctrl_enum {
 	DBG_CTRL_MAX,
 };
 
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+enum MT_SPM_STAT_TYPE {
+	SPM_SLP_COUNT,
+	SPM_SLP_DURATION,
+};
+
+enum MT_SPM_STAT_SCENARIO_TYPE {
+	SPM_IDLE_STAT,
+	SPM_SUSPEND_STAT,
+};
+
+enum MT_SPM_STAT_STATE {
+	SPM_STAT_MCUSYS,
+	SPM_STAT_F26M,
+	NUM_SPM_STAT,
+};
+
+struct lpm_stat_record {
+	u64 count;
+	u64 duration;
+};
+#endif
 /* Determine for operand bit */
 #define MTK_DUMP_LP_GOLDEN	(1 << 0L)
 #define MTK_DUMP_GPIO		(1 << 1L)
@@ -89,6 +111,8 @@ struct spm_condition {
 
 #if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
 struct md_sleep_status {
+	u64 guard_sleep_cnt1;
+	u64 sleep_utc;
 	u64 sleep_wall_clk;
 	u64 sleep_cnt;
 	u64 sleep_cnt_reserve;
@@ -99,9 +123,24 @@ struct md_sleep_status {
 	u64 wcdma_sleep_time; //uS
 	u64 lte_sleep_time; // uS
 	u64 nr_sleep_time; // uS
+	u64 reserved[51]; //0x60~0x1F0
+	u64 guard_sleep_cnt2;
 };
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+void get_md_sleep_time(struct md_sleep_status *md_data);
+void log_md_sleep_info(void);
+extern u32 *md_share_mem;
+extern struct md_sleep_status before_md_sleep_status;
+extern struct md_sleep_status after_md_sleep_status;
+extern struct md_sleep_status cur_md_sleep_status;
+#endif
 #endif
 
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+struct lpm_dbg_lp_info {
+	struct lpm_stat_record record[NUM_SPM_STAT];
+};
+#endif
 extern u64 spm_26M_off_count;
 extern u64 spm_26M_off_duration;
 extern u64 ap_pd_count;

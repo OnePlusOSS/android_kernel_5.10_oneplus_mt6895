@@ -22,7 +22,7 @@
 #include <linux/uaccess.h>
 #include <linux/delay.h>
 #include <linux/cpufreq.h>
-
+#if IS_ENABLED(CONFIG_MTK_LEAKAGE_AWARE_TEMP)
 #define __LKG_PROCFS__ 1
 #define __LKG_DEBUG__ 0
 
@@ -121,7 +121,13 @@ static int leakage_trial_proc_show(struct seq_file *m, void *v)
 {
 	int power, a, b, c;
 	u32 *repo = m->private;
-	if (cpu >= info.clusters)
+	if (cpu >= info.clusters || cpu < 0)
+		return 0;
+
+	if (temp > 150 || temp < 0)
+		return 0;
+
+	if (opp > 32 || opp < 0)
 		return 0;
 
 	a = repo[144+cpu*72+opp*2];
@@ -137,15 +143,23 @@ static int leakage_trial_proc_show(struct seq_file *m, void *v)
 static ssize_t leakage_trial_proc_write(struct file *file,
 	const char __user *buffer, size_t count, loff_t *pos)
 {
-		char *buf = (char *) __get_free_page(GFP_USER);
+	char *buf = (char *) __get_free_page(GFP_USER);
 
-		if (copy_from_user(buf, buffer, count)) {
-			free_page((unsigned long)buf);
-			return -EINVAL;
-		}
+	if (!buf)
+		return -ENOMEM;
 
-		if (sscanf(buf, "%d %d %d", &cpu, &opp, &temp) != 3) {
-			free_page((unsigned long)buf);
+	if (count > 255) {
+		free_page((unsigned long)buf);
+		return -EINVAL;
+	}
+
+	if (copy_from_user(buf, buffer, count)) {
+		free_page((unsigned long)buf);
+		return -EINVAL;
+	}
+
+	if (sscanf(buf, "%d %d %d", &cpu, &opp, &temp) != 3) {
+		free_page((unsigned long)buf);
 		return -EINVAL;
 	}
 	return count;
@@ -260,7 +274,18 @@ int mtk_static_power_init(void)
 	return ret;
 
 }
+#else
+unsigned int mtk_get_leakage(unsigned int cpu, unsigned int opp, unsigned int temperature)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mtk_get_leakage);
 
+int mtk_static_power_init(void)
+{
+	return 0;
+}
+#endif
 
 MODULE_DESCRIPTION("MTK static power Platform Driver v0.1.1");
 MODULE_AUTHOR("Chienwei Chang <chiewei.chang@mediatek.com>");

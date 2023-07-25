@@ -19,8 +19,24 @@
 #include "mtk_iommu.h"
 #include "mmqos-mtk.h"
 #include "mtk_qos_bound.h"
+/* Compatible with 32bit division and mold operation */
+#if IS_ENABLED(CONFIG_ARCH_DMA_ADDR_T_64BIT)
+#define DO_COMMON_DIV(x, base) ((x) / (base))
+#else
+#define DO_COMMON_DIV(x, base) ({                   \
+	__typeof__(x) result = 0;                   \
+	if (sizeof(x) < sizeof(uint64_t))           \
+		result = ((x) / (base));            \
+	else {                                      \
+		uint64_t __x = (x);                 \
+		do_div(__x, (base));                \
+		result = __x;                       \
+	}                                           \
+	result;                                     \
+})
+#endif
 #define SHIFT_ROUND(a, b)	((((a) - 1) >> (b)) + 1)
-#define icc_to_MBps(x)	((x) / 1000)
+#define icc_to_MBps(x)	DO_COMMON_DIV((x), 1000)
 #define MASK_8(a) ((a) & 0xff)
 #define MULTIPLY_RATIO(value) ((value)*1000)
 
@@ -82,6 +98,16 @@ static u32 chn_srt_r_bw[MMQOS_MAX_COMM_NUM][MMQOS_COMM_CHANNEL_NUM] = {};
 static u32 chn_hrt_w_bw[MMQOS_MAX_COMM_NUM][MMQOS_COMM_CHANNEL_NUM] = {};
 static u32 chn_srt_w_bw[MMQOS_MAX_COMM_NUM][MMQOS_COMM_CHANNEL_NUM] = {};
 
+#if !IS_ENABLED(CONFIG_MTK_DRAMC)
+/*
+ * TODO dummy implementation, remove this if dram ready
+ */
+unsigned int mtk_dramc_get_ddr_type(void)
+{
+	return 0;
+}
+#endif
+
 static void mmqos_update_comm_bw(struct device *dev,
 	u32 comm_port, u32 freq, u64 mix_bw, u64 bw_peak, bool qos_bound, bool max_bwl)
 {
@@ -91,7 +117,7 @@ static void mmqos_update_comm_bw(struct device *dev,
 	if (!freq || !dev)
 		return;
 	if (mix_bw)
-		comm_bw = (mix_bw << 8) / freq;
+		comm_bw = DO_COMMON_DIV((mix_bw << 8), freq);
 	if (max_bwl)
 		comm_bw = 0xfff;
 	if (comm_bw)
@@ -194,9 +220,9 @@ static void set_comm_icc_bw(struct common_node *comm_node)
 		mutex_lock(&comm_port_node->bw_lock);
 		avg_bw += comm_port_node->latest_avg_bw;
 		if (comm_port_node->hrt_type < HRT_TYPE_NUM) {
-			normalize_peak_bw = MULTIPLY_RATIO(comm_port_node->latest_peak_bw)
-						/ mtk_mmqos_get_hrt_ratio(
-						comm_port_node->hrt_type);
+			normalize_peak_bw =
+				DO_COMMON_DIV(MULTIPLY_RATIO(comm_port_node->latest_peak_bw),
+				mtk_mmqos_get_hrt_ratio(comm_port_node->hrt_type));
 			peak_bw += normalize_peak_bw;
 		}
 		mutex_unlock(&comm_port_node->bw_lock);
@@ -312,11 +338,14 @@ static int mtk_mmqos_set(struct icc_node *src, struct icc_node *dst)
 				larb_node->old_peak_bw = src->peak_bw;
 				larb_node->old_avg_bw = src->avg_bw;
 			} else {
-				if (comm_port_node->hrt_type == HRT_DISP
-					&& gmmqos->dual_pipe_enable) {
+				if (comm_port_node->hrt_type == HRT_DISP) {
+					//&& gmmqos->dual_pipe_enable) {
 					chn_hrt_r_bw[comm_id][chnn_id] -= larb_node->old_peak_bw;
 					chn_hrt_r_bw[comm_id][chnn_id] += (src->peak_bw / 2);
 					larb_node->old_peak_bw = (src->peak_bw / 2);
+					if (log_level & 1 << log_bw)
+						pr_notice("%s disp comm_port_node dual_en=%d\n",
+						__func__, gmmqos->dual_pipe_enable);
 				} else {
 					chn_hrt_r_bw[comm_id][chnn_id] -= larb_node->old_peak_bw;
 					chn_hrt_r_bw[comm_id][chnn_id] += src->peak_bw;
@@ -397,11 +426,12 @@ static int mtk_mmqos_set(struct icc_node *src, struct icc_node *dst)
 		}
 		if (log_level & 1 << log_bw)
 			dev_notice(larb_node->larb_dev,
-				"larb=%d port=%d avg_bw:%d peak_bw:%d ostd=%#x\n",
+				"larb=%d port=%d avg:%d peak:%d ostd=%#x du_en=%d du_id=%d\n",
 				MTK_M4U_TO_LARB(src->id), MTK_M4U_TO_PORT(src->id),
 				icc_to_MBps(larb_port_node->base->icc_node->avg_bw),
 				icc_to_MBps(larb_port_node->base->icc_node->peak_bw),
-				value);
+				value, gmmqos->dual_pipe_enable, larb_node->dual_pipe_id);
+
 		//queue_work(mmqos->wq, &larb_node->work);
 		break;
 	default:
@@ -737,6 +767,7 @@ int mtk_mmqos_probe(struct platform_device *pdev)
 		memcpy(hrt, &mmqos_desc->hrt, sizeof(mmqos_desc->hrt));
 	pr_notice("[mmqos] ddr type: %d\n", mtk_dramc_get_ddr_type());
 
+	hrt->md_scen = mmqos_desc->md_scen;
 	mtk_mmqos_init_hrt(hrt);
 	mmqos->nb.notifier_call = update_mm_clk;
 	register_mmdvfs_notifier(&mmqos->nb);

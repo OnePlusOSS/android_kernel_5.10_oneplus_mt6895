@@ -15,6 +15,12 @@
 #include <dt-bindings/interconnect/mtk,mmqos.h>
 #include <soc/mediatek/mmqos.h>
 
+#include "mtk_drm_assert.h"
+
+#ifdef CONFIG_MTK_FB_MMDVFS_SUPPORT
+#include <linux/interconnect.h>
+extern u32 *disp_perfs;
+#endif
 
 #define CRTC_NUM		3
 static struct drm_crtc *dev_crtc;
@@ -31,6 +37,8 @@ void mtk_disp_pmqos_get_icc_path_name(char *buf, int buf_len,
 	int len;
 
 	len = snprintf(buf, buf_len, "%s_%s", mtk_dump_comp_str(comp), qos_event);
+	if (len < 0)
+		DDPPR_ERR("%s:snprintf error: %d\n", __func__, len);
 }
 
 int __mtk_disp_pmqos_slot_look_up(int comp_id, int mode)
@@ -187,8 +195,10 @@ int mtk_disp_set_hrt_bw(struct mtk_drm_crtc *mtk_crtc, unsigned int bw)
 	tmp = bw;
 
 	for (i = 0; i < DDP_PATH_NR; i++) {
-		if (!(mtk_crtc->ddp_ctx[mtk_crtc->ddp_mode].req_hrt[i]))
-			continue;
+		if (mtk_crtc->ddp_mode < DDP_MODE_NR) {
+			if (!(mtk_crtc->ddp_ctx[mtk_crtc->ddp_mode].req_hrt[i]))
+				continue;
+		}
 		for_each_comp_in_crtc_target_path(comp, mtk_crtc, j, i) {
 			ret |= mtk_ddp_comp_io_cmd(comp, NULL, PMQOS_SET_HRT_BW,
 						   &tmp);
@@ -208,7 +218,30 @@ int mtk_disp_set_hrt_bw(struct mtk_drm_crtc *mtk_crtc, unsigned int bw)
 			tmp = 1;
 	}
 
+	if (priv->data->mmsys_id == MMSYS_MT6879) {
+		if (crtc->state && crtc->state->active) {
+			if (tmp == 0 && mtk_drm_dal_enable()) {
+				tmp = mtk_drm_primary_frame_bw(crtc) / 2;
+				DDPMSG("%s: add HRT bw %u when active and only have dal layer\n",
+					__func__, mtk_drm_primary_frame_bw(crtc) / 2);
+			}
+		} else {
+			DDPMSG("%s: set HRT bw %u when suspend\n", __func__, tmp);
+		}
+	}
+
+#ifdef CONFIG_MTK_FB_MMDVFS_SUPPORT
+	if (tmp == 0)
+		icc_set_bw(priv->hrt_bw_request, 0, disp_perfs[HRT_LEVEL_LEVEL2]);
+	else if (tmp > 0 && tmp <= 3500)
+		icc_set_bw(priv->hrt_bw_request, 0, disp_perfs[HRT_LEVEL_LEVEL1]);
+	else if (tmp > 3500)
+		icc_set_bw(priv->hrt_bw_request, 0, disp_perfs[HRT_LEVEL_LEVEL0]);
+	else
+		icc_set_bw(priv->hrt_bw_request, 0, disp_perfs[HRT_LEVEL_LEVEL2]);
+#else
 	mtk_icc_set_bw(priv->hrt_bw_request, 0, MBps_to_icc(tmp));
+#endif
 	DRM_MMP_MARK(hrt_bw, 0, tmp);
 	DDPINFO("set HRT bw %u\n", tmp);
 
@@ -346,6 +379,11 @@ void mtk_drm_mmdvfs_init(struct device *dev)
 	mtk_drm_mmdvfs_get_avail_freq(dev);
 }
 
+unsigned int mtk_drm_get_mmclk_step_size(void)
+{
+	return step_size;
+}
+
 void mtk_drm_set_mmclk(struct drm_crtc *crtc, int level,
 			const char *caller)
 {
@@ -399,29 +437,47 @@ void mtk_drm_set_mmclk(struct drm_crtc *crtc, int level,
 void mtk_drm_set_mmclk_by_pixclk(struct drm_crtc *crtc,
 	unsigned int pixclk, const char *caller)
 {
-	int i;
+	int i, ret = 0;
+	unsigned int idx = drm_crtc_index(crtc);
 	unsigned long freq = pixclk * 1000000;
+	unsigned int fps_dst = drm_mode_vrefresh(&crtc->state->mode);
+	static bool mmclk_status;
 
 	g_freq = freq;
 
+	DRM_MMP_EVENT_START(mmclk, idx, fps_dst);
+	if (mmclk_status == true) {
+		DRM_MMP_MARK(mmclk, idx, fps_dst);
+		DDPINFO("%s: double set mmclk\n", __func__);
+	}
+	mmclk_status = true;
 	if (freq > g_freq_steps[step_size - 1]) {
-		DDPMSG("%s:error:pixleclk (%d) is to big for mmclk (%llu)\n",
+		DDPMSG("%s:error:pixleclk (%lu) is to big for mmclk (%u)\n",
 			caller, freq, g_freq_steps[step_size - 1]);
 		mtk_drm_set_mmclk(crtc, step_size - 1, caller);
-		return;
+		ret = step_size - 1;
+		goto end;
 	}
 	if (!freq) {
 		mtk_drm_set_mmclk(crtc, -1, caller);
-		return;
+		ret = -1;
+		goto end;
 	}
 	for (i = step_size - 2 ; i >= 0; i--) {
 		if (freq > g_freq_steps[i]) {
 			mtk_drm_set_mmclk(crtc, i + 1, caller);
+			ret = i + 1;
 			break;
 		}
-		if (i == 0)
+		if (i == 0) {
 			mtk_drm_set_mmclk(crtc, 0, caller);
+			ret = 0;
+		}
 	}
+
+end:
+	mmclk_status = false;
+	DRM_MMP_EVENT_END(mmclk, pixclk, ret);
 }
 
 unsigned long mtk_drm_get_freq(struct drm_crtc *crtc, const char *caller)
@@ -441,7 +497,7 @@ unsigned long mtk_drm_get_mmclk(struct drm_crtc *crtc, const char *caller)
 	else
 		freq = g_freq_steps[0];
 
-	DDPINFO("%s[%d]g_freq_level[idx=%d]: %d (freq=%d)\n",
+	DDPINFO("%s[%d]g_freq_level[idx=%d]: %d (freq=%lu)\n",
 		__func__, __LINE__, idx, g_freq_level[idx], freq);
 
 	return freq;

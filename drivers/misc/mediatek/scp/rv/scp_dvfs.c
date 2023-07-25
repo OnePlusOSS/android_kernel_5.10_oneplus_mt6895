@@ -92,15 +92,13 @@ static int scp_dvfs_flag = 1;
 /*
  * 0: SCP Sleep: OFF,
  * 1: SCP Sleep: ON,
- * 2: SCP Sleep: sleep without wakeup,
- * 3: SCP Sleep: force to sleep
  */
 static int scp_resrc_current_req = -1;
 
 static struct mt_scp_pll_t mt_scp_pll;
 static struct wakeup_source *scp_suspend_lock;
 static int g_scp_dvfs_init_flag = -1;
-static int g_scp_dvfs_enable; /* feature enabled? */
+static int g_scp_dvfs_enable; /* feature enabled */
 
 static struct scp_dvfs_hw dvfs;
 
@@ -251,8 +249,10 @@ int scp_resource_req(unsigned int req_type)
 {
 	struct arm_smccc_res res;
 
-	if (req_type < 0 || req_type >= SCP_REQ_MAX)
+	if (req_type >= SCP_REQ_MAX)
 		return 0;
+
+	pr_notice("%s(0x%x)\n", __func__, req_type);
 
 	arm_smccc_smc(MTK_SIP_SCP_DVFS_CONTROL, RESOURCE_REQ,
 		req_type, 0, 0, 0, 0, 0, &res);
@@ -328,7 +328,7 @@ static int scp_update_pmic_vow_lp_mode(bool on)
 {
 	int ret = 0;
 
-	if (dvfs.vlp_support) {
+	if (dvfs.vlp_support || dvfs.bypass_pmic_rg_access) {
 		pr_notice("[%s]: VCORE DVS is not supported\n", __func__);
 		WARN_ON(1);
 		return -ESCP_DVFS_DVS_SHOULD_BE_BYPASSED;
@@ -385,13 +385,15 @@ static int scp_set_pmic_vcore(unsigned int cur_freq)
 		WARN_ON(1);
 	}
 
-	/* vcore > 0.6v cannot hold pmic/vcore in lp mode */
-	if (idx < dvfs.vow_lp_en_gear)
-		/* enable VOW low power mode */
-		scp_update_pmic_vow_lp_mode(true);
-	else
-		/* disable VOW low power mode */
-		scp_update_pmic_vow_lp_mode(false);
+	if (dvfs.vow_lp_en_gear != -1) {
+		/* vcore > 0.6v cannot hold pmic/vcore in lp mode */
+		if (idx < dvfs.vow_lp_en_gear)
+			/* enable VOW low power mode */
+			scp_update_pmic_vow_lp_mode(true);
+		else
+			/* disable VOW low power mode */
+			scp_update_pmic_vow_lp_mode(false);
+	}
 #endif /* CONFIG_FPGA_EARLY_PORTING */
 
 	return ret;
@@ -583,8 +585,7 @@ int scp_request_freq_vcore(void)
 				SCP_REQ_SYSPLL);
 
 		/*  turn on PLL if necessary */
-		if (!dvfs.vlp_support) /* no parking needed for vlp */
-			scp_pll_ctrl_set(PLL_ENABLE, scp_expected_freq);
+		scp_pll_ctrl_set(PLL_ENABLE, scp_expected_freq);
 
 		do {
 			ret = mtk_ipi_send(&scp_ipidev,
@@ -592,13 +593,14 @@ int scp_request_freq_vcore(void)
 				IPI_SEND_WAIT, &scp_expected_freq,
 				PIN_OUT_SIZE_DVFS_SET_FREQ_0, 0);
 			if (ret != IPI_ACTION_DONE)
-				pr_notice("SCP send IPI fail - %d\n", ret);
+				pr_notice("SCP send IPI fail - %d, %d\n", ret, timeout);
 
 			mdelay(2);
 			timeout -= 1; /*try 50 times, total about 100ms*/
 			if (timeout <= 0) {
 				pr_notice("set freq fail, current(%d) != expect(%d)\n",
 					scp_current_freq, scp_expected_freq);
+				scp_resource_req(SCP_REQ_RELEASE);
 				__pm_relax(scp_suspend_lock);
 				WARN_ON(1);
 				return -ESCP_DVFS_IPI_FAILED;
@@ -612,8 +614,7 @@ int scp_request_freq_vcore(void)
 		} while (scp_current_freq != scp_expected_freq);
 
 		/* turn off PLL if necessary */
-		if (!dvfs.vlp_support) /* no parking needed for vlp */
-			scp_pll_ctrl_set(PLL_DISABLE, scp_expected_freq);
+		scp_pll_ctrl_set(PLL_DISABLE, scp_expected_freq);
 
 		/* do DVS after DFS if decreasing frequency */
 		if (is_increasing_freq == 0)
@@ -639,6 +640,7 @@ int scp_request_freq_vlp(void)
 	int timeout = 50;
 	int ret = 0;
 	unsigned long spin_flags;
+	int opp_idx;
 
 	if (scp_dvfs_flag != 1) {
 		pr_debug("[%s]: warning: SCP DVFS is OFF\n", __func__);
@@ -675,6 +677,9 @@ int scp_request_freq_vlp(void)
 				SCP_REQ_INFRA |
 				SCP_REQ_SYSPLL);
 
+		/*  turn on PLL if necessary */
+		scp_pll_ctrl_set(PLL_ENABLE, scp_expected_freq);
+
 		do {
 			ret = mtk_ipi_send(&scp_ipidev,
 				IPI_OUT_DVFS_SET_FREQ_0,
@@ -704,9 +709,16 @@ int scp_request_freq_vlp(void)
 			return -ESCP_DVFS_IPI_FAILED;
 		}
 
+		/* turn off PLL if necessary */
+		scp_pll_ctrl_set(PLL_DISABLE, scp_expected_freq);
+
 		scp_awake_unlock((void *)SCP_A_ID);
 
-		scp_resource_req(SCP_REQ_RELEASE);
+		opp_idx = scp_get_freq_idx(scp_expected_freq);
+		if (dvfs.opp[opp_idx].resource_req)
+			scp_resource_req(dvfs.opp[opp_idx].resource_req);
+		else
+			scp_resource_req(SCP_REQ_RELEASE);
 	}
 
 	__pm_relax(scp_suspend_lock);
@@ -747,7 +759,7 @@ static int set_scp_clk_mux(unsigned int  pll_ctrl_flag)
 
 	if (pll_ctrl_flag == PLL_ENABLE) {
 		if (!dvfs.pre_mux_en) {
-			ret = clk_prepare_enable(mt_scp_pll.clk_mux);
+			ret = clk_prepare_enable(mt_scp_pll.clk_mux); /* should not enable twice */
 			if (ret) {
 				pr_notice("[%s]: clk_prepare_enable failed\n",
 					__func__);
@@ -757,7 +769,7 @@ static int set_scp_clk_mux(unsigned int  pll_ctrl_flag)
 			dvfs.pre_mux_en = true;
 		}
 	} else if (pll_ctrl_flag == PLL_DISABLE) {
-		clk_disable_unprepare(mt_scp_pll.clk_mux);
+		clk_disable_unprepare(mt_scp_pll.clk_mux); /* should not disable twice */
 		dvfs.pre_mux_en = false;
 	}
 
@@ -833,6 +845,7 @@ int scp_pll_ctrl_set(unsigned int pll_ctrl_flag, unsigned int pll_sel)
 		}
 	} else if ((pll_ctrl_flag == PLL_DISABLE) &&
 			(dvfs.opp[idx].resource_req == 0)) {
+		/* if resource_req != 0, it means it may need resource to keep pll on. */
 		set_scp_clk_mux(pll_ctrl_flag);
 	}
 	return ret;
@@ -1036,8 +1049,7 @@ static int mt_scp_dvfs_sleep_proc_show(struct seq_file *m, void *v)
 		pr_notice("[%s] ipi send failed with error: %d\n",
 			__func__, ret);
 	} else {
-		if (*scp_ack_data >= SCP_SLEEP_OFF &&
-				*scp_ack_data <= SCP_SLEEP_ON)
+		if (*scp_ack_data <= SCP_SLEEP_ON)
 			seq_printf(m, "scp sleep flag: %d\n",
 				*scp_ack_data);
 		else
@@ -1100,6 +1112,7 @@ static ssize_t mt_scp_dvfs_sleep_proc_write(
 		} else {
 			pr_notice("[%s]: invalid debug core: %d\n",
 				__func__, dvfs.cur_dbg_core);
+			return -ESCP_DVFS_DBG_INVALID_CMD;
 		}
 		ret = mtk_ipi_send(&scp_ipidev, ipi_cmd, IPI_SEND_WAIT,
 			&ipi_data, ipi_cmd_size, 500);
@@ -1109,7 +1122,7 @@ static ssize_t mt_scp_dvfs_sleep_proc_write(
 			return -ESCP_DVFS_IPI_FAILED;
 		}
 	} else if (!strcmp(cmd, "dbg_core")) {
-		dbg_core = slp_cmd;
+		dbg_core = (enum scp_core_enum) slp_cmd;
 		if (dbg_core < SCP_MAX_CORE_NUM)
 			dvfs.cur_dbg_core = dbg_core;
 	} else {
@@ -1310,21 +1323,24 @@ static void __init mt_pmic_sshub_init(void)
 			pr_notice("Set wrong vsram voltage\n");
 	}
 
-	scp_reg_init(dvfs.pmic_regmap, &dvfs.pmic_regs->_sshub_op_mode);
-	scp_reg_init(dvfs.pmic_regmap, &dvfs.pmic_regs->_sshub_op_en);
-	scp_reg_init(dvfs.pmic_regmap, &dvfs.pmic_regs->_sshub_op_cfg);
-
+	if (!dvfs.bypass_pmic_rg_access) {
+		scp_reg_init(dvfs.pmic_regmap, &dvfs.pmic_regs->_sshub_op_mode);
+		scp_reg_init(dvfs.pmic_regmap, &dvfs.pmic_regs->_sshub_op_en);
+		scp_reg_init(dvfs.pmic_regmap, &dvfs.pmic_regs->_sshub_op_cfg);
+	}
 
 	if (dvfs.pmic_sshub_en) {
-		/* BUCK_VCORE_SSHUB_EN: ON */
-		/* LDO_VSRAM_OTHERS_SSHUB_EN: ON */
-		/* PMRC mode: OFF */
-		scp_reg_init(dvfs.pmic_regmap,
-			&dvfs.pmic_regs->_sshub_buck_en);
-		scp_reg_init(dvfs.pmic_regmap,
-			&dvfs.pmic_regs->_sshub_ldo_en);
-		scp_reg_init(dvfs.pmic_regmap,
-			&dvfs.pmic_regs->_pmrc_en);
+		if (!dvfs.bypass_pmic_rg_access) {
+			/* BUCK_VCORE_SSHUB_EN: ON */
+			/* LDO_VSRAM_OTHERS_SSHUB_EN: ON */
+			/* PMRC mode: OFF */
+			scp_reg_init(dvfs.pmic_regmap,
+				&dvfs.pmic_regs->_sshub_buck_en);
+			scp_reg_init(dvfs.pmic_regmap,
+				&dvfs.pmic_regs->_sshub_ldo_en);
+			scp_reg_init(dvfs.pmic_regmap,
+				&dvfs.pmic_regs->_pmrc_en);
+		}
 
 		if (regulator_enable(reg_vcore) != 0)
 			pr_notice("Enable vcore failed!!!\n");
@@ -1336,22 +1352,24 @@ static void __init mt_pmic_sshub_init(void)
 
 static_assert(CAL_BITS + CAL_EXT_BITS <= 8 * sizeof(unsigned short),
 "error: there are only 16bits available in IPI\n");
-void sync_ulposc_cali_data_to_scp(void)
+bool sync_ulposc_cali_data_to_scp(void)
 {
 	unsigned int sel_clk = 0;
 	unsigned int ipi_data[2];
 	unsigned short *p = (unsigned short *)&ipi_data[1];
 	int i, ret;
+	bool cali_ok = true;
 
 	if (!dvfs.ulposc_hw.do_ulposc_cali) {
 		pr_notice("[%s]: ulposc2 calibration is not done by AP\n",
 			__func__);
-		return;
+		/* u2 is usable, return true */
+		return true;
 	}
 
 	if (dvfs.ulposc_hw.cali_failed) {
 		pr_notice("[%s]: ulposc2 calibration failed\n", __func__);
-		return;
+		return false;
 	}
 
 	if (!dvfs.sleep_init_done)
@@ -1383,6 +1401,7 @@ void sync_ulposc_cali_data_to_scp(void)
 				dvfs.ulposc_hw.cali_freq[i],
 				*(p + 1));
 			WARN_ON(1);
+			cali_ok = false;
 		}
 	}
 
@@ -1392,6 +1411,7 @@ void sync_ulposc_cali_data_to_scp(void)
 		pr_notice("[%s]:ERROR scp is not switched to ULPOSC, CLK_SW_SEL=0x%x\n",
 			__func__, sel_clk);
 		WARN_ON(1);
+		cali_ok = false;
 	} else {
 		/*
 		 * After syncing, scp will be changed to default freq, which is not set by kernel.
@@ -1399,6 +1419,7 @@ void sync_ulposc_cali_data_to_scp(void)
 		 */
 		last_scp_expected_freq = 0;
 	}
+	return cali_ok;
 }
 
 static inline bool __init is_ulposc_cali_pass(unsigned int cur,
@@ -1999,7 +2020,7 @@ static int __init mt_scp_dts_get_cali_target(struct device_node *node,
 {
 	int ret = 0;
 	unsigned int i;
-	unsigned int tmp;
+	unsigned int tmp = 0;
 
 	/* find number of ulposc need to do calibration */
 	ret = of_property_read_u32(node, "ulposc-cali-num",
@@ -2205,7 +2226,7 @@ static int __init mt_scp_dts_init_cali_regmap(struct device_node *node,
 		cali_hw->fmeter_regmap = syscon_regmap_lookup_by_phandle(node,
 								FM_CLK_PHANDLE_NAME);
 		if (IS_ERR(cali_hw->fmeter_regmap)) {
-			pr_notice("fmeter regmap init failed: %d\n",
+			pr_notice("fmeter regmap init failed: %ld\n",
 				PTR_ERR(cali_hw->fmeter_regmap));
 			return PTR_ERR(cali_hw->fmeter_regmap);
 		}
@@ -2214,7 +2235,7 @@ static int __init mt_scp_dts_init_cali_regmap(struct device_node *node,
 	cali_hw->ulposc_regmap = syscon_regmap_lookup_by_phandle(node,
 							ULPOSC_CLK_PHANDLE_NAME);
 	if (IS_ERR(cali_hw->ulposc_regmap)) {
-		pr_notice("ulposc regmap init failed: %d\n",
+		pr_notice("ulposc regmap init failed: %ld\n",
 			PTR_ERR(cali_hw->ulposc_regmap));
 		return PTR_ERR(cali_hw->ulposc_regmap);
 	}
@@ -2448,6 +2469,11 @@ static int __init mt_scp_dts_regmap_init(struct platform_device *pdev,
 	if (dvfs.vlp_support)
 		goto BYPASS_PMIC;
 
+	dvfs.bypass_pmic_rg_access = of_property_read_bool(node, "no-pmic-rg-access");
+	pr_notice("bypass_pmic_rg_access: %s\n", dvfs.bypass_pmic_rg_access?"Yes":"No");
+	if (dvfs.bypass_pmic_rg_access)
+		goto BYPASS_PMIC;
+
 	pmic_node = of_parse_phandle(node, PMIC_PHANDLE_NAME, 0);
 	if (!pmic_node) {
 		dev_notice(&pdev->dev, "fail to find pmic node\n");
@@ -2555,7 +2581,9 @@ static int __init mt_scp_dts_init(struct platform_device *pdev)
 		goto DTS_FAILED;
 	}
 
-	if (!dvfs.vlp_support) {
+	if (dvfs.vlp_support || dvfs.bypass_pmic_rg_access)
+		pr_notice("bypass pmic rg init\n");
+	else {
 		ret = mt_scp_dts_init_pmic_data();
 		if (ret)
 			goto DTS_FAILED;
@@ -2650,6 +2678,13 @@ static int __init mt_scp_dts_init(struct platform_device *pdev)
 			dvfs.secure_access_scp = 1;
 	}
 	pr_notice("secure_access_scp: %s\n", dvfs.secure_access_scp?"enable":"disable");
+
+	/* get SCP DVFS enable/disable flag */
+	of_property_read_string(node, "scp_dvfs_flag", &str);
+	if (str && strcmp(str, "disable") == 0) {
+		scp_dvfs_flag = 0;
+		pr_notice("scp_dvfs_flag = 0\n");
+	}
 
 PASS:
 	return 0;

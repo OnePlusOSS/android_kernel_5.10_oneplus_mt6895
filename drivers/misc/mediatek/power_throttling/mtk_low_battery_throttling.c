@@ -38,7 +38,7 @@ static struct low_battery_callback_table lbcb_tb[LBCB_MAX_NUM] = { {0} };
 int register_low_battery_notify(low_battery_callback lb_cb,
 				enum LOW_BATTERY_PRIO_TAG prio_val)
 {
-	if (prio_val >= LBCB_MAX_NUM || prio_val < 0) {
+	if (prio_val >= LBCB_MAX_NUM) {
 		pr_notice("[%s] prio_val=%d, out of boundary\n",
 			  __func__, prio_val);
 		return -EINVAL;
@@ -97,7 +97,7 @@ static ssize_t low_battery_protect_ut_store(
 {
 	unsigned int val = 0;
 	unsigned int thd = 0;
-	char cmd[20];
+	char cmd[21];
 
 	dev_info(dev, "[%s]\n", __func__);
 
@@ -142,7 +142,7 @@ static ssize_t low_battery_protect_stop_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	unsigned int val = 0;
-	char cmd[20];
+	char cmd[21];
 
 	dev_info(dev, "[%s]\n", __func__);
 

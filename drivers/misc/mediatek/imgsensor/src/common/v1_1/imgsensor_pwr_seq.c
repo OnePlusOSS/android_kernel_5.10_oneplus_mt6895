@@ -11,6 +11,195 @@
 
 /* Legacy design */
 struct IMGSENSOR_HW_POWER_SEQ sensor_power_sequence[] = {
+#if defined(S5KJN1_MIPI_RAW_DOKI)
+	{
+		SENSOR_DRVNAME_S5KJN1_MIPI_RAW_DOKI,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 1},
+			{DVDD, Vol_1050, 1},
+			{AVDD, Vol_2800, 5},
+			{AFVDD, Vol_2800, 3},
+			{RST, Vol_High, 2},
+			{SensorMCLK, Vol_High, 10}
+		},
+	},
+#endif
+#if defined(OV16A1Q_MIPI_RAW_DOKI)
+	{
+		SENSOR_DRVNAME_OV16A1Q_MIPI_RAW_DOKI,
+		{
+			{RST, Vol_Low, 3},
+			{AVDD, Vol_2800, 0},
+			{DOVDD, Vol_1800, 1},
+			{AVDD1, Vol_High, 2},
+			{DVDD, Vol_1200, 0},
+			{RST, Vol_High, 6},
+			{SensorMCLK, Vol_High, 3}
+		},
+	},
+#endif
+#if defined(OV02B1B_MIPI_MONO_DOKI)
+	{
+		SENSOR_DRVNAME_OV02B1B_MIPI_MONO_DOKI,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 1},
+			{AVDD1, Vol_High, 1},
+			{AVDD, Vol_2800, 6},
+			{SensorMCLK, Vol_High, 5},
+			{RST, Vol_High, 10}
+		},
+	},
+#endif
+#if defined(SC201CS_MIPI_MONO_DOKI)
+	{
+		SENSOR_DRVNAME_SC201CS_MIPI_MONO_DOKI,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 2},
+			{AVDD1, Vol_High, 1},
+			{AVDD, Vol_2800, 1},
+			{RST, Vol_High, 2},
+			{RST, Vol_Low, 2},
+			{RST, Vol_High, 1},
+			{SensorMCLK, Vol_High, 5},
+		},
+	},
+#endif
+#if defined(HI1339_MIPI_RAW)
+		{
+			SENSOR_DRVNAME_HI1339_MIPI_RAW,
+			{
+				{RST, Vol_Low, 1},
+				{DOVDD, Vol_1800, 1},
+				{AVDD, Vol_2800, 0},
+				{DVDD, Vol_1200, 0},
+				{AFVDD, Vol_2800, 0},
+				{SensorMCLK, Vol_High, 1},
+				{RST, Vol_High, 2}
+			},
+		},
+#endif
+#if defined(OV13B10MAIN_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_OV13B10MAIN_MIPI_RAW,
+		{
+			{RST, Vol_Low, 1},
+			{AVDD, Vol_2900, 0},
+			{DVDD, Vol_1200, 0},
+			{DOVDD, Vol_1800, 1},
+			{AFVDD, Vol_2900, 0},
+			{RST, Vol_High, 5},
+			{SensorMCLK, Vol_High, 1},
+		},
+	},
+#endif
+#if defined(S5K4H7FRONT_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_S5K4H7FRONT_MIPI_RAW,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 0},
+			{AVDD, Vol_2800, 0},
+			{DVDD, Vol_1200, 1},
+			{RST, Vol_High, 4},
+			{SensorMCLK, Vol_High, 4},
+		},
+	},
+#endif
+#if defined(SC800CS_MIPI_RAW)
+	{
+		SENSOR_DRVNAME_SC800CS_MIPI_RAW,
+		{
+			{RST, Vol_Low, 0},
+			{DOVDD, Vol_1800, 2},
+			{DVDD, Vol_1200, 1},
+			{AVDD, Vol_2800, 0},
+			{RST, Vol_High, 1},
+			{SensorMCLK, Vol_High, 4}
+		},
+	},
+#endif
+//changzheng +
+#if defined(OV32C_MIPI_RAW_CHANGZHENG)
+        {
+                SENSOR_DRVNAME_OV32C_MIPI_RAW_CHANGZHENG,
+                {
+			{RST, Vol_Low, 1},
+			{AVDD, Vol_2800, 1},
+			{DOVDD, Vol_1800, 1},
+			{DVDD, Vol_1100, 1},
+			{SensorMCLK, Vol_High, 1},
+			{RST, Vol_High, 5}
+                },
+        },
+#endif
+#if defined(OVA0B4_MIPI_RAW_CHANGZHENG)
+	{
+		SENSOR_DRVNAME_OVA0B4_MIPI_RAW_CHANGZHENG,
+		{
+			{RST, Vol_Low, 1},
+			{AVDD, Vol_2800, 1},
+			{DOVDD, Vol_1800, 1},
+			{DVDD, Vol_1150, 1},
+			{AFVDD, Vol_2800, 1},
+			{SensorMCLK, Vol_High, 1},
+			{RST, Vol_High, 10}
+		},
+	},
+#endif
+#if defined(S5KHM6S_MIPI_RAW_CHANGZHENG)
+	{
+		SENSOR_DRVNAME_S5KHM6S_MIPI_RAW_CHANGZHENG,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 1},
+			{AVDD, Vol_2200, 1},
+			{DVDD, Vol_1000, 5},
+			{AFVDD, Vol_2800, 3},
+			{RST, Vol_High, 2},
+			{SensorMCLK, Vol_High, 10}
+		},
+	},
+#endif
+#if defined(OV02B1B_MIPI_MONO_CHANGZHENG)
+	{
+		SENSOR_DRVNAME_OV02B1B_MIPI_MONO_CHANGZHENG,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 1},
+			{AVDD, Vol_2800, 6},
+			{SensorMCLK, Vol_High, 5},
+			{RST, Vol_High, 6}
+		},
+	},
+#endif
+#if defined(SC201CS_MIPI_RAW_CHANGZHENG)
+	{
+		SENSOR_DRVNAME_SC201CS_MIPI_RAW_CHANGZHENG,
+		{
+			{RST, Vol_Low, 1},
+			{DOVDD, Vol_1800, 1},
+			{AVDD, Vol_2800, 1},
+			{RST, Vol_High, 3},
+			{SensorMCLK, Vol_High, 5},
+		},
+	},
+#endif
+#if defined(GC02M1_MIPI_RAW_CHANGZHENG)
+	{
+		SENSOR_DRVNAME_GC02M1_MIPI_RAW_CHANGZHENG,
+		{
+			{RST, Vol_Low, 3},
+			{DOVDD, Vol_1800, 1},
+			{AVDD, Vol_2800, 1},
+			{RST, Vol_High, 5},
+			{SensorMCLK, Vol_High, 3},
+		},
+	},
+#endif
+//changzheng -
 #if defined(IMX766_MIPI_RAW)
 	{
 		SENSOR_DRVNAME_IMX766_MIPI_RAW,
@@ -82,7 +271,7 @@ struct IMGSENSOR_HW_POWER_SEQ sensor_power_sequence[] = {
 			{RST, Vol_Low, 1},
 			{DVDD, Vol_1100, 1},
 			{AVDD, Vol_2800, 1},
-			//{AFVDD, Vol_2800, 0},
+			{AFVDD, Vol_2800, 0},
 			{DOVDD, Vol_1800, 1},
 			{RST, Vol_High, 2},
 			{SensorMCLK, Vol_High, 1}
@@ -158,7 +347,7 @@ struct IMGSENSOR_HW_POWER_SEQ sensor_power_sequence[] = {
 			{RST, Vol_Low, 0},
 			{AVDD, Vol_1800, 0},
 			{DOVDD, Vol_1800, 0},
-			{DVDD, Vol_1800, 1},
+			{DVDD, Vol_1800, 2},
 			{AFVDD, Vol_2800, 1},
 			{SensorMCLK, Vol_High, 1},
 			{PDN, Vol_High, 0},
@@ -1017,7 +1206,7 @@ struct IMGSENSOR_HW_POWER_SEQ sensor_power_sequence[] = {
 			{DOVDD, Vol_1800, 0},
 			{AVDD, Vol_2800, 0},
 			{DVDD, Vol_1200, 5},
-			//{AFVDD, Vol_2800, 2},
+			{AFVDD, Vol_2800, 2},
 			{RST, Vol_High, 5},
 		},
 	},
@@ -1031,7 +1220,7 @@ struct IMGSENSOR_HW_POWER_SEQ sensor_power_sequence[] = {
 			{DVDD, Vol_1100, 1},
 			{AVDD, Vol_2800, 1},
 			{DOVDD, Vol_1800, 3},
-			//{AFVDD, Vol_2800, 5},
+			{AFVDD, Vol_2800, 5},
 			{RST, Vol_High, 2},
 		},
 	},

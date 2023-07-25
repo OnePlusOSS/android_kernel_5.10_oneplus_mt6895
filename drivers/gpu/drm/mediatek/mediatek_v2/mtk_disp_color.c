@@ -35,6 +35,7 @@ static struct DISP_PQ_PARAM g_Color_Param[DISP_COLOR_TOTAL];
 
 // It's a work around for no comp assigned in functions.
 static struct mtk_ddp_comp *default_comp;
+static struct mtk_ddp_comp *default_comp1;
 
 int ncs_tuning_mode;
 
@@ -61,6 +62,9 @@ static int g_color_reg_valid;
 static unsigned int g_width;
 
 bool g_legacy_color_cust;
+#ifdef OPLUS_FEATURE_DISPLAY
+extern bool g_color_probe_ready;
+#endif
 
 #define C1_OFFSET (0)
 #define color_get_offset(module) (0)
@@ -1240,7 +1244,7 @@ void DpEngine_COLORonConfig(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
 	unsigned char h_series[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 			0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
-	int id = index_of_color(comp->id);
+	int id = 0;
 	struct mtk_disp_color *color = comp_to_color(comp);
 	struct DISP_PQ_PARAM *pq_param_p = &g_Color_Param[id];
 	int i, j, reg_index;
@@ -1257,7 +1261,8 @@ void DpEngine_COLORonConfig(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
 		pq_param_p->u4SatAdj[PURP_TONE] >= COLOR_TUNING_INDEX ||
 		pq_param_p->u4SatAdj[SKIN_TONE] >= COLOR_TUNING_INDEX ||
 		pq_param_p->u4SatAdj[GRASS_TONE] >= COLOR_TUNING_INDEX ||
-		pq_param_p->u4SatAdj[SKY_TONE] >= COLOR_TUNING_INDEX) {
+		pq_param_p->u4SatAdj[SKY_TONE] >= COLOR_TUNING_INDEX ||
+		pq_param_p->u4ColorLUT >= COLOR_3D_CNT) {
 		DRM_ERROR("[PQ][COLOR] Tuning index range error !\n");
 		return;
 	}
@@ -1680,7 +1685,7 @@ static void color_write_hw_reg(struct mtk_ddp_comp *comp,
 	unsigned char h_series[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 		, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	unsigned int u4Temp = 0;
-	int id = index_of_color(comp->id);
+	int id = 0;
 	struct mtk_disp_color *color = comp_to_color(comp);
 	int i, j, reg_index;
 	int wide_gamut_en = 0;
@@ -2133,10 +2138,10 @@ static void mtk_color_config(struct mtk_ddp_comp *comp,
 		       comp->regs_pa + DISP_COLOR_HEIGHT(color), cfg->h, ~0);
 
 	// set color_8bit_switch register
-	if (cfg->bpc == 8)
+	if (cfg->source_bpc == 8)
 		cmdq_pkt_write(handle, comp->cmdq_base,
 			comp->regs_pa + DISP_COLOR_CFG_MAIN, (0x1 << 25), (0x1 << 25));
-	else if (cfg->bpc == 10)
+	else if (cfg->source_bpc == 10)
 		cmdq_pkt_write(handle, comp->cmdq_base,
 			comp->regs_pa + DISP_COLOR_CFG_MAIN, (0x0 << 25), (0x1 << 25));
 	else
@@ -2432,7 +2437,7 @@ static bool color_get_DISP_CCORR2_REG(struct resource *res)
 	int rc = 0;
 	struct device_node *node = NULL;
 
-	node = of_find_compatible_node(NULL, NULL, "mediatek,disp_ccorr2");
+	node = of_find_compatible_node(NULL, NULL, "mediatek,disp_ccorr3");
 	rc = of_address_to_resource(node, 0, res);
 
 	// check if fail to get reg.
@@ -2994,9 +2999,10 @@ int mtk_drm_ioctl_read_reg(struct drm_device *dev, void *data,
 		rParams->val = readl(va) & rParams->mask;
 
 		// For CCORR COEF, real values need to right shift one bit
-		if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
+	/*	if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
 			pa <= ccorr_comp->regs_pa + CCORR_REG(4))
 			rParams->val = rParams->val >> 1;
+	*/
 
 		spin_unlock_irqrestore(&g_color_clock_lock, flags);
 	} else {
@@ -3038,10 +3044,11 @@ int mtk_drm_ioctl_write_reg(struct drm_device *dev, void *data,
 		return -EFAULT;
 	}
 
-	// For 6885 CCORR COEF, real values need to left shift one bit
+/*	// For 6885 CCORR COEF, real values need to left shift one bit
 	if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
 		pa <= ccorr_comp->regs_pa + CCORR_REG(4))
 		wParams->val = wParams->val << 1;
+	*/
 
 	return mtk_crtc_user_cmd(crtc, comp, WRITE_REG, data);
 }
@@ -3304,6 +3311,12 @@ static int mtk_color_user_cmd(struct mtk_ddp_comp *comp,
 				} else if (tablet_index == TUNING_DISP_C3D) {
 					if (color_get_DISP_C3D1_REG(&res))
 						pa1 =  res.start + offset;
+				} else if (tablet_index == TUNING_DISP_CCORR1) {
+					if (color_get_DISP_CCORR2_REG(&res))
+						pa1 = res.start + offset;
+					else if (color_get_DISP_CCORR1_REG(&res))
+						pa1 =  res.start + offset;
+
 				}
 				if (pa) {
 					cmdq_pkt_write(handle, comp->cmdq_base,
@@ -3425,9 +3438,40 @@ void mtk_color_dump(struct mtk_ddp_comp *comp)
 {
 	void __iomem *baddr = comp->regs;
 
-	DDPDUMP("== %s REGS:0x%x ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
 	mtk_serial_dump_reg(baddr, 0x400, 3);
 	mtk_serial_dump_reg(baddr, 0xC50, 2);
+}
+
+void mtk_color_regdump(void)
+{
+	void __iomem *baddr = default_comp->regs;
+	int k;
+
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(default_comp),
+			default_comp->regs_pa);
+	DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp));
+	for (k = 0x400; k <= 0xd5c; k += 16) {
+		DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+			readl(baddr + k),
+			readl(baddr + k + 0x4),
+			readl(baddr + k + 0x8),
+			readl(baddr + k + 0xc));
+	}
+	DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp));
+	if (default_comp->mtk_crtc->is_dual_pipe) {
+		baddr = default_comp1->regs;
+		DDPDUMP("== %s REGS ==\n", mtk_dump_comp_str(default_comp1));
+		DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp1));
+		for (k = 0x400; k <= 0xd5c; k += 16) {
+			DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+				readl(baddr + k),
+				readl(baddr + k + 0x4),
+				readl(baddr + k + 0x8),
+				readl(baddr + k + 0xc));
+		}
+		DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp1));
+	}
 }
 
 static int mtk_disp_color_bind(struct device *dev, struct device *master,
@@ -3488,6 +3532,8 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 
 	if (!default_comp)
 		default_comp = &priv->ddp_comp;
+	if (comp_id == DDP_COMPONENT_COLOR1)
+		default_comp1 = &priv->ddp_comp;
 
 	priv->data = of_device_get_match_data(dev);
 
@@ -3502,6 +3548,9 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 	}
 
 	g_legacy_color_cust = false;
+#ifdef OPLUS_FEATURE_DISPLAY
+	g_color_probe_ready = true;
+#endif
 	DDPINFO("%s-\n", __func__);
 
 	return ret;
@@ -3522,6 +3571,30 @@ static const struct mtk_disp_color_data mt2701_color_driver_data = {
 	.support_color21 = false,
 	.support_color30 = false,
 	.color_window = 0x40106051,
+	.support_shadow = false,
+	.need_bypass_shadow = false,
+};
+
+#define DISP_COLOR_START_MT6765 0x0c00
+static const struct mtk_disp_color_data mt6765_color_driver_data = {
+	.color_offset = DISP_COLOR_START_MT6765,
+	.support_color21 = true,
+	.support_color30 = true,
+	.reg_table = {0x1400E000, 0x1400F000, 0x14001000,
+			0x14011000, 0x14012000},
+	.color_window = 0x40185E57,
+	.support_shadow = false,
+	.need_bypass_shadow = false,
+};
+
+#define DISP_COLOR_START_MT6768 0x0c00
+static const struct mtk_disp_color_data mt6768_color_driver_data = {
+	.color_offset = DISP_COLOR_START_MT6768,
+	.support_color21 = true,
+	.support_color30 = true,
+	.reg_table = {0x1400E000, 0x1400F000, 0x14001000,
+			0x14011000, 0x14012000},
+	.color_window = 0x40185E57,
 	.support_shadow = false,
 	.need_bypass_shadow = false,
 };
@@ -3616,8 +3689,8 @@ static const struct mtk_disp_color_data mt6879_color_driver_data = {
 	.color_offset = DISP_COLOR_START_MT6873,
 	.support_color21 = true,
 	.support_color30 = false,
-	.reg_table = {0x14009000, 0x1400A000, 0x1400B000,
-			0x1400C000, 0x1400E000},
+	.reg_table = {0x14009000, 0x1400A000, 0x1400D000, 0x1400E000,
+			0x14010000, 0x1400B000, 0x14007000, 0x14008000},
 	.color_window = 0x40185E57,
 	.support_shadow = false,
 	.need_bypass_shadow = true,
@@ -3637,6 +3710,10 @@ static const struct mtk_disp_color_data mt6855_color_driver_data = {
 static const struct of_device_id mtk_disp_color_driver_dt_match[] = {
 	{.compatible = "mediatek,mt2701-disp-color",
 	 .data = &mt2701_color_driver_data},
+	{.compatible = "mediatek,mt6765-disp-color",
+	 .data = &mt6765_color_driver_data},
+	{.compatible = "mediatek,mt6768-disp-color",
+	 .data = &mt6768_color_driver_data},
 	{.compatible = "mediatek,mt6779-disp-color",
 	 .data = &mt6779_color_driver_data},
 	{.compatible = "mediatek,mt6789-disp-color",

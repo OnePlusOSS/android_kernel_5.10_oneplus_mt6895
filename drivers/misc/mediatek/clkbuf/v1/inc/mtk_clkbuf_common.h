@@ -94,6 +94,8 @@ static struct kobj_attribute _name##_attr = {			\
 #endif /* CONFIG_PM */
 
 enum CLKBUF_CHIP_ID {
+	MT6765,
+	MT6768,
 	MT6789,
 	MT6833,
 	MT6855,
@@ -106,6 +108,8 @@ enum CLKBUF_CHIP_ID {
 };
 
 enum CLKBUF_PMIC_ID {
+	MT6357,
+	MT6358,
 	MT6359P,
 	MT6366,
 	MT6685,
@@ -122,7 +126,6 @@ enum DCXO_MODE {
 
 enum SRCLKEN_RC_REQ {
 	RC_NONE_REQ,
-	RC_BBLPM_REQ,
 	RC_FPM_REQ,
 	RC_LPM_REQ,
 	RC_LPM_VOTE_REQ,
@@ -145,6 +148,7 @@ enum CLKBUF_CTL_CMD {
 	CLKBUF_CMD_HW,
 	CLKBUF_CMD_INIT,
 	CLKBUF_CMD_SHOW,
+	CLKBUF_CMD_NOOP,
 	CLKBUF_CMD_MAX,
 };
 

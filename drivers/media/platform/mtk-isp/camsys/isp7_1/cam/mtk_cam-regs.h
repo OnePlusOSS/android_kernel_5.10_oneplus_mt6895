@@ -130,6 +130,11 @@
 #define CAMSV_2_WDMA_PORT		0x3FF3F
 #define RAW_WDMA_PORT			0x1E001
 #define RAW_RDMA_PORT			0x1FFE
+
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define RAW_RAWIR2_PORT         0x20
+#endif
+
 #define YUV_WDMA_PORT			0x7F
 #define YUV_RDMA_PORT			0x0
 
@@ -367,10 +372,13 @@
 /* ORIDMA */
 /* CAMSYS_RAW 0x1a03 */
 #define REG_IMGO_R1_BASE       0x4880
+#define REG_IMGO_R1_BASE_MSB   0x4884
 #define REG_FHO_R1_BASE        0x4930
+#define REG_FHO_R1_SPARE_5	   0x4994
+#define REG_FHO_R1_SPARE_6	   0x4998
 #define REG_AAHO_R1_BASE       0x49e0
 #define REG_PDO_R1_BASE        0x4a90
-#define REG_AAO_R1_BASE        0x4a40
+#define REG_AAO_R1_BASE        0x4b40
 #define REG_AFO_R1_BASE        0x4bf0
 /* CAMSYS_YUV 0x1a05 */
 #define REG_YUVO_R1_BASE       0x4200
@@ -462,5 +470,4 @@
 #define REG_RAWI_R5_BASE_MSB   0x4334
 #define REG_RAWI_R6_BASE       0x4800
 #define REG_RAWI_R6_BASE_MSB   0x4804
-
 #endif	/* _CAM_REGS_H */

@@ -64,6 +64,10 @@ struct cluster_info {
 extern void list_sort(void *priv, struct list_head *head,
 		int (*cmp)(void *priv, struct list_head *a,
 			struct list_head *b));
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+extern bool oplus_rwsem_list_add(struct task_struct *tsk,
+		struct list_head *entry, struct list_head *head);
+#endif
 
 /*
  * Nice levels are multiplicative, with a gentle 10% change for every

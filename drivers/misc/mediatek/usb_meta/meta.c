@@ -39,6 +39,7 @@ static const char longname[] = "Gadget Android";
 extern void bootprof_log_boot(char *str);
 #endif
 
+#if !IS_BUILTIN(CONFIG_MTK_USB_META)
 /****************************************************
  *   Begin - copy function from composite.c
  ****************************************************/
@@ -91,6 +92,7 @@ void usb_remove_config(struct usb_composite_dev *cdev,
 
 	remove_config(cdev, config);
 }
+#endif
 /****************************************************
  *   End - copy function from composite.c
  ****************************************************/
@@ -1277,8 +1279,13 @@ void enable_meta_vcom(int mode)
 
 	if (mode == 1) {
 		strncpy(serial_str, "", sizeof(serial_str) - 1);
+#ifndef OPLUS_FEATURE_CHG_BASIC
 		device_desc.idVendor = 0x0e8d;
 		device_desc.idProduct = 0x2007;
+#else
+		device_desc.idVendor = 0x22D9;
+		device_desc.idProduct = 0x0006;
+#endif
 		device_desc.bDeviceClass = 0x02;
 
 		/*ttyGS0*/
@@ -1289,8 +1296,13 @@ void enable_meta_vcom(int mode)
 
 
 		strncpy(serial_str, "", sizeof(serial_str) - 1);
+#ifndef OPLUS_FEATURE_CHG_BASIC
 		device_desc.idVendor = 0x0e8d;
 		device_desc.idProduct = 0x202d;
+#else
+		device_desc.idVendor = 0x22d9;
+		device_desc.idProduct = 0x202d;
+#endif
 
 		/*ttyGS0 + ttyGS3*/
 		quick_vcom_num = (1 << 0) + (1 << 3);
@@ -1406,6 +1418,10 @@ static int usb_meta_probe(struct platform_device *pdev)
 	node_udc = of_parse_phandle(pdev->dev.of_node, "udc", 0);
 	if (node_udc) {
 		pdev_udc = of_find_device_by_node(node_udc);
+		if (!platform_get_drvdata(pdev_udc)) {
+			err = -EPROBE_DEFER;
+			goto err_probe;
+		}
 		sprintf(meta_udc_name, "%s", dev_name(&pdev_udc->dev));
 		of_node_put(node_udc);
 	} else {
@@ -1427,6 +1443,7 @@ static int usb_meta_probe(struct platform_device *pdev)
 		pr_info("%s: failed to probe driver %d\n",
 				__func__, err);
 		_android_dev = NULL;
+		usb_composite_unregister(&android_usb_driver);
 		goto err_probe;
 	}
 

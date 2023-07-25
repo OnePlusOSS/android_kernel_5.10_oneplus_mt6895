@@ -44,6 +44,7 @@ obj-$(CONFIG_REGULATOR_DA9211) += da9211-regulator.o
 obj-$(CONFIG_REGULATOR_DBX500_PRCMU) += dbx500-prcmu.o
 obj-$(CONFIG_REGULATOR_DB8500_PRCMU) += db8500-prcmu.o
 obj-$(CONFIG_REGULATOR_FAN53555) += fan53555.o
+obj-$(CONFIG_REGULATOR_FAN53870) += fan53870.o
 obj-$(CONFIG_REGULATOR_FAN53880) += fan53880.o
 obj-$(CONFIG_REGULATOR_GPIO) += gpio-regulator.o
 obj-$(CONFIG_REGULATOR_HI6421) += hi6421-regulator.o
@@ -91,6 +92,7 @@ obj-$(CONFIG_REGULATOR_MT6311) += mt6311-regulator.o
 obj-$(CONFIG_REGULATOR_MT6315) += mt6315-regulator.o
 obj-$(CONFIG_REGULATOR_MT6315) += mtk-extbuck-debug.o
 obj-$(CONFIG_REGULATOR_MT6323)	+= mt6323-regulator.o
+obj-$(CONFIG_REGULATOR_MT6357)	+= mt6357-regulator.o
 obj-$(CONFIG_REGULATOR_MT6358)	+= mt6358-regulator.o
 obj-$(CONFIG_REGULATOR_MT6359P) += mt6359p-regulator.o
 obj-$(CONFIG_REGULATOR_MT6360) += mt6360-regulator.o
@@ -98,6 +100,7 @@ obj-$(CONFIG_REGULATOR_MT6362) += mt6362-regulator.o
 obj-$(CONFIG_REGULATOR_MT6363) += mt6363-regulator.o
 obj-$(CONFIG_REGULATOR_MT6368) += mt6368-regulator.o
 obj-$(CONFIG_REGULATOR_MT6369) += mt6369-regulator.o
+obj-$(CONFIG_REGULATOR_MT6370) += mt6370-regulator.o
 obj-$(CONFIG_REGULATOR_MT6373) += mt6373-regulator.o
 obj-$(CONFIG_REGULATOR_MT6380)	+= mt6380-regulator.o
 obj-$(CONFIG_REGULATOR_MT6397)	+= mt6397-regulator.o
@@ -170,6 +173,13 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x-ldo.o
 obj-$(CONFIG_REGULATOR_WM8350) += wm8350-regulator.o
 obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
 obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
+obj-$(CONFIG_PMIC_FAN53870) += fan53870-regulator.o
+obj-$(CONFIG_REGULATOR_WL2868C) += wl2868c-regulator.o
+obj-$(CONFIG_REGULATOR_WL2864C) += wl2864c-regulator.o
+obj-$(CONFIG_REGULATOR_FAN53870) += fan53870-ldo.o
+obj-$(CONFIG_REGULATOR_MULTI_REG) += multi_regulator.o
+obj-$(CONFIG_REGULATOR_ALPHA_FOLDABLE_SUPPORT_ET5904) += et5904.o
+
 
 ifneq ($(wildcard $(srctree)/$(src)/k6983v1_64_alpha),)
 obj-$(CONFIG_REGULATOR_MT6983_ALPHA_SUPPORT) += k6983v1_64_alpha/

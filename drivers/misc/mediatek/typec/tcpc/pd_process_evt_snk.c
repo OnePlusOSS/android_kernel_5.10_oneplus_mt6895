@@ -422,15 +422,25 @@ static inline bool pd_process_timer_msg(
 		vdm_put_dpm_discover_cable_event(pd_port);
 		break;
 #endif	/* CONFIG_USB_PD_DFP_READY_DISCOVER_ID */
-		fallthrough;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		/*fallthrough;*/
+/*#endif*/
 #if CONFIG_USB_PD_REV30
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		fallthrough;
+/*#endif*/
 	case PD_TIMER_CK_NOT_SUPPORTED:
 		if (PE_MAKE_STATE_TRANSIT_SINGLE(
 			PE_SNK_CHUNK_RECEIVED, PE_SNK_SEND_NOT_SUPPORTED))
 			return true;
-		fallthrough;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		/*fallthrough;*/
+/*#endif*/
 #if CONFIG_USB_PD_REV30_COLLISION_AVOID
 #if CONFIG_USB_PD_REV30_SNK_FLOW_DELAY_STARTUP
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		fallthrough;
+/*#endif*/
 	case PD_TIMER_SNK_FLOW_DELAY:
 		if (pe_data->pd_traffic_control == PD_SINK_TX_START) {
 			if (typec_get_cc_res() == TYPEC_CC_VOLT_SNK_3_0)

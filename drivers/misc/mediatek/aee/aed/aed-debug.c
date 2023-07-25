@@ -216,8 +216,12 @@ static ssize_t proc_generate_wdt_read(struct file *file,
 	char buffer[BUFSIZE];
 	int len = snprintf(buffer, BUFSIZE,
 			   "WDT test - Usage: [test case number:test cpu]\n");
-	if (len < 0)
-		pr_notice("%s: snprintf failed\n", __func__);
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK */
 	if (*ppos)
 		return 0;
 	if (copy_to_user(buf, buffer, len)) {
@@ -322,7 +326,8 @@ static noinline void double_free(void)
 {
 	char *p = kmalloc(32, GFP_KERNEL);
 	int i;
-
+	if (p == NULL)
+		return;
 	pr_info("test case : double free\n");
 	for (i = 0; i < 32; i++)
 		p[i] = (char)i;
@@ -351,6 +356,12 @@ static ssize_t proc_generate_oops_read(struct file *file,
 	char buffer[BUFSIZE];
 
 	len = snprintf(buffer, BUFSIZE, "Oops Generated!\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len))
 		pr_notice("%s fail to output info.\n", __func__);
 
@@ -464,7 +475,7 @@ static ssize_t proc_generate_nested_ke_write(struct file *file,
 		register_die_notifier(&panic_blk);
 		break;
 	}
-	BUG();
+	//BUG();
 	return 0;
 }
 
@@ -499,6 +510,12 @@ static ssize_t proc_generate_ee_read(struct file *file, char __user *buf,
 	kfree(log);
 
 	len = snprintf(buffer, BUFSIZE, "Modem EE Generated\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -533,6 +550,12 @@ static ssize_t proc_generate_combo_read(struct file *file, char __user *buf,
 	vfree(ptr);
 
 	len = snprintf(buffer, BUFSIZE, "Combo EE Generated\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -570,10 +593,12 @@ static ssize_t proc_generate_md32_read(struct file *file, char __user *buf,
 	vfree(ptr);
 
 	len = snprintf(buffer, BUFSIZE, "MD32 EE Generated\n");
-	if (len < 0) {
-		pr_info("%s: snprintf failed\n", __func__);
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
 		return -EFAULT;
 	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -613,10 +638,12 @@ static ssize_t proc_generate_scp_read(struct file *file,
 	vfree(ptr);
 
 	len = snprintf(buffer, BUFSIZE, "SCP EE Generated\n");
-	if (len < 0) {
-		pr_info("%s: snprintf failed\n", __func__);
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
 		return -EFAULT;
 	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (copy_to_user(buf, buffer, len)) {
 		pr_notice("%s fail to output info.\n", __func__);
 		return -EFAULT;
@@ -632,6 +659,39 @@ static ssize_t proc_generate_scp_write(struct file *file,
 	return 0;
 }
 
+static ssize_t proc_generate_adsp_read(struct file *file,
+					char __user *buf, size_t size,
+					loff_t *ppos)
+{
+#define TEST_ADSP_PHY_SIZE      65536
+	char buffer[BUFSIZE];
+	int i;
+	char *ptr;
+	int n;
+
+	if ((*ppos)++)
+		return 0;
+	ptr = kmalloc(TEST_ADSP_PHY_SIZE, GFP_KERNEL);
+	if (ptr == NULL)
+		return sprintf(buffer, "kmalloc fail\n");
+	for (i = 0; i < TEST_ADSP_PHY_SIZE; i++)
+		ptr[i] = (i % 26) + 'a';
+
+	n = sprintf(buffer, "ADSP EE log here\n");
+	if (n < 0 || n >= sizeof(buffer))
+		strncpy(buffer, "unknown error", sizeof(buffer));
+	aed_common_exception("adsp", (int *)buffer, (int)sizeof(buffer),
+				(int *)ptr, TEST_ADSP_PHY_SIZE, __FILE__);
+	kfree(ptr);
+	return sprintf(buffer, "ADSP EE Generated\n");
+}
+
+static ssize_t proc_generate_adsp_write(struct file *file,
+					const char __user *buf, size_t size,
+					loff_t *ppos)
+{
+	return 0;
+}
 
 static ssize_t proc_generate_kernel_notify_read(struct file *file,
 						char __user *buf, size_t size,
@@ -640,6 +700,12 @@ static ssize_t proc_generate_kernel_notify_read(struct file *file,
 	char buffer[BUFSIZE];
 	int len = snprintf(buffer, BUFSIZE,
 			   "Usage: write message with format \"R|W|E:Tag:You Message\" into this file to generate kernel warning\n");
+	//#ifdef OPLUS_FEATURE_SIZE_CHECK
+	if (len < 0 || len > size) {
+		pr_info("%s: len is more than user buffer size\n", __func__);
+		return -EFAULT;
+	}
+	//#endif /*OPLUS_FEATURE_SIZE_CHECK*/
 	if (*ppos)
 		return 0;
 	if (copy_to_user(buf, buffer, len)) {
@@ -689,15 +755,18 @@ static ssize_t proc_generate_kernel_notify_write(struct file *file,
 
 	switch (msg[0]) {
 	case 'R':
-		aee_kernel_reminding(&msg[2], colon_ptr + 1);
+		aee_kernel_reminding_api(__FILE__, __LINE__,
+				DB_OPT_DEFAULT | DB_OPT_NATIVE_BACKTRACE, &msg[2], colon_ptr + 1);
 		break;
 
 	case 'W':
-		aee_kernel_warning(&msg[2], colon_ptr + 1);
+		aee_kernel_warning_api(__FILE__, __LINE__,
+				DB_OPT_DEFAULT | DB_OPT_NATIVE_BACKTRACE, &msg[2], colon_ptr + 1);
 		break;
 
 	case 'E':
-		aee_kernel_exception(&msg[2], colon_ptr + 1);
+		aee_kernel_exception_api(__FILE__, __LINE__,
+				DB_OPT_DEFAULT | DB_OPT_NATIVE_BACKTRACE, &msg[2], colon_ptr + 1);
 		break;
 
 	default:
@@ -715,6 +784,7 @@ AED_FILE_OPS(generate_ee);
 AED_FILE_OPS(generate_combo);
 AED_FILE_OPS(generate_md32);
 AED_FILE_OPS(generate_scp);
+AED_FILE_OPS(generate_adsp);
 
 int aed_proc_debug_init(struct proc_dir_entry *aed_proc_dir)
 {
@@ -730,6 +800,7 @@ int aed_proc_debug_init(struct proc_dir_entry *aed_proc_dir)
 	AED_PROC_ENTRY(generate-combo, generate_combo, 0400);
 	AED_PROC_ENTRY(generate-md32, generate_md32, 0400);
 	AED_PROC_ENTRY(generate-scp, generate_scp, 0400);
+	AED_PROC_ENTRY(generate-adsp, generate_adsp, 0400);
 
 	return 0;
 }
@@ -743,6 +814,7 @@ int aed_proc_debug_done(struct proc_dir_entry *aed_proc_dir)
 	remove_proc_entry("generate-combo", aed_proc_dir);
 	remove_proc_entry("generate-md32", aed_proc_dir);
 	remove_proc_entry("generate-scp", aed_proc_dir);
+	remove_proc_entry("generate-adsp", aed_proc_dir);
 	remove_proc_entry("generate-wdt", aed_proc_dir);
 	return 0;
 }

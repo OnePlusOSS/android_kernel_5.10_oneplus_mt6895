@@ -1046,7 +1046,15 @@ void qmu_done_rx(struct musb *musb, u8 ep_num)
 		Rx_gpd_free_count[ep_num]++;
 		musb_g_giveback(musb_ep, request, 0);
 		req = next_request(musb_ep);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (!req)
+			return;
+#endif
 		request = &req->request;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (!request)
+			return;
+#endif
 	}
 
 	/* QMU should keep take HWO gpd , so there is error */
@@ -1882,9 +1890,8 @@ void mtk_err_recover(struct musb *musb, u8 ep_num, u8 isRx, bool is_len_err)
 					, request->request.zero);
 				request->request.actual =
 					request->request.length;
-#if IS_ENABLED(CONFIG_MTK_MUSB_QMU_PURE_ZLP_SUPPORT)
-				if (request->request.length >= 0) {
-#else
+
+#ifndef CONFIG_MTK_MUSB_QMU_PURE_ZLP_SUPPORT
 				if (request->request.length > 0) {
 #endif
 					mtk_qmu_insert_task(request->epnum,
@@ -1902,12 +1909,13 @@ void mtk_err_recover(struct musb *musb, u8 ep_num, u8 isRx, bool is_len_err)
 					musb_tx_zlp_qmu(musb, request->epnum);
 					musb_g_giveback(musb_ep
 						, &(request->request), 0);
-#endif
+
 				} else {
 					QMU_ERR(
 						"ERR, TX, request->request.length(%d)\n"
 						, request->request.length);
 				}
+#endif
 			} else {
 				QMU_ERR("[RX] gpd=%p, epnum=%d, len=%d\n",
 					Rx_gpd_end[ep_num], ep_num,

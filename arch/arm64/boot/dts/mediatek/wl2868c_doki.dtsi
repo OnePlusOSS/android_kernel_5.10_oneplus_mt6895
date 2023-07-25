@@ -1,0 +1,81 @@
+/ {
+	wl2868c: wl2868c {
+		compatible = "mediatek,gpio_wl2868c";
+	};
+};
+
+&wl2868c {
+	pinctrl-names = "default", "wl2868c_gpio_rst0", "wl2868c_gpio_rst1", "wl2868c_gpio_ext_buck_en0", "wl2868c_gpio_ext_buck_en1", "wl2836d18_gpio_en0", "wl2836d18_gpio_en1";
+	pinctrl-0 = <&wl2868c_pins_default>;
+	pinctrl-1 = <&wl2868c_pins_rst0>;
+	pinctrl-2 = <&wl2868c_pins_rst1>;
+	pinctrl-3 = <&wl2868c_gpio_ext_buck_en0>;
+	pinctrl-4 = <&wl2868c_gpio_ext_buck_en1>;
+	pinctrl-5 = <&wl2836d18_gpio_en0>;
+	pinctrl-6 = <&wl2836d18_gpio_en1>;
+	status = "okay";
+};
+
+&pio {
+	wl2868c_pins_rst0: wl2868c_pins_rst0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO15__FUNC_GPIO15>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+	wl2868c_pins_rst1: wl2868c_pins_rst1 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO15__FUNC_GPIO15>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+
+	wl2868c_gpio_ext_buck_en0: wl2868c_gpio_ext_buck_en0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO159__FUNC_GPIO159>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+	wl2868c_gpio_ext_buck_en1: wl2868c_gpio_ext_buck_en1 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO159__FUNC_GPIO159>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+
+	wl2836d18_gpio_en0: wl2836d18_gpio_en0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO154__FUNC_GPIO154>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+	wl2836d18_gpio_en1: wl2836d18_gpio_en1 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO154__FUNC_GPIO154>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+
+	wl2868c_pins_default: wl2868c_pins_default {
+	};
+};
+
+&i2c3 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	i2c_wl2868c@2f{
+		compatible = "mediatek,i2c_wl2868c";
+		reg = <0x2f>;
+		status = "okay";
+	};
+};

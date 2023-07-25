@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_opp.h>
 #include <linux/regulator/consumer.h>
+#include <linux/remoteproc.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-device.h>
@@ -54,7 +55,7 @@
 #define MTK_DIP_DEV_META_BUF_POOL_MAX_SIZE	(1024 * 1024 * 16)
 #define MTK_IMGSYS_OPP_SET			2
 #define MTK_IMGSYS_CLK_LEVEL_CNT		5
-#define MTK_IMGSYS_DVFS_GROUP			3
+#define MTK_IMGSYS_DVFS_GROUP			4
 #define MTK_IMGSYS_QOS_GROUP			2
 
 #define MTK_IMGSYS_LOG_LENGTH			1024
@@ -99,6 +100,7 @@ struct mtk_imgsys_dma_buf_iova_list {
 	struct list_head list;
 	struct hlist_head hlists[HBITS];
 	spinlock_t lock;
+	struct mutex mlock;
 };
 
 struct mtk_imgsys_dma_buf_iova_get_info {
@@ -238,6 +240,7 @@ struct mtk_imgsys_dvfs {
 	unsigned long freq;
 	unsigned int vss_task_cnt;
 	unsigned int smvr_task_cnt;
+	unsigned int stream_4k60_task_cnt;
 };
 
 struct mtk_imgsys_qos_path {
@@ -294,6 +297,12 @@ struct mtk_imgsys_dev {
 	struct workqueue_struct *mdp_wq[RUNNER_WQ_NR];
 	struct imgsys_queue runnerque;
 	wait_queue_head_t flushing_waitq;
+
+	/* CCU control flow */
+	struct rproc *rproc_ccu_handle;
+	/* larb control */
+	struct device **larbs;
+	unsigned int larbs_num;
 
 	struct work_pool gwork_pool;
 	atomic_t num_composing;	/* increase after ipi */
@@ -544,7 +553,7 @@ int mtk_imgsys_hw_streamon(struct mtk_imgsys_pipe *pipe);
 static inline struct mtk_imgsys_pipe*
 mtk_imgsys_dev_get_pipe(struct mtk_imgsys_dev *imgsys_dev, unsigned int pipe_id)
 {
-	if (pipe_id < 0 && pipe_id >= MTK_IMGSYS_PIPE_ID_TOTAL_NUM)
+	if (pipe_id >= MTK_IMGSYS_PIPE_ID_TOTAL_NUM)
 		return NULL;
 
 	return &imgsys_dev->imgsys_pipe[pipe_id];
@@ -714,7 +723,6 @@ struct timeval {
 
 struct swfrm_info_t {
 	uint32_t req_sbuf_goft;
-	void *req_sbuf_kva;
 	int swfrminfo_ridx;
 	int request_fd;
 	int request_no;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
-//
-// Copyright (c) 2021 MediaTek Inc.
-// Author: Ren-Ting Wang <ren-ting.wang@mediatek.com>
+/*
+ * Copyright (c) 2022 MediaTek Inc.
+ * Author: Owen Chen <owen.chen@mediatek.com>
+ */
 
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
@@ -649,10 +650,7 @@ void print_subsys_reg_mt6895(enum chk_sys_id id)
 	const struct regname *rns = &rn[0];
 	int i;
 
-	if (rns == NULL)
-		return;
-
-	if (id >= chk_sys_num || id < 0) {
+	if (id >= chk_sys_num) {
 		pr_info("wrong id:%d\n", id);
 		return;
 	}
@@ -737,8 +735,9 @@ static bool is_pll_chk_bug_on(void)
 
 static void dump_hwv_history(struct regmap *regmap, u32 id)
 {
-	u32 addr[16], val[16];
-	u32 idx, set, sta, set_sta, clr_sta, en, done;
+	u32 addr[16] = {0}, val[16] = {0};
+	u32 idx = 0, set = 0, sta = 0, done = 0;
+	u32 en = 0, clr_sta = 0, set_sta = 0;
 	int i;
 
 	regmap_write(regmap, HWV_DOMAIN_KEY, HWV_SECURE_KEY);
@@ -779,7 +778,7 @@ static bool is_cg_chk_pwr_on(void)
 
 static void dump_hwv_pll_reg(struct regmap *regmap, u32 shift)
 {
-	u32 val[7];
+	u32 val[7] = { 0 };
 
 	regmap_write(regmap, HWV_DOMAIN_KEY, HWV_SECURE_KEY);
 	regmap_read(regmap, HWV_PLL_SET, &val[0]);
@@ -836,12 +835,21 @@ static int clk_chk_mt6895_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct of_device_id of_match_clkchk_mt6895[] = {
+	{
+		.compatible = "mediatek,mt6895-clkchk",
+	}, {
+		/* sentinel */
+	}
+};
+
 static struct platform_driver clk_chk_mt6895_drv = {
 	.probe = clk_chk_mt6895_probe,
 	.driver = {
 		.name = "clk-chk-mt6895",
 		.owner = THIS_MODULE,
 		.pm = &clk_chk_dev_pm_ops,
+		.of_match_table = of_match_clkchk_mt6895,
 	},
 };
 
@@ -851,12 +859,6 @@ static struct platform_driver clk_chk_mt6895_drv = {
 
 static int __init clkchk_mt6895_init(void)
 {
-	static struct platform_device *clk_chk_dev;
-
-	clk_chk_dev = platform_device_register_simple("clk-chk-mt6895", -1, NULL, 0);
-	if (IS_ERR(clk_chk_dev))
-		pr_warn("unable to register clk-chk device");
-
 	return platform_driver_register(&clk_chk_mt6895_drv);
 }
 
