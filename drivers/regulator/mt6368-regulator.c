@@ -23,6 +23,9 @@
 
 #define DEFAULT_DELAY_MS		10
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+struct regmap *oplus_regmap;
+#endif
 /*
  * MT6368 regulator lock register value
  */
@@ -626,10 +629,63 @@ static int mt6368_of_parse_cb(struct device_node *np,
 					   &info->oc_irq_enable_delay_ms);
 		if (ret || !info->oc_irq_enable_delay_ms)
 			info->oc_irq_enable_delay_ms = DEFAULT_DELAY_MS;
-		INIT_DELAYED_WORK(&info->oc_work, mt6368_oc_irq_enable_work);
+	//#ifdef OPLUS_FEATURE_RF_PMIC_OCP
+	//#else
+	//INIT_DELAYED_WORK(&info->oc_work, mt6368_oc_irq_enable_work);
+	//#endif OPLUS_FEATURE_RF_PMIC_OCP
 	}
 	return 0;
 }
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*
+	0x989: Push-pull output1 for MOSFET driver
+	bit[2]: RG_MOSCON1_DRVSEL
+		0: 7.5mA (default)
+		1: 15mA
+	bit[1]:RG_MOSCON1_EN is for PAD_MOSCON1 function high / low control
+		1: PAD_MOSCON1 is pulled high to VBBSNS
+		0: PAD_MOSCON1 is pulled low to GND
+	bit[0]: Selects reset pin output driving capability
+		0: 7.5mA (default)
+		1: 15mA
+*/
+#define MT6368_PMIC_RG_MOS_CON1_ADDR	0x989
+#define MT6368_PMIC_RG_MOS_CON1_EN_MASK	0x7
+
+int oplus_chg_set_dischg_enable(bool en)
+{
+	int ret;
+
+	if (!oplus_regmap) {
+		pr_err("%s, oplus_regmap is null!!!\n", __func__);
+		return -1;
+	}
+
+	if (en) {
+		ret = regmap_update_bits(oplus_regmap,
+			MT6368_PMIC_RG_MOS_CON1_ADDR,
+			MT6368_PMIC_RG_MOS_CON1_EN_MASK,
+			0x2);
+		if (ret < 0) {
+			pr_err("%s, enable dischg failed.\n", __func__);
+			return ret;
+		}
+	} else {
+		ret = regmap_update_bits(oplus_regmap,
+			MT6368_PMIC_RG_MOS_CON1_ADDR,
+			MT6368_PMIC_RG_MOS_CON1_EN_MASK,
+			0x0);
+		if (ret < 0) {
+			pr_err("%s, disable dischg failed.\n", __func__);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(oplus_chg_set_dischg_enable);
+#endif
 
 static int mt6368_regulator_probe(struct platform_device *pdev)
 {
@@ -643,6 +699,9 @@ static int mt6368_regulator_probe(struct platform_device *pdev)
 	for (i = 0; i < MT6368_MAX_REGULATOR; i++) {
 		info = &mt6368_regulators[i];
 		info->irq = platform_get_irq_byname_optional(pdev, info->desc.name);
+		//#ifdef OPLUS_FEATURE_RF_PMIC_OCP
+		info->oc_irq_enable_delay_ms = DEFAULT_DELAY_MS;
+		//#endif OPLUS_FEATURE_RF_PMIC_OCP
 		config.driver_data = info;
 
 		rdev = devm_regulator_register(&pdev->dev, &info->desc, &config);
@@ -655,6 +714,10 @@ static int mt6368_regulator_probe(struct platform_device *pdev)
 
 		if (info->irq <= 0)
 			continue;
+		//#ifdef OPLUS_FEATURE_RF_PMIC_OCP
+		else
+			INIT_DELAYED_WORK(&info->oc_work, mt6368_oc_irq_enable_work);
+		//#endif OPLUS_FEATURE_RF_PMIC_OCP
 		ret = devm_request_threaded_irq(&pdev->dev, info->irq, NULL,
 						mt6368_oc_irq,
 						IRQF_TRIGGER_HIGH,
@@ -666,6 +729,13 @@ static int mt6368_regulator_probe(struct platform_device *pdev)
 			continue;
 		}
 	}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	oplus_regmap = dev_get_regmap(pdev->dev.parent, NULL);
+	if (!oplus_regmap) {
+		dev_err(&pdev->dev, "get oplus_regmap failed\n");
+	}
+#endif
 
 	return 0;
 }

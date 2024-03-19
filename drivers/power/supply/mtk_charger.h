@@ -13,6 +13,11 @@
 #include <linux/power_supply.h>
 #include "mtk_smartcharging.h"
 
+#ifdef CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY_CHG
+#include "../../../drivers/gpu/drm/mediatek/mediatek_v2/mtk_panel_ext.h"
+#include "../../../drivers/gpu/drm/mediatek/mediatek_v2/mtk_disp_notify.h"
+#endif
+
 #define CHARGING_INTERVAL 10
 #define CHARGING_FULL_INTERVAL 20
 
@@ -66,8 +71,10 @@ struct charger_data;
 #define MAX_DMIVR_CHARGER_CURRENT 1800000 /* 1.8 A */
 
 /* battery warning */
+#ifndef OPLUS_FEATURE_CHG_BASIC
 #define BATTERY_NOTIFY_CASE_0001_VCHARGER
 #define BATTERY_NOTIFY_CASE_0002_VBATTEMP
+#endif
 
 /* charging abnormal status */
 #define CHG_VBUS_OV_STATUS	(1 << 0)
@@ -229,7 +236,47 @@ enum chg_data_idx_enum {
 	CHGS_SETTING_MAX,
 };
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+struct oplus_custom_gpio_pinctrl {
+	int vchg_trig_gpio;
+	int ccdetect_gpio;
+	int otg_boost_en_gpio;
+	int otg_ovp_en_gpio;
+	int tx_boost_en_gpio;
+	int tx_ovp_en_gpio;
+	struct mutex pinctrl_mutex;
+	struct pinctrl *vchg_trig_pinctrl;
+	struct pinctrl_state *vchg_trig_default;
+	struct pinctrl		*ccdetect_pinctrl;
+	struct pinctrl_state	*ccdetect_active;
+	struct pinctrl_state	*ccdetect_sleep;
+	struct pinctrl			*usbtemp_l_gpio_pinctrl;
+	struct pinctrl_state	*usbtemp_l_gpio_default;
+	struct pinctrl			*usbtemp_r_gpio_pinctrl;
+	struct pinctrl_state	*usbtemp_r_gpio_default;
+	struct pinctrl		*otg_boost_en_pinctrl;
+	struct pinctrl_state	*otg_boost_en_active;
+	struct pinctrl_state	*otg_boost_en_sleep;
+	struct pinctrl		*otg_ovp_en_pinctrl;
+	struct pinctrl_state	*otg_ovp_en_active;
+	struct pinctrl_state	*otg_ovp_en_sleep;
+	struct pinctrl		*tx_boost_en_pinctrl;
+	struct pinctrl_state	*tx_boost_en_active;
+	struct pinctrl_state	*tx_boost_en_sleep;
+	struct pinctrl		*tx_ovp_en_pinctrl;
+	struct pinctrl_state	*tx_ovp_en_active;
+	struct pinctrl_state	*tx_ovp_en_sleep;
+};
+#endif
+
 struct mtk_charger {
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct oplus_chg_ic_dev *ic_dev;
+	struct oplus_chg_mod *usb_ocm;
+	bool wls_boost_soft_start;
+	int wls_set_boost_vol;
+#endif
+
 	struct platform_device *pdev;
 	struct charger_device *chg1_dev;
 	struct notifier_block chg1_nb;
@@ -370,13 +417,43 @@ struct mtk_charger {
 	/*charger IC charging status*/
 	bool is_charging;
 
-	ktime_t uevent_time_check;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct iio_channel      *chargeric_temp_chan;
+	struct iio_channel      *charger_id_chan;
+	struct iio_channel      *usb_temp_v_l_chan;
+	struct iio_channel      *usb_temp_v_r_chan;
+
+	int ccdetect_gpio;
+	int ccdetect_irq;
+	struct pinctrl_state *ccdetect_active;
+	struct pinctrl_state *ccdetect_sleep;
+	struct pinctrl *pinctrl;
+	struct oplus_custom_gpio_pinctrl oplus_custom_gpio;
+
+	int chargeric_temp_volt;
+	int chargeric_temp;
+	bool support_ntc_01c_precision;
+
+	struct tcpc_device *tcpc;
+	struct adapter_power_cap srccap;
+
+	bool uvlo_status;
+	bool wd0_detect;
+	struct delayed_work status_keep_clean_work;
+	struct wakeup_source *status_wake_lock;
+	bool status_wake_lock_on;
+#endif
 
 	bool force_disable_pp[CHG2_SETTING + 1];
 	bool enable_pp[CHG2_SETTING + 1];
 	struct mutex pp_lock[CHG2_SETTING + 1];
 };
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+struct mtk_pmic {
+        struct mtk_charger* oplus_info;
+};
+#endif
 static inline int mtk_chg_alg_notify_call(struct mtk_charger *info,
 					  enum chg_alg_notifier_events evt,
 					  int value)
@@ -423,4 +500,11 @@ extern void _wake_up_charger(struct mtk_charger *info);
 extern int mtk_chg_enable_vbus_ovp(bool enable);
 
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+extern int battery_meter_get_charger_voltage(void);
+extern void mt_usb_connect(void);
+extern void mt_usb_disconnect(void);
+int oplus_get_chargeric_temp(void);
+extern bool is_meta_mode(void);
+#endif
 #endif /* __MTK_CHARGER_H */

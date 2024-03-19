@@ -25,6 +25,15 @@
 #define DB_OPT_FTRACE   (0)	/* Dummy macro define to avoid build error */
 #endif
 
+//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+#define MCU_CORE_MSG "(MCU_core"
+#define ADDRESS_POINTER_PREFIX1 "p1:0x"
+#define ADDRESS_POINTER_PREFIX2 "p1:0X"
+#define ADDRESS_POINTER_PREFIX3 "P1:0x"
+#define ADDRESS_POINTER_PREFIX4 "P1:0X"
+#define ELM_STR "ELM "
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
 static void ccci_aed_v5(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	char *aed_str, int db_opt)
 {
@@ -48,6 +57,17 @@ static void ccci_aed_v5(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	struct ccci_per_md *per_md_data = ccci_get_per_md_data(mdee->md_id);
 	int md_dbg_dump_flag = per_md_data->md_dbg_dump_flag;
 #endif
+
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	int temp_i;
+	int checkID = 0;
+	unsigned int hashId = 0;
+	char *logBuf;
+	char *aed_str_for_hash = NULL;
+	int cursor_idx = 0;
+	int continu_line_breaks = 0;
+	//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
 	int ret = 0;
 
 	buff = kmalloc(AED_STR_LEN, GFP_ATOMIC);
@@ -72,6 +92,86 @@ static void ccci_aed_v5(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 		goto err_exit1;
 	}
 	memset(mdee->ex_start_time, 0x0, sizeof(mdee->ex_start_time));
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	aed_str_for_hash = aed_str;
+	if( aed_str_for_hash != NULL ) {
+		/* only startwith "(MCU_core" */
+		if((strncmp(aed_str_for_hash, MCU_CORE_MSG, strlen(MCU_CORE_MSG)) == 0)) {
+			/* find first '\n' to giving up the first line */
+			while (aed_str_for_hash[0] != '\n') {
+				++aed_str_for_hash;
+			}
+			++aed_str_for_hash; //skip '\n'
+		}
+		/* replace '\n' to " " */
+		cursor_idx = 0;
+		while (aed_str_for_hash[cursor_idx] != '\0') {
+			if (aed_str_for_hash[cursor_idx] == '\n' && continu_line_breaks == 0) { /* the first '\n' */
+				continu_line_breaks += 1;
+				aed_str_for_hash[cursor_idx] = 32; /* ASCII */
+				cursor_idx++;
+			}
+			else if (aed_str_for_hash[cursor_idx] == 10 && continu_line_breaks != 0) {
+				deleteChar(aed_str_for_hash, strlen(aed_str_for_hash), cursor_idx); /* only leave one space */
+			}
+			else if (aed_str_for_hash[cursor_idx] != 10 && continu_line_breaks != 0) {
+				continu_line_breaks = 0;
+				cursor_idx++;
+			}
+			else {
+				cursor_idx++;
+			}
+		}
+		/* give up the string from "p1:0x" or p1:0X or P1:0x or P1:0X */
+		if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX1) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX1);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx-1] = '\0';
+		}
+		else if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX2) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX2);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx - 1] = '\0';
+		}
+		else if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX3) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX3);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx - 1] = '\0';
+		}
+		else if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX4) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX4);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx - 1] = '\0';
+		}
+		/* give up the string from ELM */
+		else if (strstr(aed_str_for_hash, ELM_STR) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ELM_STR);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx-1] = '\0';
+		}
+		/* calculate hashid */
+		hashId = BKDRHash(aed_str_for_hash, strlen(aed_str_for_hash), mdee->md_id);
+	}
+	else {
+		CCCI_ERROR_LOG(md_id, FSM, "aed_str_for_hash is null!!");
+	}
+	logBuf = vmalloc(BUF_LOG_LENGTH);
+	if ((logBuf != NULL)&&(aed_str_for_hash != NULL)) {
+		for (temp_i = 0 ; (temp_i < BUF_LOG_LENGTH) && (temp_i < strlen(aed_str_for_hash)) ; temp_i++) {
+			if(aed_str_for_hash[temp_i] == '\n') {
+				checkID++;
+				CCCI_ERROR_LOG(md_id, FSM, "checkID = %d",checkID);
+				if(2 == checkID) {
+					logBuf[temp_i] = '\0';
+					break;
+				}
+				logBuf[temp_i] = ' ';
+			} else {
+					logBuf[temp_i] = aed_str_for_hash[temp_i];
+			}
+			//end
+		}
+		logBuf[BUF_LOG_LENGTH - 1] = '\0';
+		CCCI_NORMAL_LOG(md_id, FSM, "modem crash wirte to critical log. hashid = %u, cause = %s.", hashId, logBuf);
+		mm_keylog_write_modemdump(hashId, logBuf, MODEM_MONITOR_ID, "modem");
+		vfree(logBuf);
+	}
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 	/* MD ID must sync with aee_dump_ccci_debug_info() */
  err_exit1:
 	if (dump_flag & CCCI_AED_DUMP_CCIF_REG) {
@@ -957,4 +1057,70 @@ int mdee_dumper_v5_alloc(struct ccci_fsm_ee *mdee)
 	mdee->ops = &mdee_ops_v5;
 	return 0;
 }
+
+//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+int getSubstrIndex(char *srcStr, char *subStr) {
+	int index = 0;
+	char* myStr = srcStr;
+	char* mySub = subStr;
+	char* temp_mystr = NULL;
+	char* temp_mysub = NULL;
+
+	while (*myStr != '\0')
+	{
+		if (*myStr != *mySub) {
+			++myStr;
+			index++;
+			continue;
+		}
+		temp_mystr = myStr;
+		temp_mysub = mySub;
+		while (*temp_mysub != '\0') {
+
+			if (*temp_mystr != *temp_mysub) {
+				/* The following characters are not equal,
+				so we need to skip them directly because we have already
+				compared them and there is no need to compare them again. */
+				++myStr;
+				index++;
+				break;
+			}
+			/* Two characters are equal, and both pointers move backwards at the same time */
+			++temp_mysub;
+			++temp_mystr;
+		}
+		if (*temp_mysub == '\0') {
+			return index;
+		}
+	}
+	return -1;
+}
+
+void deleteChar(char* str, int strLen, int index) {
+	int i = index;
+	for (i = index; i + 1 < strLen; i++) {
+		str[i] = str[i + 1];
+	}
+	str[strLen-1] = '\0';
+}
+
+unsigned int BKDRHash(const char* str, unsigned int len, int md_id) {
+	unsigned int seed = 131u; /* 31 131 1313 13131 131313 etc.. */
+	unsigned int hash = 0u;
+	int i = 0;
+	CCCI_ERROR_LOG(md_id, FSM, "BKDRHash str: %s, len: %d\n", str, len);
+
+	if (str == NULL) {
+		return 0;
+	}
+
+	for (i = 0; i < len; str++, i++) {
+		hash = (hash * seed) + (unsigned int)(*str);
+		hash = hash & 0xffffffff;
+	}
+	CCCI_ERROR_LOG(md_id, FSM, "BKDRHash hash: %u\n", hash);
+	return hash;
+}
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
 

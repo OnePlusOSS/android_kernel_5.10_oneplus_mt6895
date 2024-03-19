@@ -10,6 +10,10 @@
 #include <sched/sched.h>
 #include <sugov/cpufreq.h>
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+#include <../kernel/oplus_cpu/sched/eas_opt/oplus_cap.h>
+#endif
+
 MODULE_LICENSE("GPL");
 /*
  *  max_freq_scale:
@@ -136,8 +140,24 @@ void mtk_freq_limit_notifier_register(void)
 void mtk_update_cpu_capacity(void *data, int cpu, unsigned long *capacity)
 {
 	unsigned long cap_ceiling;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+	int cluster_id;
+	struct rq *rq = cpu_rq(cpu);
+#endif
 
 	cap_ceiling = per_cpu(max_freq_scale, cpu);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+	real_cpu_cap[cpu] = rq->cpu_capacity_orig;
+	cluster_id = topology_physical_package_id(cpu);
+	if (eas_opt_enable && cluster_id >= 0 && cluster_id < OPLUS_CLUSTERS) {
+		unsigned long rt_pressure = arch_scale_cpu_capacity(cpu) - *capacity;
+		rq->cpu_capacity_orig = mult_frac(rq->cpu_capacity_orig, oplus_cap_multiple[cluster_id], 100);
+		cap_ceiling = rq->cpu_capacity_orig;
+		*capacity = cap_ceiling > rt_pressure ? cap_ceiling - rt_pressure : 1;
+	}
+	if (unlikely(eas_opt_debug_enable))
+		oplus_cap_systrace_c(cpu, rq->cpu_capacity_orig, real_cpu_cap[cpu]);
+#endif
 	*capacity = min(cap_ceiling, *capacity);
 }
 

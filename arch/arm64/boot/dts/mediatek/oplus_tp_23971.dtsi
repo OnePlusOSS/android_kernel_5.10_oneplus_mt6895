@@ -1,0 +1,100 @@
+#include "mediatek/oplus-23971-tp.dtsi"
+/*add for tp bringup*/
+&spi0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	nt36532@0 {
+		status = "okay";
+		compatible = "oplus,tp_noflash";
+		reg = <0>;
+		chip-num = <1>;
+		chip-name = "NT36532";
+		project_id = <23971>;
+		firmware_name = "0Xbls6a01";
+		spi-max-frequency = <12000000>; //4800000,9600000,15000000,19200000
+		/* Interrupt && Irq-gpio */
+		reset-gpio = <&pio 152 0x00>;
+		interrupt-parent = <&pio>;
+		interrupts = <9  0x0>;
+		irq-gpio = <&pio 9 0x2002>;
+
+		pinctrl-names = "default", "pin_cs_high","pin_cs_low";
+		pinctrl-0 = <&ctp_oplus_pins_default>;
+		pinctrl-1 = <&ts_cs_active>;
+		pinctrl-2 = <&ts_cs_suspend &ctp_oplus_int_suspend>;
+		touchpanel,irq_need_dev_resume_time = <500>;
+
+		touchpanel,max-num-support = <10>;
+		touchpanel,tx-rx-num = <32 48>;
+		touchpanel,panel-coords = <17200 24080>;
+		touchpanel,display-coords = <1720 2408>;
+		touchpanel,touchmajor-limit = <0 54>;
+		touchpanel,doze-tx-num = <8>;
+		touchpanel,doze-rx-num = <24>;
+
+		touchpanel,msecs-to-jiffies-time = <100>;
+		touchpanel,smooth-level = <0 1 2 6 8 10>;
+		touchpanel,smooth-level-charging = <2 3 7 8 9 10>;
+		touchpanel,sensitive-level = <0 88 80 40 25 12>;
+		touchpanel,single-optimized-time = <8>;
+		tp_type = <3>; //TP_BOE
+		panel_type = <3>; //TP_BOE
+
+		platform_support_project = <23922 23971 23972 23973 23974>;
+		platform_support_project_dir = <23971 23971 23971 23971 23971>;
+		platform_support_commandline = "oplus23971_boe_nt36532_vdo_90hz";
+		platform_support_project_commandline = "default_commandline","default_commandline","default_commandline","default_commandline","default_commandline";
+		vid_len = <7>;
+
+		incell_screen;
+		//iovcc_shutdown_support;
+		fw_edge_limit_support;
+		black_gesture_support;
+		charger_pump_support;
+		esd_handle_support;
+		black_gesture_test_support;
+		game_switch_support;
+		noflash_support;
+		lcd_trigger_load_tp_fw_support;
+		smart_gesture_support;
+		pressure_report_support;
+		irq_need_dev_resume_ok;
+		fw_update_app_support;
+		health_monitor_support;
+		//fw_update_in_probe_with_headfile;
+		black_gesture_indep_support;
+		report_rate_limit;
+		touchpanel,button-type = <4>;
+	};
+};
+&pio {
+	ctp_oplus_pins_default: pins_default {
+			pins_cmd0_dat {
+			pinmux = <PINMUX_GPIO33__FUNC_SPI0_MI>,
+				< PINMUX_GPIO32__FUNC_SPI0_MO>,
+				<PINMUX_GPIO31__FUNC_SPI0_CSB>,
+				< PINMUX_GPIO30__FUNC_SPI0_CLK>;
+			bias-disable;
+			drive-strength = <2>;
+		};
+	};
+
+	ts_cs_active: ts_cs_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO31__FUNC_SPI0_CSB>;
+		};
+	};
+	ts_cs_suspend: ts_cs_suspend {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO31__FUNC_GPIO31>;
+			output-low;
+		};
+	};
+	ctp_oplus_int_suspend: int1_suspend {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO9__FUNC_GPIO9>;
+			bias-disable;
+			input-enable;
+		};
+	};
+};

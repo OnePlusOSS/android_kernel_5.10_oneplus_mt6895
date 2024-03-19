@@ -34,6 +34,15 @@
 #if IS_ENABLED(CONFIG_MTK_ULTRASND_PROXIMITY)
 #include "../ultrasound/ultra_scp/mtk-scp-ultra-common.h"
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_fatal_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 /* FORCE_FPGA_ENABLE_IRQ use irq in fpga */
 /* #define FORCE_FPGA_ENABLE_IRQ */
 
@@ -1494,6 +1503,9 @@ static const struct snd_kcontrol_new memif_ul1_ch1_mix[] = {
 				    I_ADDA_UL_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH3", AFE_CONN21,
 				    I_ADDA_UL_CH3, 1, 0),
+	/* add for supporting aec record*/
+	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH1", AFE_CONN21_1,
+					I_DL4_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ETDM_CH3", AFE_CONN21_1,
 			    I_ETDM_IN_CH3, 1, 0),
 };
@@ -1507,6 +1519,9 @@ static const struct snd_kcontrol_new memif_ul1_ch2_mix[] = {
 				    I_ADDA_UL_CH3, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH4", AFE_CONN22,
 				    I_ADDA_UL_CH4, 1, 0),
+	/* add for supporting aec record*/
+	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH2", AFE_CONN22_1,
+					I_DL4_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ETDM_CH4", AFE_CONN22_1,
 				    I_ETDM_IN_CH4, 1, 0),
 };
@@ -1554,6 +1569,14 @@ static const struct snd_kcontrol_new memif_ul2_ch1_mix[] = {
 				    I_DL6_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL7_CH1", AFE_CONN5_1,
 				    I_DL7_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH1", AFE_CONN5_2,
+				    I_DL11_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH2", AFE_CONN5_2,
+				    I_DL11_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH3", AFE_CONN5_2,
+				    I_DL11_CH3, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH4", AFE_CONN5_2,
+				    I_DL11_CH4, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_1_CAP_CH1", AFE_CONN5,
 				    I_PCM_1_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN5,
@@ -1591,6 +1614,14 @@ static const struct snd_kcontrol_new memif_ul2_ch2_mix[] = {
 				    I_DL6_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL7_CH2", AFE_CONN6_1,
 				    I_DL7_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH1", AFE_CONN6_2,
+				    I_DL11_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH2", AFE_CONN6_2,
+				    I_DL11_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH3", AFE_CONN6_2,
+				    I_DL11_CH3, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH4", AFE_CONN6_2,
+				    I_DL11_CH4, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_1_CAP_CH1", AFE_CONN6,
 				    I_PCM_1_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN6,
@@ -2159,6 +2190,14 @@ static const struct snd_soc_dapm_route mt6983_memif_routes[] = {
 	{"UL2_CH2", "DL5_CH2", "Hostless_UL2 UL"},
 	{"UL2_CH1", "DL7_CH1", "Hostless_UL2 UL"},
 	{"UL2_CH2", "DL7_CH2", "Hostless_UL2 UL"},
+	{"UL2_CH1", "DL11_CH1", "Hostless_UL2 UL"},
+	{"UL2_CH1", "DL11_CH2", "Hostless_UL2 UL"},
+	{"UL2_CH1", "DL11_CH3", "Hostless_UL2 UL"},
+	{"UL2_CH1", "DL11_CH4", "Hostless_UL2 UL"},
+	{"UL2_CH2", "DL11_CH1", "Hostless_UL2 UL"},
+	{"UL2_CH2", "DL11_CH2", "Hostless_UL2 UL"},
+	{"UL2_CH2", "DL11_CH3", "Hostless_UL2 UL"},
+	{"UL2_CH2", "DL11_CH4", "Hostless_UL2 UL"},
 
 	{"Hostless_UL2 UL", NULL, "UL2_VIRTUAL_INPUT"},
 
@@ -2271,6 +2310,10 @@ static const struct snd_soc_dapm_route mt6983_memif_routes[] = {
 
 	{"HW_GAIN2_IN_CH1", "ADDA_UL_CH1", "ADDA_UL_Mux"},
 	{"HW_GAIN2_IN_CH2", "ADDA_UL_CH2", "ADDA_UL_Mux"},
+	/* add for supporting aec record*/
+	{"UL1_CH1", "DL4_CH1", "Hostless_UL1 UL"},
+	{"UL1_CH2", "DL4_CH2", "Hostless_UL1 UL"},
+	{"Hostless_UL1 UL", NULL, "UL1_VIRTUAL_INPUT"},
 
 	{"UL11", NULL, "CM1_UL_MUX"},
 	{"UL10", NULL, "CM1_UL_MUX"},
@@ -3804,8 +3847,13 @@ static irqreturn_t mt6983_afe_irq_handler(int irq_id, void *dev)
 	status_mcu = status & mcu_en & AFE_IRQ_STATUS_BITS;
 
 	if (ret || status_mcu == 0) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_not_fb(afe->dev, "%s(), irq status err, ret %d, status 0x%x, mcu_en 0x%x\n",
+			__func__, ret, status, mcu_en);
+#else
 		dev_err(afe->dev, "%s(), irq status err, ret %d, status 0x%x, mcu_en 0x%x\n",
 			__func__, ret, status, mcu_en);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 		goto err_irq;
 	}
@@ -7758,6 +7806,7 @@ static int mt6983_afe_pcm_dev_probe(struct platform_device *pdev)
 		afe->memif[i].const_irq = 1;
 	}
 	afe->memif[MT6983_DEEP_MEMIF].ack = mtk_sp_clean_written_buffer_ack;
+	afe->memif[MT6983_DEEP_MEMIF].fast_palyback = 1;
 
 	/* init arm_smccc_smc call */
 	arm_smccc_smc(MTK_SIP_AUDIO_CONTROL, MTK_AUDIO_SMC_OP_INIT,
@@ -7857,6 +7906,12 @@ static int mt6983_afe_pcm_dev_probe(struct platform_device *pdev)
 
 err_pm_disable:
 	pm_runtime_disable(&pdev->dev);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (ret) {
+		pr_err_fb_fatal_delay("%s:failed ret=%d", __func__, ret);
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 	return ret;
 }

@@ -317,6 +317,21 @@ enum {
 	WB_BUF_MODE_SHARED		= 0x1,
 };
 
+#ifdef CONFIG_DEVICE_XCOPY
+/* XCOPY buffer mode */
+enum {
+	XCOPY_DESC_PARAM_LEN		= 0x0,
+	XCOPY_DESC_VERSION		= 0x1,
+	XCOPY_DESC_MAX_COPY_BLOCK	= 0x3,
+	XCOPY_DESC_MIN_COPY_BLOCK	= 0x5,
+	XCOPY_DESC_MAX_ENTRIES		= 0x7,
+};
+
+enum {
+	QUERY_DESC_IDN_XCOPY	= QUERY_DESC_IDN_RFU_0, /* define the device copy IDN number */
+};
+#endif
+
 /*
  * Logical Unit Write Protect
  * 00h: LU not write protected
@@ -341,6 +356,9 @@ enum {
 enum {
 	UFS_DEV_HPB_SUPPORT		= BIT(7),
 	UFS_DEV_WRITE_BOOSTER_SUP	= BIT(8),
+#ifdef CONFIG_DEVICE_XCOPY
+	UFS_DEV_XCOPY_SUP		= BIT(31),
+#endif
 };
 #define UFS_DEV_HPB_SUPPORT_VERSION		0x310
 

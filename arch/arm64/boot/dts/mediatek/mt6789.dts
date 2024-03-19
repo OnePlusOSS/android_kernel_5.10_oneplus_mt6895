@@ -57,23 +57,35 @@
 	/* chosen */
 	chosen: chosen {
 		bootargs = "console=tty0 root=/dev/ram \
-			    loglevel=8 \
-			    8250.nr_uarts=4 \
-			    androidboot.hardware=mt6789 \
-			    initcall_debug=1 transparent_hugepage=never \
-			    vmalloc=400M swiotlb=noforce cma=64M \
-			    firmware_class.path=/vendor/firmware pelt=8\
-			    loop.max_part=7";
-		atag,videolfb-fb_base_l = <0x7e605000>;
-		atag,videolfb-fb_base_h = <0x0>;
-		atag,videolfb-islcmfound = <1>;
-		atag,videolfb-islcm_inited = <0>;
-		atag,videolfb-fps= <6000>;
-		atag,videolfb-vramSize= <0x1be0000>;
-		atag,videolfb-lcmname=
+			loglevel=8 \
+			8250.nr_uarts=4 \
+			androidboot.hardware=mt6789 \
+			initcall_debug=1 transparent_hugepage=never \
+			vmalloc=400M swiotlb=noforce \
+			log_buf_len=2m \
+			firmware_class.path=/vendor/firmware pelt=8\
+			loop.max_part=7";
+			atag,videolfb-fb_base_l = <0x7e605000>;
+			atag,videolfb-fb_base_h = <0x0>;
+			atag,videolfb-islcmfound = <1>;
+			atag,videolfb-islcm_inited = <0>;
+			atag,videolfb-fps= <6000>;
+			atag,videolfb-vramSize= <0x1be0000>;
+			atag,videolfb-lcmname=
 			"nt36672e_fhdp_dsi_vdo_60hz_jdi_dphy_drv";
-		kaslr-seed = <0 0>;
+			kaslr-seed = <0 0>;
 	};
+
+	//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+	/* #for oplus_secure_common */
+	oplus_secure_common:oplus_secure_common {
+		compatible = "oplus,secure_common";
+		oplus,sec_reg_num = <0>;
+		oplus,sec_en_anti_reg = <0>;
+		oplus,sec_override1_reg = <0>;
+		oplus,override1_en_value = <0>;
+	};
+	//#endif  OPLUS_FEATURE_SECURITY_COMMON
 
 	cpus {
 		#address-cells = <1>;
@@ -356,11 +368,6 @@
 				scmi_apmcupm = <8>;
 			};
 		};
-
-		android: android {
-			compatible = "android,firmware";
-			hardware = "mt6789";
-		};
 	};
 
 	sspm: sspm@10400000 {
@@ -442,10 +449,10 @@
 		compatible = "mediatek,memory-ssmr-features";
 		svp-region-based-size = <0 0x18000000>;
 		svp-page-based-size = <0 0>;
-		tui-size = <0 0x4000000>;
+		tui-size = <0 0>;
 		wfd-region-based-size = <0 0x4000000>;
 		wfd-page-based-size = <0 0>;
-		prot-region-based-size = <0 0x8000000>;
+		prot-region-based-size = <0 0>;
 		prot-page-based-size = <0 0>;
 	};
 
@@ -820,7 +827,527 @@
 			124000 46
 			125000 44>;
 	};
-
+	/*add charger_ts_ntc sub_bat_temp_ntc flash_led_ntc for thermal bengin(1)*/
+	tboard_thermistor5: thermal-ntc5 {
+		compatible = "generic-adc-thermal";
+		#thermal-sensor-cells = <0>;
+		io-channels = <&auxadc 4>;
+		io-channel-names = "sensor-channel";
+		temperature-lookup-table = <
+			(-40000) 1760
+			(-39000) 1757
+			(-38000) 1754
+			(-37000) 1751
+			(-36000) 1747
+			(-35000) 1744
+			(-34000) 1740
+			(-33000) 1736
+			(-32000) 1731
+			(-31000) 1727
+			(-30000) 1722
+			(-29000) 1716
+			(-28000) 1711
+			(-27000) 1705
+			(-26000) 1699
+			(-25000) 1693
+			(-24000) 1686
+			(-23000) 1679
+			(-22000) 1672
+			(-21000) 1664
+			(-20000) 1656
+			(-19000) 1648
+			(-18000) 1639
+			(-17000) 1630
+			(-16000) 1620
+			(-15000) 1610
+			(-14000) 1599
+			(-13000) 1588
+			(-12000) 1577
+			(-11000) 1565
+			(-10000) 1553
+			(-9000) 1540
+			(-8000) 1527
+			(-7000) 1514
+			(-6000) 1500
+			(-5000) 1485
+			(-4000) 1470
+			(-3000) 1455
+			(-2000) 1439
+			(-1000) 1423
+			0 1406
+			1000 1389
+			2000 1372
+			3000 1354
+			4000 1335
+			5000 1317
+			6000 1298
+			7000 1279
+			8000 1259
+			9000 1239
+			10000 1219
+			11000 1198
+			12000 1178
+			13000 1157
+			14000 1136
+			15000 1115
+			16000 1093
+			17000 1072
+			18000 1050
+			19000 1029
+			20000 1007
+			21000 986
+			22000 964
+			23000 943
+			24000 921
+			25000 900
+			26000 879
+			27000 858
+			28000 837
+			29000 816
+			30000 796
+			31000 775
+			32000 755
+			33000 736
+			34000 716
+			35000 697
+			36000 678
+			37000 659
+			38000 641
+			39000 623
+			40000 605
+			41000 588
+			42000 571
+			43000 555
+			44000 538
+			45000 523
+			46000 507
+			47000 492
+			48000 477
+			49000 463
+			50000 449
+			51000 435
+			52000 422
+			53000 409
+			54000 396
+			55000 384
+			56000 372
+			57000 360
+			58000 349
+			59000 338
+			60000 327
+			61000 317
+			62000 307
+			63000 297
+			64000 288
+			65000 279
+			66000 270
+			67000 261
+			68000 253
+			69000 245
+			70000 237
+			71000 230
+			72000 222
+			73000 215
+			74000 209
+			75000 202
+			76000 196
+			77000 189
+			78000 183
+			79000 178
+			80000 172
+			81000 167
+			82000 161
+			83000 156
+			84000 151
+			85000 147
+			86000 142
+			87000 138
+			88000 133
+			89000 129
+			90000 125
+			91000 121
+			92000 118
+			93000 114
+			94000 111
+			95000 107
+			96000 104
+			97000 101
+			98000 98
+			99000 95
+			100000 92
+			101000 89
+			102000 87
+			103000 84
+			104000 81
+			105000 79
+			106000 77
+			107000 74
+			108000 72
+			109000 70
+			110000 68
+			111000 66
+			112000 64
+			113000 62
+			114000 61
+			115000 59
+			116000 57
+			117000 56
+			118000 54
+			119000 52
+			120000 51
+			121000 50
+			122000 48
+			123000 47
+			124000 46
+			125000 44>;
+	};
+	tboard_thermistor6: thermal-ntc6 {
+		compatible = "generic-adc-thermal";
+		#thermal-sensor-cells = <0>;
+		io-channels = <&auxadc 5>;
+		io-channel-names = "sensor-channel";
+		temperature-lookup-table = <
+			(-40000) 1726
+			(-39000) 1721
+			(-38000) 1715
+			(-37000) 1709
+			(-36000) 1703
+			(-35000) 1696
+			(-34000) 1689
+			(-33000) 1682
+			(-32000) 1674
+			(-31000) 1666
+			(-30000) 1658
+			(-29000) 1649
+			(-28000) 1639
+			(-27000) 1629
+			(-26000) 1619
+			(-25000) 1608
+			(-24000) 1597
+			(-23000) 1585
+			(-22000) 1572
+			(-21000) 1560
+			(-20000) 1546
+			(-19000) 1534
+			(-18000) 1517
+			(-17000) 1502
+			(-16000) 1487
+			(-15000) 1470
+			(-14000) 1455
+			(-13000) 1436
+			(-12000) 1419
+			(-11000) 1401
+			(-10000) 1382
+			(-9000) 1363
+			(-8000) 1344
+			(-7000) 1325
+			(-6000) 1304
+			(-5000) 1284
+			(-4000) 1260
+			(-3000) 1238
+			(-2000) 1216
+			(-1000) 1193
+			0 1173
+			1000 1149
+			2000 1126
+			3000 1102
+			4000 1080
+			5000 1056
+			6000 1033
+			7000 1008
+			8000 985
+			9000 964
+			10000 939
+			11000 914
+			12000 891
+			13000 867
+			14000 845
+			15000 821
+			16000 799
+			17000 778
+			18000 755
+			19000 733
+			20000 714
+			21000 691
+			22000 670
+			23000 650
+			24000 623
+			25000 604
+			26000 586
+			27000 568
+			28000 550
+			29000 533
+			30000 516
+			31000 500
+			32000 483
+			33000 467
+			34000 452
+			35000 438
+			36000 423
+			37000 410
+			38000 395
+			39000 382
+			40000 369
+			41000 357
+			42000 346
+			43000 334
+			44000 322
+			45000 310
+			46000 300
+			47000 290
+			48000 280
+			49000 270
+			50000 261
+			51000 252
+			52000 243
+			53000 235
+			54000 227
+			55000 219
+			56000 211
+			57000 204
+			58000 197
+			59000 190
+			60000 183
+			61000 177
+			62000 171
+			63000 165
+			64000 160
+			65000 154
+			66000 149
+			67000 143
+			68000 139
+			69000 134
+			70000 130
+			71000 125
+			72000 121
+			73000 117
+			74000 113
+			75000 110
+			76000 106
+			77000 102
+			78000 99
+			79000 96
+			80000 93
+			81000 90
+			82000 86
+			83000 84
+			84000 81
+			85000 78
+			86000 76
+			87000 73
+			88000 71
+			89000 69
+			90000 67
+			91000 64
+			92000 62
+			93000 60
+			94000 59
+			95000 57
+			96000 55
+			97000 53
+			98000 52
+			99000 50
+			100000 48
+			101000 47
+			102000 46
+			103000 44
+			104000 43
+			105000 42
+			106000 40
+			107000 39
+			108000 38
+			109000 37
+			110000 36
+			111000 35
+			112000 34
+			113000 33
+			114000 32
+			115000 31
+			116000 30
+			117000 29
+			118000 28
+			119000 27
+			120000 27
+			121000 26
+			122000 25
+			123000 24
+			124000 24
+			125000 23>;
+	};
+	tboard_thermistor7: thermal-ntc7 {
+		compatible = "generic-adc-thermal";
+		#thermal-sensor-cells = <0>;
+		io-channels = <&auxadc 6>;
+		io-channel-names = "sensor-channel";
+		temperature-lookup-table = <
+			(-40000) 1760
+			(-39000) 1757
+			(-38000) 1754
+			(-37000) 1751
+			(-36000) 1747
+			(-35000) 1744
+			(-34000) 1740
+			(-33000) 1736
+			(-32000) 1731
+			(-31000) 1727
+			(-30000) 1722
+			(-29000) 1716
+			(-28000) 1711
+			(-27000) 1705
+			(-26000) 1699
+			(-25000) 1693
+			(-24000) 1686
+			(-23000) 1679
+			(-22000) 1672
+			(-21000) 1664
+			(-20000) 1656
+			(-19000) 1648
+			(-18000) 1639
+			(-17000) 1630
+			(-16000) 1620
+			(-15000) 1610
+			(-14000) 1599
+			(-13000) 1588
+			(-12000) 1577
+			(-11000) 1565
+			(-10000) 1553
+			(-9000) 1540
+			(-8000) 1527
+			(-7000) 1514
+			(-6000) 1500
+			(-5000) 1485
+			(-4000) 1470
+			(-3000) 1455
+			(-2000) 1439
+			(-1000) 1423
+			0 1406
+			1000 1389
+			2000 1372
+			3000 1354
+			4000 1335
+			5000 1317
+			6000 1298
+			7000 1279
+			8000 1259
+			9000 1239
+			10000 1219
+			11000 1198
+			12000 1178
+			13000 1157
+			14000 1136
+			15000 1115
+			16000 1093
+			17000 1072
+			18000 1050
+			19000 1029
+			20000 1007
+			21000 986
+			22000 964
+			23000 943
+			24000 921
+			25000 900
+			26000 879
+			27000 858
+			28000 837
+			29000 816
+			30000 796
+			31000 775
+			32000 755
+			33000 736
+			34000 716
+			35000 697
+			36000 678
+			37000 659
+			38000 641
+			39000 623
+			40000 605
+			41000 588
+			42000 571
+			43000 555
+			44000 538
+			45000 523
+			46000 507
+			47000 492
+			48000 477
+			49000 463
+			50000 449
+			51000 435
+			52000 422
+			53000 409
+			54000 396
+			55000 384
+			56000 372
+			57000 360
+			58000 349
+			59000 338
+			60000 327
+			61000 317
+			62000 307
+			63000 297
+			64000 288
+			65000 279
+			66000 270
+			67000 261
+			68000 253
+			69000 245
+			70000 237
+			71000 230
+			72000 222
+			73000 215
+			74000 209
+			75000 202
+			76000 196
+			77000 189
+			78000 183
+			79000 178
+			80000 172
+			81000 167
+			82000 161
+			83000 156
+			84000 151
+			85000 147
+			86000 142
+			87000 138
+			88000 133
+			89000 129
+			90000 125
+			91000 121
+			92000 118
+			93000 114
+			94000 111
+			95000 107
+			96000 104
+			97000 101
+			98000 98
+			99000 95
+			100000 92
+			101000 89
+			102000 87
+			103000 84
+			104000 81
+			105000 79
+			106000 77
+			107000 74
+			108000 72
+			109000 70
+			110000 68
+			111000 66
+			112000 64
+			113000 62
+			114000 61
+			115000 59
+			116000 57
+			117000 56
+			118000 54
+			119000 52
+			120000 51
+			121000 50
+			122000 48
+			123000 47
+			124000 46
+			125000 44>;
+	};
+	/*add charger_ts_ntc sub_bat_temp_ntc flash_led_ntc for thermal end(1)*/
 	mt6366_temp: mt6366_temp {
 		compatible = "mediatek,mt6366-pmic-temp";
 		io-channels =
@@ -1206,6 +1733,15 @@
 			"cpccfg_reg";
 	};
 
+	//#ifdef OPLUS_VENDOR_SWTP
+	swtp: swtp {
+		compatible = "mediatek, swtp-eint";
+	};
+	swtp_1: swtp_1 {
+		compatible = "mediatek, swtp1-eint";
+	};
+	//#endif  /*OPLUS_VENDOR_SWTP*/
+
 	clk_ao: clk_ao {
 		compatible = "simple-bus";
 	};
@@ -1216,14 +1752,6 @@
 
 	disable_unused: disable_unused {
 		compatible = "simple-bus";
-	};
-
-	clkchk {
-		compatible = "mediatek,mt6789-clkchk";
-	};
-
-	pdchk {
-		compatible = "mediatek,mt6789-pdchk";
 	};
 
 	clocks {
@@ -1335,10 +1863,10 @@
 			<&vdec_gcon_base_clk CLK_VDE2_LARB1_CKEN>,
 			<&venc_gcon_clk CLK_VEN1_CKE1_VENC>,
 			<&mdpsys_config_clk CLK_MDP_SMI0>,
-			<&dispsys_config_clk CLK_MM_SMI_INFRA>,
-			<&dispsys_config_clk CLK_MM_SMI_COMMON>,
-			<&dispsys_config_clk CLK_MM_SMI_GALS>,
-			<&dispsys_config_clk CLK_MM_SMI_IOMMU>,
+			<&dispsys_config_clk CLK_SMI_INFRA>,
+			<&dispsys_config_clk CLK_SMI_COMMON>,
+			<&dispsys_config_clk CLK_SMI_GALS>,
+			<&dispsys_config_clk CLK_SMI_IOMMU>,
 			<&infracfg_ao_clk CLK_IFRAO_AUDIO_26M_BCLK>,
 			<&infracfg_ao_clk CLK_IFRAO_AUDIO>,
 			<&camsys_main_clk CLK_CAM_M_LARB13>,
@@ -2089,7 +2617,7 @@
 		soc_limit_ext_release = <25>;
 	};
 
-	soc {
+	soc: soc {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		compatible = "simple-bus";
@@ -2290,6 +2818,14 @@
 				mode-ddr-reserve = <BOOT_DDR_RSVD>;
 				mode-meta = <BOOT_META>;
 				mode-rpmbpk = <BOOT_RPMBPK>;
+				//#ifdef OPLUS_BUG_STABILITY
+				mode-kernel = <BOOT_KERNEL>;
+				mode-silence = <BOOT_SILENCE>;
+				mode-sau = <BOOT_SAU>;
+				mode-sblmemtest = <BOOT_AGINGTEST>;
+				mode-ftm = <BOOT_FACTORY>;
+				//#endif
+				mode-edl = <BOOT_EDL>;
 			};
 		};
 
@@ -3063,8 +3599,12 @@
 			clock-names = "parent-clk", "sel-clk", "spi-clk";
 		};
 
-		goodix_fp: fingerprint {
-			compatible = "mediatek,goodix-fp";
+		oplus_fp_common: oplus_fp_common {
+
+		};
+
+		goodix_fp: goodix_fp {
+
 		};
 
 		uart0: serial@11002000 {
@@ -3384,14 +3924,6 @@
 			compatible = "mediatek,scpinfra";
 			reg = <0 0x10001000 0 0x1000>;  /* infracfg_ao */
 			#clock-cells = <1>;
-		};
-
-		vow_pmic_efuse {
-			compatible = "mediatek,vow-efuse";
-			nvmem = <&pmic_efuse>;
-			nvmem-names = "vow_efuse_device";
-			ver_reg = <0xec>;
-			ver_mask= <0x1f>;
 		};
 
 		scp@10500000 {
@@ -3722,10 +4254,10 @@
 					"aud_dat_miso0_on",
 					"aud_dat_miso1_off",
 					"aud_dat_miso1_on",
-					"aud_gpio_i2s0_off",
-					"aud_gpio_i2s0_on",
-					"aud_gpio_i2s3_off",
-					"aud_gpio_i2s3_on",
+					"aud_gpio_i2s2_off",
+					"aud_gpio_i2s2_on",
+					"aud_gpio_i2s1_off",
+					"aud_gpio_i2s1_on",
 					"vow_dat_miso_off",
 					"vow_dat_miso_on",
 					"vow_clk_miso_off",
@@ -3741,10 +4273,10 @@
 			pinctrl-7 = <&aud_dat_miso0_on>;
 			pinctrl-8 = <&aud_dat_miso1_off>;
 			pinctrl-9 = <&aud_dat_miso1_on>;
-			pinctrl-10 = <&aud_gpio_i2s0_off>;
-			pinctrl-11 = <&aud_gpio_i2s0_on>;
-			pinctrl-12 = <&aud_gpio_i2s3_off>;
-			pinctrl-13 = <&aud_gpio_i2s3_on>;
+			pinctrl-10 = <&aud_gpio_i2s2_off>;
+			pinctrl-11 = <&aud_gpio_i2s2_on>;
+			pinctrl-12 = <&aud_gpio_i2s1_off>;
+			pinctrl-13 = <&aud_gpio_i2s1_on>;
 			pinctrl-14 = <&vow_dat_miso_off>;
 			pinctrl-15 = <&vow_dat_miso_on>;
 			pinctrl-16 = <&vow_clk_miso_off>;
@@ -3793,6 +4325,10 @@
 			compatible = "mediatek,snd_scp_audio";
 			status = "disabled";
 			scp_spk_process_enable = <0x0 0x4 0xf 0x13>;
+		};
+
+		audio_extend: audio_extend {
+			compatible = "oplus,asoc-audio";
 		};
 
 		sound: sound {
@@ -3973,8 +4509,6 @@
 #endif
 			_vgpu-supply = <&mt6358_vgpu_reg>;
 			_vsram_gpu-supply = <&mt6358_vsram_gpu_reg>;
-			nvmem-cells = <&efuse_segment>;
-			nvmem-cell-names = "efuse_segment_cell";
 			fhctl-supply = <&fhctl>;
 			gpufreq_wrapper-supply = <&gpufreq_wrapper>;
 		};
@@ -5633,7 +6167,7 @@
 			compatible = "mediatek,mt6789-vcodec-enc";
 			mediatek,platform = "platform:mt6789";
 			mediatek,ipm = <1>;
-			reg = <0 0x17020000 0 0x2000>,
+			reg = <0 0x17020000 0 0x6000>,
 				<0 0x17820000 0 0x20000>;
 			reg-names =
 				"VENC_SYS",
@@ -5998,16 +6532,8 @@
 			reg = <0 0x1f00e000 0 0x1000>;
 		};
 
-		odm: odm {
-			compatible = "simple-bus";
-			/* reserved for overlay by odm */
-		};
-
 		extcon_usb: extcon_usb {
 			compatible = "mediatek,extcon-usb";
-			vbus-supply = <&mt6375_otg_vbus>;
-			vbus-voltage = <5000000>;
-			vbus-current = <1800000>;
 			charger = <&mt6375_chg>;
 			tcpc = "type_c_port0";
 			mediatek,bypss-typec-sink = <1>;
@@ -6089,6 +6615,7 @@
 			interconnects = <&dvfsrc MT6873_MASTER_DBGIF &dvfsrc MT6873_SLAVE_DDR_EMI>;
 			interconnect-names = "icc-bw";
 			required-opps = <&dvfsrc_freq_opp0>;
+			usb-audio;
 			small-core = <1300000>;
 		};
 
@@ -6115,6 +6642,11 @@
 			emi-alignment = <0x1000000>;
 			emi-max-addr = <0xC0000000>;
 		};
+	};
+
+	odm: odm {
+		compatible = "simple-bus";
+		/* reserved for overlay by odm */
 	};
 
 	mtk_lpm: mtk_lpm {
@@ -6834,7 +7366,7 @@
 	mt6375: mt6375@34 {
 		compatible = "mediatek,mt6375";
 		reg = <0x34>;
-		status = "okay";
+		status = "disable";
 		interrupt-parent = <&pio>;
 		interrupts = <4 IRQ_TYPE_LEVEL_LOW>;
 		interrupt-controller;
@@ -6917,9 +7449,11 @@
 				      <&mt6375_adc MT6375_ADC_SBU2>;
 			charger = <&mt6375_chg>;
 			boot_mode = <&chosen>;
-			tcpc,en_wd;
-			tcpc,en_wd_sbu_polling;
-			tcpc,en_wd_polling_only;
+			/* #ifdef OPLUS_FEATURE_CHG_BASIC */
+			/* tcpc,en_wd; */
+			/* tcpc,en_wd_sbu_polling; */
+			/* tcpc,en_wd_polling_only; */
+			/* #endif */
 			tcpc,en_ctd;
 			tcpc,en_fod;
 			tcpc,en_typec_otp;
@@ -7210,21 +7744,21 @@
 			bias-disable;
 		};
 	};
-	aud_gpio_i2s0_off: aud_gpio_i2s0_off {
+	aud_gpio_i2s2_off: aud_gpio_i2s2_off {
 		pins_cmd1_dat {
 			pinmux = <PINMUX_GPIO53__FUNC_GPIO53>;
 			input-enable;
 			bias-pull-down;
 		};
 	};
-	aud_gpio_i2s0_on: aud_gpio_i2s0_on {
+	aud_gpio_i2s2_on: aud_gpio_i2s2_on {
 		pins_cmd1_dat {
-			pinmux = <PINMUX_GPIO53__FUNC_I2S0_DI>;
+			pinmux = <PINMUX_GPIO53__FUNC_I2S2_DI>;
 			input-schmitt-enable;
 			bias-disable;
 		};
 	};
-	aud_gpio_i2s3_off: aud_gpio_i2s3_off {
+	aud_gpio_i2s1_off: aud_gpio_i2s1_off {
 		pins_cmd1_dat {
 			pinmux = <PINMUX_GPIO50__FUNC_GPIO50>;
 			input-enable;
@@ -7241,19 +7775,19 @@
 			bias-pull-down;
 		};
 	};
-	aud_gpio_i2s3_on: aud_gpio_i2s3_on {
+	aud_gpio_i2s1_on: aud_gpio_i2s1_on {
 		pins_cmd1_dat {
-			pinmux = <PINMUX_GPIO50__FUNC_I2S3_DO>;
+			pinmux = <PINMUX_GPIO50__FUNC_I2S1_DO>;
 			input-schmitt-enable;
 			bias-disable;
 		};
 		pins_cmd2_dat {
-			pinmux = <PINMUX_GPIO51__FUNC_I2S3_BCK>;
+			pinmux = <PINMUX_GPIO51__FUNC_I2S1_BCK>;
 			input-schmitt-enable;
 			bias-disable;
 		};
 		pins_cmd3_dat {
-			pinmux = <PINMUX_GPIO52__FUNC_I2S3_LRCK>;
+			pinmux = <PINMUX_GPIO52__FUNC_I2S1_LRCK>;
 			input-schmitt-enable;
 			bias-disable;
 		};
@@ -7288,3 +7822,7 @@
 	};
 };
 #include "mediatek/trusty.dtsi"
+#include "mediatek/tcpc_sgm7220.dtsi"
+#include "mediatek/tcpc_wusb3801x.dtsi"
+#include "mediatek/wl2868c_doki.dtsi"
+

@@ -2072,6 +2072,7 @@ void mhal_DPTx_PHYSetting(struct mtk_dp *mtk_dp)
 	DPTXDBG("0x4C:%#010x, 0x4C:%#010x", value, msRead4Byte(mtk_dp, 0x114C));
 
 //PORTING FROM CTP
+
 	msWrite4ByteMask(mtk_dp, 0x003C, 0x004 << 24, BITMASK(28:24));
 	msWrite4ByteMask(mtk_dp, 0x0008, 0x7 << 3, BITMASK(6:3));
 	msWrite4ByteMask(mtk_dp, 0x003C, BIT23, BIT23);

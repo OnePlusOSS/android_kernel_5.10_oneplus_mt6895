@@ -47,6 +47,7 @@
 #include "ufstw.h"
 #include "ufshid.h"
 #include "ufsringbuf.h"
+#include "ufssid.h"
 
 #define UFS_UPIU_MAX_GENERAL_LUN		8
 #define UFSHCD_STATE_OPERATIONAL		2	/* ufshcd.c */
@@ -55,7 +56,7 @@
 
 /* Version info */
 #define UFSFEATURE_DD_VER			0x020001
-#define UFSFEATURE_DD_VER_POST			"PoC"
+#define UFSFEATURE_DD_VER_POST			""
 
 /* For read10 debug */
 #define READ10_DEBUG_LUN			0x7F
@@ -86,7 +87,7 @@
 #define UFSF_QUERY_REQ_RETRIES			1
 
 /* Description */
-#define UFSF_QUERY_DESC_DEVICE_MAX_SIZE		0x5F
+#define UFSF_QUERY_DESC_DEVICE_MAX_SIZE		0x65
 #define UFSF_QUERY_DESC_CONFIGURAION_MAX_SIZE	0xE6
 #define UFSF_QUERY_DESC_UNIT_MAX_SIZE		0x2D
 #define UFSF_QUERY_DESC_GEOMETRY_MAX_SIZE	0x59
@@ -187,6 +188,9 @@ struct ufsf_feature {
 	atomic_t ringbuf_state;
 	struct ufsringbuf_dev *ringbuf_dev;
 #endif
+#if defined(CONFIG_UFSSID)
+	struct ufssid_dev *sid_dev;
+#endif
 };
 
 struct ufs_hba;
@@ -251,6 +255,9 @@ void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 #if defined(CONFIG_UFSRINGBUF)
 #define QUERY_FLAG_IDN_CMD_HISTORY_RECORD_EN		0x12
 #endif
+#if defined(CONFIG_UFSSID)
+#define QUERY_FLAG_IDN_STREAM_ID_EN			0x15
+#endif
 
 /* Attribute idn for Query requests */
 #if defined(CONFIG_UFSTW)
@@ -296,6 +303,9 @@ void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 #endif
 #if defined(CONFIG_UFSRINGBUF)
 #define DEVICE_DESC_PARAM_RING_BUF_VER			0x5B
+#endif
+#if defined(CONFIG_UFSSID)
+#define DEVICE_DESC_PARAM_SID_VER			0x63
 #endif
 
 /* Geometry descriptor parameters offsets in bytes*/

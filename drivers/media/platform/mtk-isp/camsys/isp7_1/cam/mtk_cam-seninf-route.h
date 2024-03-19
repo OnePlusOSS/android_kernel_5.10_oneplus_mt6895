@@ -35,4 +35,6 @@ void mtk_cam_seninf_alloc_cam_mux(struct seninf_ctx *ctx);
 void mtk_cam_seninf_release_cam_mux(struct seninf_ctx *ctx);
 #endif
 
+bool has_multiple_expo_mode(struct seninf_ctx *ctx);
+
 #endif

@@ -43,6 +43,26 @@ config TCPC_RT5081
 	  Also Support Power Delivery
 	  Say N to disable
 
+config TCPC_SGM7220
+	tristate "SGM7220 TypeC port Controller Driver"
+	depends on TCPC_CLASS
+	default n
+	help
+	  Say Y to enable
+	  SGM7220
+	  TypeC port Controller
+	  Driver
+
+config TCPC_WUSB3801X
+	tristate "WUSB3801X TypeC port Controller Driver"
+	depends on TCPC_CLASS
+	default n
+	help
+	  Say Y to enable
+	  WUSB3801X
+	  TypeC port Controller
+	  Driver
+
 config TCPC_MT6360
 	tristate "MediaTek MT6360 TypeC port Controller Driver"
 	depends on TCPC_CLASS
@@ -87,10 +107,10 @@ config WAIT_TX_RETRY_DONE
 	bool "Wait TX DONE to send Hardreset"
 	depends on TCPC_CLASS
 	help
-          Select this to
+	  Select this to
 	  Wait TX DONE
-          to send
-          Hardreset
+	  to send
+	  Hardreset
 
 config USB_PD_VBUS_STABLE_TOUT
 	int "PD VBUS Stable Timeout"

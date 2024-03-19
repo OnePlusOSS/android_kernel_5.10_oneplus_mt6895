@@ -5,6 +5,7 @@
  */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
@@ -12,6 +13,8 @@
 #include <linux/pm_runtime.h>
 #include <linux/scmi_protocol.h>
 #include <linux/slab.h>
+#include <linux/sched/clock.h>
+#include <linux/timer.h>
 #include "cmdq-util.h"
 #include "mtk-smi-dbg.h"
 #include "tinysys-scmi.h"
@@ -85,13 +88,26 @@ static bool mminfra_check_scmi_status(void)
 static void do_mminfra_bkrs(bool is_restore)
 {
 	int err;
+	u64 start_ts, start_osts, end_ts, end_osts;
 
 	if (mminfra_check_scmi_status()) {
+		start_ts = sched_clock();
+		start_osts = __arch_counter_get_cntvct();
+
 		err = scmi_tinysys_common_set(tinfo->ph, feature_id,
 				2, (is_restore)?0:1, 0, 0, 0);
-		if (err)
-			pr_notice("%s: call scmi_tinysys_common_set(%d) err=%d\n",
-				__func__, is_restore, err);
+
+		if (err) {
+			end_ts = sched_clock();
+			end_osts = __arch_counter_get_cntvct();
+			pr_notice("%s: call scmi(%d) err=%d osts:%llu ts:%llu\n",
+				__func__, is_restore, err, start_osts, start_ts);
+			if (err == -ETIMEDOUT) {
+				pr_notice("%s: call scmi(%d) timeout osts:%llu ts:%llu\n",
+					__func__, is_restore, end_osts, end_ts);
+				mdelay(3);
+			}
+		}
 	}
 }
 

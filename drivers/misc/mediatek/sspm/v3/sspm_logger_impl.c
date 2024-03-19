@@ -154,6 +154,13 @@ static unsigned int sspm_log_enable_set(unsigned int enable)
 	int onoff, ret;
 	struct scmi_tinysys_info_st *tinfo = get_scmi_tinysys_info();
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (!tinfo) {
+		pr_err("%s tinfo is NULL\n", __func__);
+		goto error;
+	}
+#endif
+
 	onoff = enable ? 257 : 1;
 	if (sspm_logger_inited) {
 		msg_data.cmd = PLT_LOG_ENABLE;

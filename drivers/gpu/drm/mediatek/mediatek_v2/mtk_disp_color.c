@@ -35,6 +35,7 @@ static struct DISP_PQ_PARAM g_Color_Param[DISP_COLOR_TOTAL];
 
 // It's a work around for no comp assigned in functions.
 static struct mtk_ddp_comp *default_comp;
+static struct mtk_ddp_comp *default_comp1;
 
 int ncs_tuning_mode;
 
@@ -61,6 +62,9 @@ static int g_color_reg_valid;
 static unsigned int g_width;
 
 bool g_legacy_color_cust;
+#ifdef OPLUS_FEATURE_DISPLAY
+extern bool g_color_probe_ready;
+#endif
 
 #define C1_OFFSET (0)
 #define color_get_offset(module) (0)
@@ -1240,7 +1244,7 @@ void DpEngine_COLORonConfig(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
 	unsigned char h_series[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 			0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
-	int id = index_of_color(comp->id);
+	int id = 0;
 	struct mtk_disp_color *color = comp_to_color(comp);
 	struct DISP_PQ_PARAM *pq_param_p = &g_Color_Param[id];
 	int i, j, reg_index;
@@ -1681,7 +1685,7 @@ static void color_write_hw_reg(struct mtk_ddp_comp *comp,
 	unsigned char h_series[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 		, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	unsigned int u4Temp = 0;
-	int id = index_of_color(comp->id);
+	int id = 0;
 	struct mtk_disp_color *color = comp_to_color(comp);
 	int i, j, reg_index;
 	int wide_gamut_en = 0;
@@ -3439,6 +3443,37 @@ void mtk_color_dump(struct mtk_ddp_comp *comp)
 	mtk_serial_dump_reg(baddr, 0xC50, 2);
 }
 
+void mtk_color_regdump(void)
+{
+	void __iomem *baddr = default_comp->regs;
+	int k;
+
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(default_comp),
+			default_comp->regs_pa);
+	DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp));
+	for (k = 0x400; k <= 0xd5c; k += 16) {
+		DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+			readl(baddr + k),
+			readl(baddr + k + 0x4),
+			readl(baddr + k + 0x8),
+			readl(baddr + k + 0xc));
+	}
+	DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp));
+	if (default_comp->mtk_crtc->is_dual_pipe) {
+		baddr = default_comp1->regs;
+		DDPDUMP("== %s REGS ==\n", mtk_dump_comp_str(default_comp1));
+		DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp1));
+		for (k = 0x400; k <= 0xd5c; k += 16) {
+			DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+				readl(baddr + k),
+				readl(baddr + k + 0x4),
+				readl(baddr + k + 0x8),
+				readl(baddr + k + 0xc));
+		}
+		DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp1));
+	}
+}
+
 static int mtk_disp_color_bind(struct device *dev, struct device *master,
 			       void *data)
 {
@@ -3497,6 +3532,8 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 
 	if (!default_comp)
 		default_comp = &priv->ddp_comp;
+	if (comp_id == DDP_COMPONENT_COLOR1)
+		default_comp1 = &priv->ddp_comp;
 
 	priv->data = of_device_get_match_data(dev);
 
@@ -3511,6 +3548,9 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 	}
 
 	g_legacy_color_cust = false;
+#ifdef OPLUS_FEATURE_DISPLAY
+	g_color_probe_ready = true;
+#endif
 	DDPINFO("%s-\n", __func__);
 
 	return ret;

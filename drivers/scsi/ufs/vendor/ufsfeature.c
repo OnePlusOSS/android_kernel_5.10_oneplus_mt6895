@@ -94,6 +94,9 @@ static int ufsf_read_dev_desc(struct ufsf_feature *ufsf, u8 selector)
 #if defined(CONFIG_UFSRINGBUF)
 	ufsringbuf_get_dev_info(ufsf, desc_buf);
 #endif
+#if defined(CONFIG_UFSSID)
+	ufssid_get_dev_info(ufsf, desc_buf);
+#endif
 	return 0;
 }
 
@@ -466,6 +469,10 @@ inline int ufsf_prep_fn(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp)
 	    ufsringbuf_get_state(ufsf) == RINGBUF_RESET)
 		ufsringbuf_prep_fn(ufsf, lrbp);
 #endif
+#if defined(CONFIG_UFSSID)
+	if (ufsf->sid_dev)
+		ufssid_prep_fn(ufsf, lrbp);
+#endif
 
 	return ret;
 }
@@ -603,6 +610,10 @@ inline void ufsf_init(struct ufsf_feature *ufsf)
 	if (ufsringbuf_get_state(ufsf) == RINGBUF_NEED_INIT)
 		ufsringbuf_init(ufsf);
 #endif
+#if defined(CONFIG_UFSSID)
+	if (ufsf->sid_dev)
+		ufssid_init(ufsf);
+#endif
 
 	ufsf->check_init = true;
 }
@@ -651,6 +662,10 @@ inline void ufsf_remove(struct ufsf_feature *ufsf)
 #if defined(CONFIG_UFSRINGBUF)
 	if (ufsringbuf_get_state(ufsf) == RINGBUF_PRESENT)
 		ufsringbuf_remove(ufsf);
+#endif
+#if defined(CONFIG_UFSSID)
+	if (ufsf->sid_dev)
+		ufssid_remove(ufsf);
 #endif
 }
 

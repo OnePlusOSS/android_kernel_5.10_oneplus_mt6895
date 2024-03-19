@@ -18,6 +18,10 @@
 #include "mtk-base-dsp.h"
 #include "mtk-dsp-common.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_AUDIODSP_SUPPORT)
 #include <adsp_helper.h>
 #endif
@@ -159,6 +163,13 @@ int mtk_scp_ipi_send(int task_scene, int data_type, int ack_type,
 		(char *)payload);
 	if (send_result)
 		pr_info("%s(),scp_ipi send fail\n", __func__);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (send_result) {
+		pr_err_fb("scp_ipi send fail,ret=%d,task_scene=%d,msg_id=%u", \
+				send_result, get_dspdaiid_by_dspscene(task_scene), msg_id);
+	}
+#endif
 
 	return send_result;
 }

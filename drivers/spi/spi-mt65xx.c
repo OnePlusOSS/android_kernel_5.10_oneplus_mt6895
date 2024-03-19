@@ -250,6 +250,7 @@ static const struct of_device_id mtk_spi_of_match[] = {
 	{}
 };
 MODULE_DEVICE_TABLE(of, mtk_spi_of_match);
+#define SPI_PAUSEMODE_DIS  1
 #define LOG_CLOSE   0
 #define LOG_OPEN    1
 u8 spi_log_status = LOG_CLOSE;
@@ -260,6 +261,32 @@ u8 spi_log_status = LOG_CLOSE;
 			__func__, ##args);\
 	} \
 } while (0)
+#if SPI_PAUSEMODE_DIS
+static void mtk_spi_setup_pausemode(struct spi_master *master, bool enable)
+{
+	u32 reg_val;
+	struct mtk_spi *mdata = spi_master_get_devdata(master);
+	u32 len = max_t(u32, mdata->tx_sgl_len, mdata->rx_sgl_len);
+
+	reg_val = readl(mdata->base + SPI_CMD_REG);
+	if (enable && (len > MTK_SPI_PACKET_SIZE) && (len % MTK_SPI_PACKET_SIZE)) {
+		reg_val |= SPI_CMD_PAUSE_EN;
+		writel(reg_val, mdata->base + SPI_CMD_REG);
+
+		spi_debug("spipausemode enable, tx_len:%d, rx_len:%d\n",
+				  mdata->tx_sgl_len, mdata->rx_sgl_len);
+	} else if (!enable && ((mdata->xfer_len < MTK_SPI_PACKET_SIZE) || (len % MTK_SPI_PACKET_SIZE == 0))) {
+		reg_val &= ~SPI_CMD_PAUSE_EN;
+		writel(reg_val, mdata->base + SPI_CMD_REG);
+
+		//mdata->state = MTK_SPI_IDLE;
+		//mtk_spi_reset(mdata);
+
+		spi_debug("spipausemode dis, tx_len:%d, rx_len:%d, xfer_len:%d\n",
+				  mdata->tx_sgl_len, mdata->rx_sgl_len, mdata->xfer_len);
+	}
+}
+#endif
 
 static ssize_t spi_log_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
@@ -482,6 +509,29 @@ static void mtk_spi_set_cs(struct spi_device *spi, bool enable)
 	u32 reg_val;
 	int ret;
 	struct mtk_spi *mdata = spi_master_get_devdata(spi->master);
+
+#if SPI_PAUSEMODE_DIS
+	if (mdata->dev_comp->no_need_unprepare)
+		ret = clk_enable(mdata->spi_clk);
+	else
+		ret = clk_prepare_enable(mdata->spi_clk);
+	if (ret < 0) {
+		dev_err(&spi->dev, "failed to enable spi_clk (%d)\n", ret);
+		return;
+	}
+	
+	if (enable) {
+		mdata->state = MTK_SPI_IDLE;
+		mtk_spi_reset(mdata);
+	}
+
+	if (mdata->dev_comp->no_need_unprepare)
+		clk_disable(mdata->spi_clk);
+	else
+		clk_disable_unprepare(mdata->spi_clk);
+
+	return;
+#endif
 
 	if (mdata->dev_comp->no_need_unprepare)
 		ret = clk_enable(mdata->spi_clk);
@@ -763,6 +813,10 @@ static int mtk_spi_dma_transfer(struct spi_master *master,
 		mdata->rx_sgl_len = sg_dma_len(mdata->rx_sgl);
 	}
 
+#if SPI_PAUSEMODE_DIS
+	mtk_spi_setup_pausemode(master, true);
+#endif
+
 	mtk_spi_update_mdata_len(master);
 	mtk_spi_setup_packet(master);
 	mtk_spi_setup_dma_addr(master, xfer);
@@ -894,7 +948,9 @@ static irqreturn_t mtk_spi_interrupt(int irq, void *dev_id)
 		cmd &= ~SPI_CMD_TX_DMA;
 		cmd &= ~SPI_CMD_RX_DMA;
 		writel(cmd, mdata->base + SPI_CMD_REG);
-
+#if SPI_PAUSEMODE_DIS
+		mtk_spi_setup_pausemode(master, false);
+#endif
 		spi_finalize_current_transfer(master);
 		spi_debug("The last DMA transfer Done.\n");
 		return IRQ_HANDLED;

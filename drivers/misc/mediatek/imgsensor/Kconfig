@@ -68,3 +68,14 @@ config MTK_V4L2_IMGSENSOR
 	  module wll be called imgsensor.
 
 source "drivers/misc/mediatek/imgsensor/src/Kconfig"
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#Add for DFX camera log report
+source "drivers/misc/mediatek/imgsensor/oplus/Kconfig
+
+config OPLUS_CAM_OLC_EXCEPTION
+	bool "olc raise exception support"
+	default n
+	help
+		Say Y to include support
+#endif /* OPLUS_FEATURE_CAMERA_COMMON */

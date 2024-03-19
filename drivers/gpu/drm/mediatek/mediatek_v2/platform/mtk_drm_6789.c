@@ -25,6 +25,11 @@
 #include "../mtk_mipi_tx.h"
 #include "mtk_drm_6789.h"
 
+#ifdef OPLUS_FEATURE_DISPLAY
+unsigned int oplus_panel_index;
+EXPORT_SYMBOL(oplus_panel_index);
+#endif   /*OPLUS_FEATURE_DISPLAY*/
+
 static void mt6789_mtk_sodi_config(struct drm_device *drm, enum mtk_ddp_comp_id id,
 			struct cmdq_pkt *handle, void *data);
 
@@ -161,7 +166,7 @@ const struct mtk_dsi_driver_data mt6789_dsi_driver_data = {
 	.support_shadow = false,
 	.need_bypass_shadow = true,
 	.need_wait_fifo = true,
-	.dsi_buffer = false,
+	.dsi_buffer = true,
 	.dsi_new_trail = false,
 	.max_vfp = 0x7ffe,
 	.mmclk_by_datarate = mtk_dsi_set_mmclk_by_datarate_V2,
@@ -1344,7 +1349,19 @@ static int mtk_mipi_tx_pll_prepare_mt6789(struct clk_hw *hw)
 
 	/* TODO: should write bit8 to set SW_ANA_CK_EN here */
 	mtk_mipi_tx_set_bits(mipi_tx, MIPITX_SW_CTRL_CON4, 1);
-
+#ifdef OPLUS_FEATURE_DISPLAY
+	/*2228101 is "oplus22281_samsung_ams643ag01_1080p_dsi_cmd,lcm"*/
+	if (oplus_panel_index == 2228101) {
+		writel(0x01b10003, mipi_tx->regs + MIPITX_PLL_CON2);
+		/*example,mipi clock down n% ,(( n x mipi clock x 4 x 262144 + 281644 ) / 563329)*/
+		/*299M dowm 0.1%*/
+		writel(0x00380038, mipi_tx->regs + MIPITX_PLL_CON3);
+		/*reg_val = readl(mipi_tx->regs + MIPITX_PLL_CON2);
+		printk("%s - open ssc CON2 reg_val=0x%x \n",__func__,reg_val);
+		reg_val = readl(mipi_tx->regs + MIPITX_PLL_CON3);
+		printk("%s - open ssc CON3 reg_val=0x%x \n",__func__,reg_val);*/
+	}
+#endif   /*OPLUS_FEATURE_DISPLAY*/
 	DDPDBG("%s-\n", __func__);
 
 	return 0;

@@ -26,15 +26,41 @@ char * const imgsensor_hw_pin_names[] = {
 	"mipi_switch_sel",
 	"mclk"
 };
-
+char * const imgsensor_hw_pin_state_names[] = {
+	"pin_state_Low",
+	"pin_out_1v",
+	"pin_out_1.05v",
+	"pin_out_1.1v",
+	"pin_out_1.15v",
+	"pin_out_1.2v",
+	"pin_out_1.21v",
+	"pin_out_1.22v",
+	"pin_out_1.5v",
+	"pin_out_1.8v",
+	"pin_out_2.2v",
+	"pin_out_2.5v",
+	"pin_out_2.8v",
+	"pin_out_2.9v",
+	"pin_state_High"
+};
 /*the index is consistent with enum IMGSENSOR_HW_ID*/
 char * const imgsensor_hw_id_names[] = {
 	"mclk",
 	"regulator",
-	"gpio"
+	"gpio",
+	"wl2868c"
+	#ifdef SUPPORT_WL2868
+	,"wl2868"
+	#endif
 };
 char * const imgsensor_prj_names[] = {
-	"tb8781p2_64"
+	"tb8781p2_64",
+	"23922",
+	"23971",
+	"23972",
+	"23974",
+	"sonic",
+        "23973"
 };
 enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 {
@@ -67,7 +93,15 @@ enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 		if (custlen != 0 && strncmp(prj_name, imgsensor_prj_names[0], custlen)
 			== 0) {
 			pcust_pwr_cfg = imgsensor_mt8781_config;
-		} else {
+		} else if (custlen != 0 && ((strncmp(prj_name, imgsensor_prj_names[1], custlen)== 0) ||
+		    (strncmp(prj_name, imgsensor_prj_names[2], custlen) == 0) ||
+		    (strncmp(prj_name, imgsensor_prj_names[3], custlen) == 0) ||
+		    (strncmp(prj_name, imgsensor_prj_names[4], custlen) == 0) ||
+                    (strncmp(prj_name, imgsensor_prj_names[6], custlen) == 0))) {
+			pcust_pwr_cfg = imgsensor_bluey_config;
+		} else if (custlen != 0 && (strncmp(prj_name, imgsensor_prj_names[5], custlen)== 0) ) {
+			pcust_pwr_cfg = imgsensor_sonic_config;
+		}else {
 			pcust_pwr_cfg = imgsensor_custom_config;
 		}
 
@@ -171,7 +205,15 @@ enum IMGSENSOR_RETURN imgsensor_hw_init(struct IMGSENSOR_HW *phw)
 		if (custlen != 0 && strncmp(prj_name, imgsensor_prj_names[0], custlen)
 			== 0) {
 			pcust_pwr_cfg = imgsensor_mt8781_config;
-		} else {
+		} else if (custlen != 0 && ((strncmp(prj_name, imgsensor_prj_names[1], custlen)== 0) ||
+		    (strncmp(prj_name, imgsensor_prj_names[2], custlen) == 0) ||
+		    (strncmp(prj_name, imgsensor_prj_names[3], custlen) == 0) ||
+		    (strncmp(prj_name, imgsensor_prj_names[4], custlen) == 0) ||
+                    (strncmp(prj_name, imgsensor_prj_names[6], custlen) == 0))) {
+			pcust_pwr_cfg = imgsensor_bluey_config;
+		} else if (custlen != 0 && (strncmp(prj_name, imgsensor_prj_names[5], custlen)== 0) ) {
+			pcust_pwr_cfg = imgsensor_sonic_config;
+		}else {
 			pcust_pwr_cfg = imgsensor_custom_config;
 		}
 
@@ -276,10 +318,12 @@ static enum IMGSENSOR_RETURN imgsensor_hw_power_sequence(
 
 					if (__ratelimit(&ratelimit))
 						PK_DBG(
-						"sensor_idx %d, ppwr_info->pin %d, ppwr_info->pin_state_on %d, delay %u",
+						"sensor_idx %d, ppwr_info->pin %d(%s), ppwr_info->pin_state_on %d(%s), delay %u",
 						sensor_idx,
 						ppwr_info->pin,
+						imgsensor_hw_pin_names[ppwr_info->pin],
 						ppwr_info->pin_state_on,
+						imgsensor_hw_pin_state_names[ppwr_info->pin_state_on],
 						ppwr_info->pin_on_delay);
 
 					if (pdev->set != NULL)
@@ -309,10 +353,12 @@ static enum IMGSENSOR_RETURN imgsensor_hw_power_sequence(
 
 					if (__ratelimit(&ratelimit))
 						PK_DBG(
-						"sensor_idx %d, ppwr_info->pin %d, ppwr_info->pin_state_off %d, delay %u",
+						"sensor_idx %d, ppwr_info->pin %d(%s), ppwr_info->pin_state_off %d(%s), delay %u",
 						sensor_idx,
 						ppwr_info->pin,
+						imgsensor_hw_pin_names[ppwr_info->pin],
 						ppwr_info->pin_state_off,
+						imgsensor_hw_pin_state_names[ppwr_info->pin_state_off],
 						ppwr_info->pin_on_delay);
 
 					if (pdev->set != NULL)

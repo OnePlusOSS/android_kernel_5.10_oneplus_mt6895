@@ -8,6 +8,10 @@
 
 #include "frame_sync_def.h"
 
+#ifndef FS_UT
+#include "imgsensor-user.h"
+#endif // !FS_UT
+
 
 /*******************************************************************************
  * The Method for FrameSync Register Sensor (default pls using sensor_idx).
@@ -34,32 +38,65 @@ enum FS_STATUS {
 
 
 /*******************************************************************************
- * The Method for FrameSync sync type.
+ * For HW sensor sync. --- MAX value sync to SENSOR_MAX_NUM
  ******************************************************************************/
+enum FS_HW_SYNC_GROUP_ID {
+	FS_HW_SYNC_GROUP_ID_MIN = 0,
+
+	FS_HW_SYNC_GROUP_ID_0 = FS_HW_SYNC_GROUP_ID_MIN,
+	FS_HW_SYNC_GROUP_ID_1,
+	FS_HW_SYNC_GROUP_ID_2,
+	FS_HW_SYNC_GROUP_ID_3,
+	FS_HW_SYNC_GROUP_ID_4,
+	FS_HW_SYNC_GROUP_ID_5,
+
+	FS_HW_SYNC_GROUP_ID_MAX
+};
+
+
+#ifdef FS_UT
+/*******************************************************************************
+ * The Method for FrameSync sync type/methods.
+ ******************************************************************************/
+/*
+ * !!! MUST sync/check this enum in imgsensor-user.h file. !!!
+ *     imgsensor-user.h in:
+ *         imgsensor/inc/
+ *         device/mediatek/common/kernel-headers/
+ * !!! MUST sync/check this enum in imgsensor-user.h file. !!!
+ */
 enum FS_SYNC_TYPE {
 	FS_SYNC_TYPE_NONE = 0,
+
+	/* below tags, chose one (default use VSYNC, mutually exclusive) */
 	FS_SYNC_TYPE_VSYNC = 1 << 1,
 	FS_SYNC_TYPE_READOUT_CENTER = 1 << 2,
+
+	/* below tags, chose one (default use LE, mutually exclusive) */
 	FS_SYNC_TYPE_LE = 1 << 3,
 	FS_SYNC_TYPE_SE = 1 << 4,
+
+	/* SA - Async mode */
+	FS_SYNC_TYPE_ASYNC_MODE = 1 << 8,
 };
 /******************************************************************************/
+#endif // FS_UT
 
 
 /*******************************************************************************
  * The Feature mode for FrameSync.
  ******************************************************************************/
-enum FS_FEATURE_MODE {
-	FS_FT_MODE_NORMAL = 0,
-	FS_FT_MODE_STG_HDR = 1,
+enum FS_HDR_FT_MODE {
+	FS_HDR_FT_MODE_NORMAL = 0,
+	FS_HDR_FT_MODE_STG_HDR = 1,
 
 	/* N:1 / M-Stream */
-	FS_FT_MODE_FRAME_TAG = 1 << 1, /* (N:1) Not one-to-one sync */
-	FS_FT_MODE_ASSIGN_FRAME_TAG = 1 << 2, /* (M-Stream) Not one-to-one sync */
+	FS_HDR_FT_MODE_FRAME_TAG = 1 << 1, /* (N:1) Not 1:1 sync */
+	FS_HDR_FT_MODE_ASSIGN_FRAME_TAG = 1 << 2, /* (M-Stream) Not 1:1 sync */
 
-	FS_FT_MODE_N_1_ON = 1 << 3,
-	FS_FT_MODE_N_1_KEEP = 1 << 4,
-	FS_FT_MODE_N_1_OFF = 1 << 5,
+	FS_HDR_FT_MODE_N_1_ON = 1 << 3,
+	FS_HDR_FT_MODE_N_1_KEEP = 1 << 4,
+	FS_HDR_FT_MODE_N_1_OFF = 1 << 5,
 };
 /******************************************************************************/
 
@@ -69,6 +106,17 @@ enum FS_FEATURE_MODE {
  ******************************************************************************/
 enum FS_SA_METHOD {
 	FS_SA_ADAPTIVE_MASTER = 0,
+	FS_SA_ASYNC = 2,
+};
+
+
+struct fs_sa_cfg {
+	unsigned int idx;
+	int sa_method;
+	int m_idx;
+	int valid_sync_bits;
+	int async_m_idx;
+	int async_s_bits;
 };
 /******************************************************************************/
 
@@ -97,7 +145,7 @@ enum FS_HDR_EXP {
 /* get exp location by hdr_exp_idx_map[exp_cnt][exp] */
 /* -1: error handle for mapping to a non valid idx and */
 /*     a info/hint for fs_alg_setup_multi_exp_value() */
-const static int hdr_exp_idx_map[][FS_HDR_MAX] = {
+static const int hdr_exp_idx_map[][FS_HDR_MAX] = {
 	/* order => LE:0 / ME:1 / SE:2 / SSE:3 / SSSE:4, (MAX:5) */
 	{FS_HDR_NONE, FS_HDR_NONE, FS_HDR_NONE, FS_HDR_NONE, FS_HDR_NONE}, // exp cnt:0
 	{FS_HDR_LE, FS_HDR_NONE, FS_HDR_NONE, FS_HDR_NONE, FS_HDR_NONE}, // exp cnt:1
@@ -127,15 +175,26 @@ struct fs_streaming_st {
 	unsigned int sensor_id;
 	unsigned int sensor_idx;
 
+	unsigned int cammux_id;          // need to map to CCU TG ID
+	unsigned int target_tg;          // ISP7s: already direct map to CCU tg ID
 	unsigned int tg;
 
 	unsigned int fl_active_delay;
 	unsigned int def_fl_lc;          // default framelength_lc
 	unsigned int max_fl_lc;          // for framelength boundary check
 	unsigned int def_shutter_lc;     // default shutter_lc
+	unsigned int margin_lc;
+
+	/* for HW sensor sync */
 	unsigned int sync_mode;          // sync operate mode. none/master/slave
+	unsigned int hw_sync_group_id;   // hw sync group ID
 
 	struct fs_hdr_exp_st hdr_exp;    // hdr exposure settings
+
+	/* sensor mode info */
+	unsigned int pclk;
+	unsigned int linelength;
+	unsigned int lineTimeInNs;
 
 	/* callback function */
 	callback_set_framelength func_ptr;
@@ -161,9 +220,19 @@ struct fs_perframe_st {
 	unsigned int linelength;         // write_shutter(), set_max_framerate()
 	/* lineTimeInNs ~= 10^9 * (linelength/pclk) */
 	unsigned int lineTimeInNs;
+	unsigned int readout_time_us;    // current mode read out time.
 
 	/* callback function using */
 	unsigned int cmd_id;
+
+	/* debug variables */
+	int req_id;                      // from mtk hdr ae structure
+};
+
+
+struct fs_seamless_st {
+	struct fs_perframe_st seamless_pf_ctrl;
+	unsigned int orig_readout_time_us;
 };
 
 
@@ -175,13 +244,16 @@ struct fs_perframe_st {
  ******************************************************************************/
 struct FrameSync {
 	/* according to sensor idx, register image sensor info */
-	unsigned int (*fs_streaming)(
-				unsigned int flag,
-				struct fs_streaming_st *streaming_st);
+	unsigned int (*fs_streaming)(const unsigned int flag,
+		struct fs_streaming_st *streaming_st);
 
 
 	/* enable / disable frame sync processing for this sensor ident */
 	void (*fs_set_sync)(unsigned int sensor_ident, unsigned int flag);
+
+	/* for MW assign async mode master sensor idx */
+	void (*fs_sa_set_user_async_master)(const unsigned int sidx,
+		const unsigned int flag);
 
 
 	/**********************************************************************/
@@ -198,12 +270,14 @@ struct FrameSync {
 
 
 	/* frame sync set shutter */
-	void (*fs_set_shutter)(struct fs_perframe_st *perframe_st);
-	void (*fs_update_shutter)(struct fs_perframe_st *frameCtrl);
+	void (*fs_set_shutter)(struct fs_perframe_st *pf_ctrl);
+	void (*fs_update_shutter)(struct fs_perframe_st *pf_ctrl);
 
 
 	/* for cam mux switch and sensor streaming on before setup cam mux */
 	void (*fs_update_tg)(unsigned int ident, unsigned int tg);
+	/* ISP7s HW change, seninf assign target tg ID (direct map to CCU tg ID) */
+	void (*fs_update_target_tg)(unsigned int ident, unsigned int target_tg);
 
 
 	/* update fs_perframe_st data */
@@ -230,11 +304,15 @@ struct FrameSync {
 
 
 	/* for notify FrameSync sensor doing seamless switch using */
-	void (*fs_seamless_switch)(unsigned int ident);
+	void (*fs_chk_exit_seamless_switch_frame)(const unsigned int ident);
+	void (*fs_chk_valid_for_doing_seamless_switch)(const unsigned int ident);
+	void (*fs_seamless_switch)(const unsigned int ident,
+		struct fs_seamless_st *p_seamless_info,
+		const unsigned int seamless_sof_cnt);
 
 
 	/* for choosing FrameSync StandAlone algorithm */
-	void (*fs_set_using_sa_mode)(unsigned int en);
+	void (*fs_set_using_sa_mode)(const unsigned int en);
 
 
 	/* for cam-sys assign taget vsync at subsample */
@@ -249,7 +327,12 @@ struct FrameSync {
 	void (*fs_mstream_en)(unsigned int ident, unsigned int en);
 
 
-	void (*fs_notify_vsync)(unsigned int ident);
+	void (*fs_set_debug_info_sof_cnt)(const unsigned int ident,
+		const unsigned int sof_cnt);
+
+
+	void (*fs_notify_vsync)(const unsigned int ident,
+		const unsigned int sof_cnt);
 
 
 	/**********************************************************************/
@@ -257,6 +340,11 @@ struct FrameSync {
 	/* return: (0 / 1) => (disable / enable) */
 	/**********************************************************************/
 	unsigned int (*fs_is_set_sync)(unsigned int sensor_id);
+
+	unsigned int (*fs_is_hw_sync)(const unsigned int ident);
+
+	void (*fs_get_fl_record_info)(const unsigned int ident,
+		unsigned int *p_target_min_fl_us, unsigned int *p_out_fl_us);
 };
 
 
@@ -279,8 +367,6 @@ void FrameSyncUnInit(struct device *dev);
 #else // FS_UT
 unsigned int FrameSyncInit(struct FrameSync **framesync);
 #endif // FS_UT
-
-
 
 
 #endif

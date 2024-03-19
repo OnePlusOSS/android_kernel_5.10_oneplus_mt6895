@@ -1,0 +1,5 @@
+config SENSORS_SIMULATED_HALL
+	tristate "for oplus hall"
+	default n
+	help
+	  It support sensor_hall.

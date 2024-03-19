@@ -26,6 +26,18 @@ static int tcpm_check_typec_attached(struct tcpc_device *tcpc)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+bool tcpm_inquire_pdphy_ready(struct tcpc_device *tcpc)
+{
+	if (tcpc->pd_inited_flag) {
+		return true;
+	} else {
+		return false;
+	}
+}
+EXPORT_SYMBOL(tcpm_inquire_pdphy_ready);
+#endif
+
 #if IS_ENABLED(CONFIG_USB_POWER_DELIVERY)
 int tcpm_check_pd_attached(struct tcpc_device *tcpc)
 {
@@ -167,7 +179,8 @@ EXPORT_SYMBOL(tcpm_inquire_typec_role);
 uint8_t tcpm_inquire_typec_local_rp(
 	struct tcpc_device *tcpc)
 {
-	uint8_t level;
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*	uint8_t level;
 
 	switch (tcpc->typec_local_rp_level) {
 	case TYPEC_CC_RP_1_5:
@@ -182,7 +195,9 @@ uint8_t tcpm_inquire_typec_local_rp(
 		break;
 	}
 
-	return level;
+	return level;*/
+	return tcpc->typec_local_rp_level;
+/*#endif*/
 }
 EXPORT_SYMBOL(tcpm_inquire_typec_local_rp);
 
@@ -233,17 +248,9 @@ int tcpm_typec_set_rp_level(
 	struct tcpc_device *tcpc, uint8_t level)
 {
 	int ret = 0;
-	uint8_t res;
-
-	if (level == 2)
-		res = TYPEC_CC_RP_3_0;
-	else if (level == 1)
-		res = TYPEC_CC_RP_1_5;
-	else
-		res = TYPEC_CC_RP_DFT;
 
 	tcpci_lock_typec(tcpc);
-	ret = tcpc_typec_set_rp_level(tcpc, res);
+	ret = tcpc_typec_set_rp_level(tcpc, level);
 	tcpci_unlock_typec(tcpc);
 
 	return ret;
@@ -1639,6 +1646,27 @@ bool tcpm_inquire_during_pps_charge(struct tcpc_device *tcpc)
 }
 EXPORT_SYMBOL(tcpm_inquire_during_pps_charge);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+int tcpm_set_extra_pps_curr_en(struct tcpc_device *tcpc, bool en)
+{
+	struct pd_port *pd_port = &tcpc->pd_port;
+	printk("tcpm_set_extra_pps_curr_en = %d", en);
+	mutex_lock(&pd_port->pd_lock);
+	pd_port->extra_pps_curr = en;
+	mutex_unlock(&pd_port->pd_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL(tcpm_set_extra_pps_curr_en);
+
+bool tcpm_inquire_extra_pps_curr(struct tcpc_device *tcpc)
+{
+	struct pd_port *pd_port = &tcpc->pd_port;
+
+	return pd_port->extra_pps_curr;
+}
+EXPORT_SYMBOL(tcpm_inquire_extra_pps_curr);
+#endif
 #endif	/* CONFIG_USB_PD_REV30_PPS_SINK */
 
 #if CONFIG_USB_PD_REV30_BAT_INFO

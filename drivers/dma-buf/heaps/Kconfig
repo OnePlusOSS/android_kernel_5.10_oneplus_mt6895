@@ -22,6 +22,12 @@ config DMABUF_HEAPS_MTK_MM
 	  Choose this option to enable the mtk_mm dmabuf heap. The mtk_mm heap
 	  is backed by pages from the buddy allocator. If in doubt, say Y.
 
+config OPLUS_FEATURE_MM_BOOSTPOOL
+        tristate "Oplus DMA-BUF heaps boost-pool library "
+        depends on DMABUF_HEAPS_SYSTEM
+        help
+          Choose this option to enable the DMA-BUF heaps boost-pool library.
+
 config DMABUF_HEAPS_DEBUG
 	tristate "DMA-BUF debug Heap"
 	depends on DMABUF_HEAPS_MTK_MM && DMABUF_HEAPS_SYSTEM

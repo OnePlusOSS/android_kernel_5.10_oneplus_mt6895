@@ -28,7 +28,6 @@
 
 //#ifndef VENDOR_EDIT
 //#include "kd_camera_hw.h"
-/*Caohua.Lin@Camera.Drv, 20180126 remove to adapt with mt6771*/
 //#endif
 #include "kd_imgsensor.h"
 #include "kd_imgsensor_define.h"

@@ -1854,8 +1854,7 @@ int mtk_cam_video_set_fmt(struct mtk_cam_video_device *node, struct v4l2_format 
 	/* TODO: support camsv meta header */
 #if PDAF_READY
 	/* add header size for vc channel */
-	if (node->desc.dma_port == MTKCAM_IPI_CAMSV_MAIN_OUT &&
-		node->desc.id == MTK_CAMSV_MAIN_STREAM_OUT)
+	if (node->desc.dma_port == MTKCAM_IPI_CAMSV_MAIN_OUT)
 		try_fmt.fmt.pix_mp.plane_fmt[0].sizeimage +=
 		mtk_cam_get_meta_size(MTKCAM_IPI_CAMSV_MAIN_OUT);
 #endif

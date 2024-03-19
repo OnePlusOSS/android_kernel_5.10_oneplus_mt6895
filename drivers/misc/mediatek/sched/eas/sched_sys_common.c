@@ -28,6 +28,7 @@ static struct attribute *sched_ctl_attrs[] = {
 #if IS_ENABLED(CONFIG_MTK_CORE_PAUSE)
 	&sched_core_pause_info_attr.attr,
 #endif
+	&fake_cpuinfo_max_freq_cpu_attr.attr,
 	NULL,
 };
 
@@ -64,6 +65,30 @@ error:
 	return ret;
 }
 
+extern unsigned int fake_cpuinfo_max_freq_cpu;
+
+ssize_t store_fake_cpuinfo_max_freq_cpu(struct kobject *kobj, struct kobj_attribute *attr, const char __user *buf, size_t cnt)
+{
+	int value;
+
+	if (kstrtoint(buf, 10, &value))
+		return -EINVAL;
+
+	fake_cpuinfo_max_freq_cpu = value;
+	return cnt;
+}
+
+ssize_t show_fake_cpuinfo_max_freq_cpu(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	unsigned int len = 0;
+	unsigned int max_len = 4096;
+
+	len += snprintf(buf+len, max_len-len,
+			"%d\n", fake_cpuinfo_max_freq_cpu);
+
+	return len;
+}
+
 void cleanup_sched_common_sysfs(void)
 {
 	if (kobj) {
@@ -72,3 +97,7 @@ void cleanup_sched_common_sysfs(void)
 		kobj = NULL;
 	}
 }
+
+struct kobj_attribute fake_cpuinfo_max_freq_cpu_attr =
+__ATTR(fake_cpuinfo_max_freq_cpu, 0644, show_fake_cpuinfo_max_freq_cpu, store_fake_cpuinfo_max_freq_cpu);
+

@@ -208,6 +208,12 @@ menu "Hardware I/O ports"
 source "drivers/input/serio/Kconfig"
 
 source "drivers/input/gameport/Kconfig"
+source "drivers/input/hall/Kconfig"
+# /* wangzhi12, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
+#ifdef OPLUS_FEATURE_FINGERPRINT
+source "drivers/input/fp_drivers/Kconfig"
+source "drivers/input/uff_fp_drivers/Kconfig"
+#endif /* OPLUS_FEATURE_FINGERPRINT */
 
 endmenu
 

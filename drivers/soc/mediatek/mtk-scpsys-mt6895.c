@@ -81,6 +81,10 @@ static const struct scp_domain_data scp_domain_data_mt6895[] = {
 		.ctl_offs = 0xE14,
 		.sram_pdn_bits = GENMASK(8, 8),
 		.sram_pdn_ack_bits = GENMASK(12, 12),
+		.bp_table = {
+			BUS_PROT_IGN(VLP_TYPE, 0x0214, 0x0218, 0x0210, 0x0220,
+				MT6895_VLP_AXI_PROT_EN_AUDIO),
+		},
 		.basic_clk_name = {"audio"},
 		.caps = MTK_SCPD_IS_PWR_CON_ON,
 	},

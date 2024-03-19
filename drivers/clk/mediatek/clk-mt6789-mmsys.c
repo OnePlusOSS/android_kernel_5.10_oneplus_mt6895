@@ -41,6 +41,15 @@ static const struct mtk_gate_regs mm1_cg_regs = {
 		.ops = &mtk_clk_gate_ops_setclr,	\
 	}
 
+#define GATE_MM0_DUMMYS(_id, _name, _parent, _shift) {	\
+		.id = _id,				\
+		.name = _name,				\
+		.parent_name = _parent,			\
+		.regs = &mm0_cg_regs,			\
+		.shift = _shift,			\
+		.ops = &mtk_clk_gate_ops_setclr_dummys,	\
+	}
+
 #define GATE_MM1(_id, _name, _parent, _shift) {	\
 		.id = _id,				\
 		.name = _name,				\
@@ -72,7 +81,7 @@ static const struct mtk_gate mm_clks[] = {
 			"disp_ck"/* parent */, 9),
 	GATE_MM0(CLK_MM_DISP_COLOR0, "mm_disp_color0",
 			"disp_ck"/* parent */, 10),
-	GATE_MM0(CLK_MM_SMI_INFRA, "mm_smi_infra",
+	GATE_MM0(CLK_SMI_INFRA, "mm_smi_infra",
 			"disp_ck"/* parent */, 11),
 	GATE_MM0(CLK_MM_DISP_DSC_WRAP0, "mm_disp_dsc_wrap0",
 			"disp_ck"/* parent */, 12),
@@ -82,7 +91,7 @@ static const struct mtk_gate mm_clks[] = {
 			"disp_ck"/* parent */, 14),
 	GATE_MM0(CLK_MM_DISP_DITHER0, "mm_disp_dither0",
 			"disp_ck"/* parent */, 16),
-	GATE_MM0(CLK_MM_SMI_COMMON, "mm_smi_common",
+	GATE_MM0(CLK_SMI_COMMON, "mm_smi_common",
 			"disp_ck"/* parent */, 17),
 	GATE_MM0(CLK_MM_DSI0, "mm_dsi0",
 			"disp_ck"/* parent */, 19),
@@ -90,9 +99,17 @@ static const struct mtk_gate mm_clks[] = {
 			"disp_ck"/* parent */, 20),
 	GATE_MM0(CLK_MM_DISP_FAKE_ENG1, "mm_disp_fake_eng1",
 			"disp_ck"/* parent */, 21),
-	GATE_MM0(CLK_MM_SMI_GALS, "mm_smi_gals",
+	GATE_MM0(CLK_SMI_GALS, "mm_smi_gals",
 			"disp_ck"/* parent */, 22),
-	GATE_MM0(CLK_MM_SMI_IOMMU, "mm_smi_iommu",
+	GATE_MM0(CLK_SMI_IOMMU, "mm_smi_iommu",
+			"disp_ck"/* parent */, 24),
+	GATE_MM0_DUMMYS(CLK_MM_SMI_INFRA, "mm_smi_infra_1",
+			"disp_ck"/* parent */, 11),
+	GATE_MM0_DUMMYS(CLK_MM_SMI_COMMON, "mm_smi_common_1",
+			"disp_ck"/* parent */, 17),
+	GATE_MM0_DUMMYS(CLK_MM_SMI_GALS, "mm_smi_gals_1",
+			"disp_ck"/* parent */, 22),
+	GATE_MM0_DUMMYS(CLK_MM_SMI_IOMMU, "mm_smi_iommu_1",
 			"disp_ck"/* parent */, 24),
 	/* MM1 */
 	GATE_MM1(CLK_MM_DSI0_DSI_CK_DOMAIN, "mm_dsi0_dsi_domain",

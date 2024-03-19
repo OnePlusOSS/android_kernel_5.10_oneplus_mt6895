@@ -21,6 +21,7 @@
 #include <linux/bits.h>
 #include <linux/string.h>
 #include <linux/iopoll.h>
+#include <soc/oplus/system/oplus_project.h>
 #include "soc_temp_lvts.h"
 #include "../thermal_core.h"
 
@@ -933,11 +934,18 @@ static void set_tc_hw_reboot_threshold(struct lvts_data *lvts_data,
 
 static void set_all_tc_hw_reboot(struct lvts_data *lvts_data)
 {
+	struct device *dev = lvts_data->dev;
 	struct tc_settings *tc = lvts_data->tc;
 	int i, trip_point;
 
 	for (i = 0; i < lvts_data->num_tc; i++) {
-		trip_point = tc[i].hw_reboot_trip_point;
+		/* if high temp aging version, force trip temp = 200'C */
+		if (get_eng_version() != HIGH_TEMP_AGING) {
+			trip_point = tc[i].hw_reboot_trip_point;
+		} else {
+			trip_point = 200000;
+			dev_info(dev, "high temp aging version, force trip temp.\n");
+		}
 
 		if (tc[i].num_sensor == 0)
 			continue;
@@ -3306,7 +3314,7 @@ static int mt6895_device_read_count_rc_n(struct lvts_data *lvts_data)
 			lvts_write_device(lvts_data, SET_TS_DIV_EN_6895, i);
 			lvts_write_device(lvts_data, SET_VCO_RST_6895, i);
 			lvts_write_device(lvts_data, SET_TS_DIV_EN_6895, i);
-			udelay(10);
+			udelay(20);
 
 			lvts_write_device(lvts_data, KICK_OFF_RCK_COUNTING_V4, i);
 			ret = readl_poll_timeout(LVTS_CONFIG_0 + base, data,

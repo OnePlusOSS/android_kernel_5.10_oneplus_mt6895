@@ -171,6 +171,7 @@ struct mtk_vdec_fmt {
 	bool is_entering_suspend;
 	struct mutex mux_fmt;
 	struct mutex *mux_gce_th[FMT_CORE_NUM];
+	struct mutex *mux_cmdq_pkt[FMT_CORE_NUM];
 	struct mutex mux_task;
 	struct gce_cmdq_task gce_task[FMT_INST_MAX];
 	atomic_t gce_task_wait_cnt[FMT_INST_MAX];
@@ -188,6 +189,10 @@ struct mtk_vdec_fmt {
 	struct dts_info dtsInfo;
 	int fmt_m4u_ports[FMT_PORT_NUM];
 	atomic_t fmt_error;
+	struct mutex mux_active_time;
+	struct timespec64 fmt_active_time;
+	struct workqueue_struct *cmdq_cb_workqueue;
+	struct work_struct cmdq_cb_work;
 };
 
 #define FMT_GCE_SET_CMD_FLUSH _IOW('f', 0, struct gce_cmdq_obj)

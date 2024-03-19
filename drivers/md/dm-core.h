@@ -121,6 +121,9 @@ struct mapped_device {
 void disable_discard(struct mapped_device *md);
 void disable_write_same(struct mapped_device *md);
 void disable_write_zeroes(struct mapped_device *md);
+#ifdef CONFIG_DEVICE_XCOPY
+void disable_device_copy(struct mapped_device *md);
+#endif
 
 static inline sector_t dm_get_size(struct mapped_device *md)
 {

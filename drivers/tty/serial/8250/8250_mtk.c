@@ -86,6 +86,42 @@ enum {
 	MTK_UART_FC_HW,
 };
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#include <mt-plat/mtk_boot_common.h>
+bool boot_with_console(void)
+{
+	struct device_node * of_chosen = NULL;
+	char *bootargs = NULL;
+	int boot_mode = 0;
+
+	of_chosen = of_find_node_by_path("/chosen");
+	if (of_chosen) {
+		bootargs = (char *)of_get_property(
+					of_chosen, "bootargs", NULL);
+		if (!bootargs) {
+			pr_err("%s: failed to get bootargs\n", __func__);
+			return false;
+		} else {
+			pr_err("%s: bootargs: %s\n", __func__, bootargs);
+		}
+	} else {
+		pr_err("%s: failed to get /chosen \n", __func__);
+		return false;
+	}
+
+	boot_mode = get_boot_mode();
+	pr_err("%s: boot_mode = %d\n", __func__, boot_mode);
+	if (boot_mode == FACTORY_BOOT || boot_mode == ATE_FACTORY_BOOT) {
+		return true;
+	} else {
+		if (strstr(bootargs, "mtk_printk_ctrl.disable_uart=0"))
+			return true;
+		else
+			return false;
+	}
+}
+#endif
+
 #ifdef CONFIG_SERIAL_8250_DMA
 static void mtk8250_rx_dma(struct uart_8250_port *up);
 
@@ -548,7 +584,11 @@ static int mtk8250_probe(struct platform_device *pdev)
 	struct mtk8250_data *data;
 	struct resource *regs;
 	int irq, err;
-
+	#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct pinctrl *serial_pinctrl = NULL;
+	struct pinctrl_state *rx_pinctrl_state_diable = NULL;
+	struct pinctrl_state *tx_pinctrl_state_diable = NULL;
+	#endif
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return irq;
@@ -577,6 +617,38 @@ static int mtk8250_probe(struct platform_device *pdev)
 	} else
 		return -ENODEV;
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (boot_with_console() == false) {
+		serial_pinctrl = devm_pinctrl_get(&pdev->dev);
+		if (IS_ERR_OR_NULL(serial_pinctrl)) {
+			pr_err("%s: No serial_pinctrl config specified!\n", __func__);
+		} else {
+			rx_pinctrl_state_diable = pinctrl_lookup_state(serial_pinctrl, "uart0_rx_gpio");
+			if (IS_ERR_OR_NULL(rx_pinctrl_state_diable)) {
+				pr_err("%s: No serial_pinctrl_state config specified!\n", __func__);
+			} else {
+				pr_err("%s: rx serial_pinctrl_state config specified!\n", __func__);
+				pinctrl_select_state(serial_pinctrl, rx_pinctrl_state_diable);
+			}
+
+			tx_pinctrl_state_diable = pinctrl_lookup_state(serial_pinctrl, "uart0_tx_gpio");
+			if (IS_ERR_OR_NULL(tx_pinctrl_state_diable)) {
+				pr_err("%s: No serial_pinctrl_state config specified!\n", __func__);
+			} else {
+				pr_err("%s: tx serial_pinctrl_state config specified!\n", __func__);
+				pinctrl_select_state(serial_pinctrl, tx_pinctrl_state_diable);
+			}
+		}
+
+		if (!IS_ERR_OR_NULL(rx_pinctrl_state_diable)
+				|| !IS_ERR_OR_NULL(tx_pinctrl_state_diable)) {
+			pr_err("%s: boot with console false\n", __func__);
+			return -ENODEV;
+		}
+	} else {
+		pr_err("%s: boot with console true\n", __func__);
+	}
+#endif /*OPLUS_FEATURE_CHG_BASIC*/
 	spin_lock_init(&uart.port.lock);
 	uart.port.mapbase = regs->start;
 	uart.port.irq = irq;

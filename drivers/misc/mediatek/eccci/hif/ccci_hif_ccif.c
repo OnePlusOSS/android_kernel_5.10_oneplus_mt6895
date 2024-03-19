@@ -995,6 +995,22 @@ static int ccif_rx_collect(struct md_ccif_queue *queue, int budget,
 				ccci_port_get_dev_name(ccci_h->channel));
 			if (ccci_h->channel == CCCI_FS_RX)
 				ccci_h->data[0] |= CCCI_FS_AP_CCCI_WAKEUP;
+			else if (ccci_h->channel >= CCCI_MIPC0_CHANNEL_RX &&
+				ccci_h->channel <= CCCI_MIPC9_CHANNEL_RX) {
+				/*
+				 * MIPC message data struct:
+				 * typedef struct {
+				 * u32 magic; u16 padding[2]; u8 msg_sim_ps_id;
+				 * u8 msg_flag;
+				 * u16 msg_id;  //log to show,offset is 10bytes
+				 * u16 msg_txid; u16 msg_len;} mipc_msg_hdr_t;
+				 */
+				CCCI_NOTICE_LOG(0, TAG,
+					"%s:CCCI_MIPC ch%d wakeup,msg_id=0x%x\n",
+					__func__, ccci_h->channel,
+					*(unsigned short *)((unsigned char *)skb->data +
+						sizeof(struct ccci_header) + 10));
+			}
 		}
 		if (ccci_h->channel == CCCI_C2K_LB_DL)
 			atomic_set(&lb_dl_q, queue->index);
@@ -2052,14 +2068,6 @@ static void ccif_set_clk_off(unsigned char hif_id)
 		/* write 1 clear register */
 		regmap_write(ccif_ctrl->plat_val.infra_ao_base,
 			0xBF0, 0xF7FF);
-		spin_lock_irqsave(&devapc_flag_lock, flags);
-		devapc_check_flag = 0;
-		spin_unlock_irqrestore(&devapc_flag_lock, flags);
-		for (idx = 0; idx < ARRAY_SIZE(ccif_clk_table); idx++) {
-			if (ccif_clk_table[idx].clk_ref == NULL)
-				continue;
-			clk_disable_unprepare(ccif_clk_table[idx].clk_ref);
-		}
 	} else if (ccif_ctrl->plat_val.md_gen <= 6297) {
 		/* Clean MD_PCCIF4_SW_READY and MD_PCCIF4_PWR_ON */
 		if (ccif_ctrl->plat_val.md_gen == 6297) {
@@ -2075,36 +2083,30 @@ static void ccif_set_clk_off(unsigned char hif_id)
 			regmap_write(ccif_ctrl->plat_val.infra_ao_base, 0xC10, 0x0);
 		}
 
-		for (idx = 0; idx < ARRAY_SIZE(ccif_clk_table); idx++) {
-			if (ccif_clk_table[idx].clk_ref == NULL)
-				continue;
-			if (strcmp(ccif_clk_table[idx].clk_name,
-				"infra-ccif4-md") == 0
-				&& ccif_ctrl->md_ccif4_base) {
-				udelay(1000);
-				CCCI_NORMAL_LOG(ccif_ctrl->md_id, TAG,
-					"ccif4 %s: after 1ms, set 0x%llx + 0x14 = 0xFF\n",
-					__func__,
-					(u64)ccif_ctrl->md_ccif4_base);
-				ccci_write32(ccif_ctrl->md_ccif4_base, 0x14,
-					0xFF); /* special use ccci_write32 */
-			}
-			if (strcmp(ccif_clk_table[idx].clk_name,
-				"infra-ccif5-md") == 0
-				&& ccif_ctrl->md_ccif5_base) {
-				udelay(1000);
-				CCCI_NORMAL_LOG(ccif_ctrl->md_id, TAG,
-					"ccif5 %s: after 1ms, set 0x%llx + 0x14 = 0xFF\n",
-					__func__,
-					(u64)ccif_ctrl->md_ccif5_base);
-				ccci_write32(ccif_ctrl->md_ccif5_base, 0x14,
-					0xFF); /* special use ccci_write32 */
-			}
-			spin_lock_irqsave(&devapc_flag_lock, flags);
-			devapc_check_flag = 0;
-			spin_unlock_irqrestore(&devapc_flag_lock, flags);
-			clk_disable_unprepare(ccif_clk_table[idx].clk_ref);
+	}
+	for (idx = 0; idx < ARRAY_SIZE(ccif_clk_table); idx++) {
+		if (ccif_clk_table[idx].clk_ref == NULL)
+			continue;
+		if (strcmp(ccif_clk_table[idx].clk_name, "infra-ccif4-md") == 0
+			&& ccif_ctrl->md_ccif4_base) {
+			udelay(1000);
+			CCCI_NORMAL_LOG(ccif_ctrl->md_id, TAG,
+				"%s: after 1ms, set md_ccif4_base + 0x14 = 0xFF\n", __func__);
+			/* special use ccci_write32 */
+			ccci_write32(ccif_ctrl->md_ccif4_base, 0x14, 0xFF);
+ 		}
+		if (strcmp(ccif_clk_table[idx].clk_name, "infra-ccif5-md") == 0
+			&& ccif_ctrl->md_ccif5_base) {
+			udelay(1000);
+			CCCI_NORMAL_LOG(ccif_ctrl->md_id, TAG,
+				"%s: after 1ms, set md_ccif5_base + 0x14 = 0xFF\n", __func__);
+			/* special use ccci_write32 */
+			ccci_write32(ccif_ctrl->md_ccif5_base, 0x14, 0xFF);
 		}
+		spin_lock_irqsave(&devapc_flag_lock, flags);
+		devapc_check_flag = 0;
+		spin_unlock_irqrestore(&devapc_flag_lock, flags);
+		clk_disable_unprepare(ccif_clk_table[idx].clk_ref);
 	}
 
 	CCCI_NORMAL_LOG(ccif_ctrl->md_id, TAG, "%s end\n", __func__);
@@ -2232,6 +2234,9 @@ static int ccif_hif_hw_init(struct device *dev, struct md_ccif_ctrl *md_ctrl)
 	md_ctrl->ccif_ap_base = of_iomap(node, 0);
 	md_ctrl->ccif_md_base = of_iomap(node, 1);
 
+	md_ctrl->ccif2_ap_base = of_iomap(node, 2);
+	md_ctrl->ccif2_md_base = of_iomap(node, 3);
+
 	md_ctrl->ap_ccif_irq0_id = irq_of_parse_and_map(node, 0);
 	md_ctrl->ap_ccif_irq1_id = irq_of_parse_and_map(node, 1);
 
@@ -2287,12 +2292,16 @@ static int ccif_hif_hw_init(struct device *dev, struct md_ccif_ctrl *md_ctrl)
 		CCCI_ERROR_LOG(-1, TAG,
 			"%s: get ccif-pericfg failed\n", __func__);
 
-	if (!md_ctrl->ccif_ap_base ||
-		!md_ctrl->ccif_md_base) {
+	if (!md_ctrl->ccif_ap_base || !md_ctrl->ccif_md_base) {
 		CCCI_ERROR_LOG(-1, TAG,
 			"ap_ccif_base=NULL or ccif_md_base NULL\n");
 		return -2;
 	}
+
+	if (!md_ctrl->ccif2_ap_base || !md_ctrl->ccif2_md_base)
+		CCCI_ERROR_LOG(-1, TAG,
+			"ccif2_ap_base=NULL or ccif2_md_base NULL\n");
+
 	if (md_ctrl->ap_ccif_irq0_id == 0 ||
 		md_ctrl->ap_ccif_irq1_id == 0) {
 		CCCI_ERROR_LOG(-1, TAG,

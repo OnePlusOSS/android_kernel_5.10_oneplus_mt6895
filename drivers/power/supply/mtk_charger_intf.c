@@ -178,7 +178,11 @@ int get_battery_current(struct mtk_charger *info)
 
 static int get_pmic_vbus(struct mtk_charger *info, int *vchr)
 {
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	union power_supply_propval prop = { 0 };
+#else
 	union power_supply_propval prop;
+#endif
 	static struct power_supply *chg_psy;
 	int ret;
 

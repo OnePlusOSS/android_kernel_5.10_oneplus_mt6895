@@ -34,6 +34,11 @@ androidboot.hardware=mt6895";
 	};
 };
 
+/*Trustonic Mobicore real driver*/
+&mobicore {
+    trustonic,real-drv=<1>;
+};
+
 /* AUDIO GPIO standardization start */
 &afe {
 	pinctrl-names = "aud_clk_mosi_off",
@@ -545,7 +550,7 @@ androidboot.hardware=mt6895";
 
 	mtkfb_pins_lcm_led_en1: lcm_led_en1_gpio {
 		pins_cmd_dat {
-			pinmux = <PINMUX_GPIO215__FUNC_GPIO215>;
+			pinmux = <PINMUX_GPIO216__FUNC_GPIO216>;
 			slew-rate = <1>;
 			output-high;
 		};
@@ -553,7 +558,7 @@ androidboot.hardware=mt6895";
 
 	mtkfb_pins_lcm_led_en0: lcm_led_en0_gpio {
 		pins_cmd_dat {
-			pinmux = <PINMUX_GPIO215__FUNC_GPIO215>;
+			pinmux = <PINMUX_GPIO216__FUNC_GPIO216>;
 			slew-rate = <1>;
 			output-low;
 		};
@@ -588,7 +593,7 @@ androidboot.hardware=mt6895";
 };
 
 &dsi0 {
-	status = "okay";
+	status = "disabled";
 	#address-cells = <1>;
 	#size-cells = <0>;
 	panel1@0 {
@@ -607,7 +612,7 @@ androidboot.hardware=mt6895";
 	panel2@0 {
 		compatible = "truly,td4330,cmd";
 		reg = <1>;
-		pm-enable-gpios = <&pio 215 0>;
+		pm-enable-gpios = <&pio 217 0>;
 		reset-gpios = <&pio 41 0>;
 		gate-ic = <4831>;
 		pinctrl-names = "default";
@@ -685,6 +690,8 @@ androidboot.hardware=mt6895";
 };
 
 #include "mediatek/cust_mt6895_touch_1080x2400.dtsi"
-#include "mediatek/cust_mt6895_camera_v4l2.dtsi"
+//#include "mediatek/cust_mt6895_camera_v4l2.dtsi"
 #include <k6895v1_64/cust.dtsi>
+#include "mediatek/nfc/mt6895_lisa_21641_sn100.dtsi"
+#include "mediatek/cust_mt6895_lisa_camera_v4l2.dtsi"
 /*End of this file, DO NOT ADD ANYTHING HERE*/

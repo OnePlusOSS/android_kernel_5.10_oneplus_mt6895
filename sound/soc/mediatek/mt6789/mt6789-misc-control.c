@@ -276,6 +276,7 @@ static const struct snd_kcontrol_new mt6789_afe_sgen_controls[] = {
 		   FREQ_DIV_CH1_SFT, FREQ_DIV_CH1_MASK, 0),
 	SOC_SINGLE("Audio_SineGen_Freq_Div_Ch2", AFE_SINEGEN_CON0,
 		   FREQ_DIV_CH2_SFT, FREQ_DIV_CH2_MASK, 0),
+        SOC_SINGLE("AFE_O22_RS", AFE_CONN_RS, 22, 1, 0),
 };
 
 /* usb call control */

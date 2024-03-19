@@ -1456,6 +1456,17 @@ static void cmdq_test_mbox_tzmp(struct cmdq_test *test, const s32 secure,
 	clk_disable_unprepare(test->gce.clk);
 }
 
+void cmdq_test_usage_cb_func(u32 thd_id)
+{
+	cmdq_msg("%s thd:%d", __func__, thd_id);
+}
+
+static void cmdq_test_usage_cb(struct cmdq_test *test)
+{
+	cmdq_get_usage_cb(test->clt->chan, cmdq_test_usage_cb_func);
+	cmdq_dump_usage();
+}
+
 static void cmdq_test_mbox_vcp(struct cmdq_test *test, const bool reuse)
 {
 	struct cmdq_pkt	*pkt1 = cmdq_pkt_create(test->clt);
@@ -1663,6 +1674,8 @@ cmdq_test_trigger(struct cmdq_test *test, enum CMDQ_SECURE_STATE_ENUM sec, const
 	case 23:
 		cmdq_test_mbox_write_dma_cpr(test, sec, 3);
 		break;
+	case 24:
+		cmdq_test_usage_cb(test);
 	default:
 		break;
 	}

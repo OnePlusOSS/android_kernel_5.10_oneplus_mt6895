@@ -100,6 +100,8 @@ struct fbt_boost_info {
 	unsigned int last_blc;
 	unsigned int last_normal_blc;
 	unsigned int sbe_rescue;
+	int uboost_rescue;
+	int keep_enhance;
 
 	/* adjust loading */
 	int loading_weight;
@@ -192,6 +194,7 @@ struct render_info {
 	unsigned long long dep_loading_ts;
 	unsigned long long linger_ts;
 	long long last_sched_runtime;
+	int avg_freq;
 
 	/*TODO: EARA mid list*/
 	unsigned long long mid;

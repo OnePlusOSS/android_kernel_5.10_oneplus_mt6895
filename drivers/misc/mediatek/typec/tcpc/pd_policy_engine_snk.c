@@ -73,8 +73,14 @@ void pe_snk_evaluate_capability_entry(struct pd_port *pd_port)
 	pd_handle_hard_reset_recovery(pd_port);
 	pd_handle_first_pd_command(pd_port);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* add for pd Without E-Marker IC  */
+	pd_dpm_snk_evaluate_caps(pd_port);
+	pd_port->pe_data.explicit_contract = false;
+#else
 	pd_port->pe_data.explicit_contract = false;
 	pd_dpm_snk_evaluate_caps(pd_port);
+#endif
 }
 
 void pe_snk_select_capability_entry(struct pd_port *pd_port)

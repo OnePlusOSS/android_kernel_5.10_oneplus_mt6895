@@ -376,7 +376,6 @@ static int tianma_prepare(struct drm_panel *panel)
 #endif
 
 #ifdef VENDOR_EDIT
-	// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 	lcd_queue_load_tp_fw();
 #endif
 
@@ -873,6 +872,10 @@ static int mtk_panel_ext_param_set(struct drm_panel *panel,
 	struct mtk_panel_ext *ext = find_panel_ext(panel);
 	int ret = 0;
 	struct drm_display_mode *m = get_mode_by_id_hfp(connector, mode);
+	if (!m) {
+		pr_err("%s:%d invalid display_mode\n", __func__, __LINE__);
+		return ret;
+	}
 
 	pr_info("drm_mode_vrefresh(m) =%d", drm_mode_vrefresh(m));
 	if (ext && m && drm_mode_vrefresh(m) == 120)

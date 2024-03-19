@@ -20,12 +20,30 @@
 #include "../../codecs/mt6368-accdet.h"
 #endif
 #include "../common/mtk-sp-spk-amp.h"
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_fatal_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 /*
  * if need additional control for the ext spk amp that is connected
  * after Lineout Buffer / HP Buffer on the codec, put the control in
  * mt6895_mt6368_spk_amp_event()
  */
 #define EXT_SPK_AMP_W_NAME "Ext_Speaker_Amp"
+
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+
+#ifdef OPLUS_ARCH_EXTENDS
+extern void extend_codec_i2s_be_dailinks(struct snd_soc_dai_link *dailink, size_t size);
+extern bool extend_codec_i2s_compare(struct snd_soc_dai_link *dailink, int dailink_num);
+#endif
 
 static const char *const mt6895_spk_type_str[] = {MTK_SPK_NOT_SMARTPA_STR,
 						  MTK_SPK_RICHTEK_RT5509_STR,
@@ -114,6 +132,16 @@ static const struct snd_soc_dapm_route mt6895_mt6368_routes[] = {
 	{EXT_SPK_AMP_W_NAME, NULL, "Headphone R Ext Spk Amp"},
 };
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#define HAL_FEEDBACK_MAX_BYTES         (512)
+extern int hal_feedback_config_get(struct snd_kcontrol *kcontrol,
+			unsigned int __user *bytes,
+			unsigned int size);
+extern int hal_feedback_config_set(struct snd_kcontrol *kcontrol,
+			const unsigned int __user *bytes,
+			unsigned int size);
+#endif  /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 static const struct snd_kcontrol_new mt6895_mt6368_controls[] = {
 	SOC_DAPM_PIN_SWITCH(EXT_SPK_AMP_W_NAME),
 	SOC_ENUM_EXT("MTK_SPK_TYPE_GET", mt6895_spk_type_enum[0],
@@ -122,6 +150,10 @@ static const struct snd_kcontrol_new mt6895_mt6368_controls[] = {
 		     mt6895_spk_i2s_out_type_get, NULL),
 	SOC_ENUM_EXT("MTK_SPK_I2S_IN_TYPE_GET", mt6895_spk_type_enum[1],
 		     mt6895_spk_i2s_in_type_get, NULL),
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	SND_SOC_BYTES_TLV("HAL FEEDBACK", HAL_FEEDBACK_MAX_BYTES,
+		     hal_feedback_config_get, hal_feedback_config_set),
+#endif //CONFIG_OPLUS_FEATURE_MM_FEEDBACK
 };
 
 /*
@@ -233,9 +265,15 @@ static int mt6895_mt6368_mtkaif_calibration(struct snd_soc_pcm_runtime *rtd)
 
 			/* handle if never test done */
 			if (++counter > 10000) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+				dev_err_not_fb(afe->dev, "%s(), test fail, cycle_1 %d, cycle_2 %d, cycle_3 %d, monitor 0x%x\n",
+					__func__,
+					cycle_1, cycle_2, cycle_3, monitor);
+#else
 				dev_err(afe->dev, "%s(), test fail, cycle_1 %d, cycle_2 %d, cycle_3 %d, monitor 0x%x\n",
 					__func__,
 					cycle_1, cycle_2, cycle_3, monitor);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 				mtkaif_calib_ok = false;
 				break;
 			}
@@ -1371,15 +1409,20 @@ static int mt6895_mt6368_dev_probe(struct platform_device *pdev)
 	spk_node = of_get_child_by_name(pdev->dev.of_node,
 					"mediatek,speaker-codec");
 	if (!spk_node) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_not_fb(&pdev->dev,
+			"spk_node of_get_child_by_name fail\n");
+#else
 		dev_err(&pdev->dev,
 			"spk_node of_get_child_by_name fail\n");
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		//return -EINVAL;
 	}
 
 	for_each_card_prelinks(card, i, dai_link) {
 		if (!dai_link->platforms->name)
 			dai_link->platforms->of_node = platform_node;
-
+#ifndef OPLUS_ARCH_EXTENDS
 		if (!strcmp(dai_link->name, "Speaker Codec")) {
 			ret = snd_soc_of_get_dai_link_codecs(
 						&pdev->dev, spk_node, dai_link);
@@ -1397,8 +1440,11 @@ static int mt6895_mt6368_dev_probe(struct platform_device *pdev)
 				return -EINVAL;
 			}
 		}
+#endif
 	}
-
+#ifdef OPLUS_ARCH_EXTENDS
+	extend_codec_i2s_be_dailinks(mt6895_mt6368_dai_links, ARRAY_SIZE(mt6895_mt6368_dai_links));
+#endif
 	card->dev = &pdev->dev;
 
 	ret = devm_snd_soc_register_card(&pdev->dev, card);
@@ -1406,8 +1452,19 @@ static int mt6895_mt6368_dev_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "%s snd_soc_register_card fail %d\n",
 			__func__, ret);
 	else
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_info(&pdev->dev, "%s snd_soc_register_card pss %d\n",
+				__func__, ret);
+#else
 		dev_err(&pdev->dev, "%s snd_soc_register_card pss %d\n",
 				__func__, ret);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	dev_info(&pdev->dev, "%s: event_id=%u, version:%s\n", __func__, \
+			OPLUS_AUDIO_EVENTID_AUDIO_KERNEL_ERR, AUDIO_KERNEL_FB_VERSION);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 	return ret;
 }
 

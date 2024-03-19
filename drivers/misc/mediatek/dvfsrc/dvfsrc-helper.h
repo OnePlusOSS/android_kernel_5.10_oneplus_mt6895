@@ -81,6 +81,7 @@ struct mtk_dvfsrc {
 	int num_perf;
 	u32 *perfs_peak_bw;
 	u32 force_opp_idx;
+	u32 force_en;
 	const struct dvfsrc_debug_data *dvd;
 	char *(*dump_info)(struct mtk_dvfsrc *dvfsrc, char *p, u32 size);
 	void (*force_opp)(struct mtk_dvfsrc *dvfsrc, u32 opp);

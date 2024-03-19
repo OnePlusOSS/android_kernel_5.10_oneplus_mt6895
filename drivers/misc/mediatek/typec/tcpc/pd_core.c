@@ -457,7 +457,6 @@ static const struct {
 	{"local_give_back", DPM_CAP_LOCAL_GIVE_BACK},
 	{"local_no_suspend", DPM_CAP_LOCAL_NO_SUSPEND},
 	{"local_vconn_supply", DPM_CAP_LOCAL_VCONN_SUPPLY},
-
 	{"attempt_discover_cable_dfp", DPM_CAP_ATTEMPT_DISCOVER_CABLE_DFP},
 	{"attempt_enter_dp_mode", DPM_CAP_ATTEMPT_ENTER_DP_MODE},
 	{"attempt_discover_cable", DPM_CAP_ATTEMPT_DISCOVER_CABLE},
@@ -559,7 +558,11 @@ int pd_core_init(struct tcpc_device *tcpc)
 	pd_port->tcpc = tcpc;
 	pd_port->pe_pd_state = PE_IDLE2;
 	pd_port->cap_miss_match = 0; /* For src_cap miss match */
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#ifdef CONFIG_USB_PD_REV30_PPS_SINK
+	pd_port->extra_pps_curr = false;
+#endif	/* CONFIG_USB_PD_REV30_PPS_SINK */
+#endif
 	ret = pd_parse_pdata(pd_port);
 	if (ret < 0)
 		return ret;

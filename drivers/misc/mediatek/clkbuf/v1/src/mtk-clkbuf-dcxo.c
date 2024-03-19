@@ -809,7 +809,11 @@ static int clkbuf_dcxo_voter_store(u8 xo_idx, const char *arg1)
 		ctl_cmd.xo_voter_mask = 0;
 	} else {
 		ctl_cmd.cmd = CLKBUF_CMD_ON;
+		//#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		ctl_cmd.xo_voter_mask = voter;
+		/*#else
 		ctl_cmd.xo_voter_mask = (u32)voter;
+		#endif*/
 	}
 
 	ret = clkbuf_dcxo_notify(xo_idx, &ctl_cmd);
@@ -1460,6 +1464,10 @@ static int clkbuf_set_xo_voter(u8 xo_idx, u32 mask)
 
 	/* if pmic is spmi type rw, read 1 more reg to fit 16bits */
 	if (dcxo->spmi_rw) {
+		//#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		mask >>= 8;
+		//#endif
+
 		ret = clk_buf_write_with_ofs(&dcxo->hw,
 				&dcxo->xo_bufs[xo_idx]._rc_voter,
 				mask,

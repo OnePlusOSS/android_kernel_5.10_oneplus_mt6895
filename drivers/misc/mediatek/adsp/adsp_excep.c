@@ -28,6 +28,18 @@
 #include "adsp_excep.h"
 #include "adsp_logger.h"
 
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define OPLUS_AUDIO_EVENTID_ADSP_RECOVERY_FAIL   (10045)
+#define OPLUS_ADSP_CRASH_FB_VERSION              "1.0.0"
+#define OPLUS_ADSP_RECOVERY_FAIL_FB_VERSION      "1.0.0"
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
+
 #define ADSP_MISC_BUF_SIZE      0x10000 //64KB
 #define ADSP_TEST_EE_PATTERN    "Assert-Test"
 
@@ -112,8 +124,13 @@ static int dump_buffer(struct adsp_exception_control *ctrl, int coredump_id)
 	pdata = (struct adsp_priv *)ctrl->priv_data;
 
 	if (ctrl->buf_backup) {
+#ifdef  OPLUS_ARCH_EXTENDS
+//Kunhao.Yan@AudioDriver, remove for adsp dump time out waiting
+		ret = 0;
+#else
 		/* wait last dump done, and release buf_backup */
 		ret = wait_for_completion_timeout(&ctrl->done, 10 * HZ);
+#endif
 
 		/* if not release buf, return EBUSY */
 		if (ctrl->buf_backup)
@@ -140,9 +157,11 @@ static int dump_buffer(struct adsp_exception_control *ctrl, int coredump_id)
 	n += dump_adsp_shared_memory(buf + n, total - n, ADSP_A_LOGGER_MEM_ID);
 	n += dump_adsp_shared_memory(buf + n, total - n, ADSP_B_LOGGER_MEM_ID);
 
+	mutex_lock(&ctrl->lock);
 	reinit_completion(&ctrl->done);
 	ctrl->buf_backup = buf;
 	ctrl->buf_size = total;
+	mutex_unlock(&ctrl->lock);
 
 	pr_debug("%s, vmalloc size %u, buffer %p, dump_size %u",
 		 __func__, total, buf, n);
@@ -213,6 +232,11 @@ static void adsp_exception_dump(struct adsp_exception_control *ctrl)
 			      coredump->assert_log);
 	}
 	pr_info("%s", detail);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_CRASH, \
+				MM_FB_KEY_RATELIMIT_5MIN, "FieldData@@%s$$detailData@@audio$$module@@adsp", coredump->assert_log);
+#endif //CONFIG_OPLUS_FEATURE_MM_FEEDBACK
 
 	/* adsp aed api, only detail information available*/
 	aed_common_exception_api("adsp", (const int *)coredump, coredump_size,
@@ -334,6 +358,10 @@ void adsp_aed_worker(struct work_struct *ws)
 			aee_kernel_exception_api(__FILE__, __LINE__, DB_OPT_DEFAULT,
 						 "[ADSP]",
 						 "ASSERT: ADSP DEAD! Recovery Fail");
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+			mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_ADSP_RECOVERY_FAIL, \
+				MM_FB_KEY_RATELIMIT_5MIN, "payload@@ADSP DEAD! Recovery Fail,ret=%d", ret);
+#endif //CONFIG_OPLUS_FEATURE_MM_FEEDBACK
 	}
 #endif
 	adsp_disable_clock();
@@ -375,6 +403,8 @@ int init_adsp_exception_control(struct device *dev,
 #if IS_ENABLED(CONFIG_MTK_AEE_IPANIC)
 	mrdump_set_extra_dump(AEE_EXTRA_FILE_ADSP, get_adsp_misc_buffer);
 #endif
+	mutex_init(&ctrl->lock);
+
 	ctrl->waitq = waitq;
 	ctrl->workq = workq;
 	ctrl->buf_backup = NULL;
@@ -386,6 +416,12 @@ int init_adsp_exception_control(struct device *dev,
 #endif
 	timer_setup(&ctrl->wdt_timer, adsp_wdt_counter_reset, 0);
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	pr_info("%s: event_id=%u, version:%s\n", __func__, \
+		OPLUS_AUDIO_EVENTID_ADSP_CRASH, OPLUS_ADSP_CRASH_FB_VERSION);
+	pr_info("%s: event_id=%u, version:%s\n", __func__, \
+		OPLUS_AUDIO_EVENTID_ADSP_RECOVERY_FAIL, OPLUS_ADSP_RECOVERY_FAIL_FB_VERSION);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 	return 0;
 }
 
@@ -460,6 +496,7 @@ static ssize_t adsp_dump_show(struct file *filep, struct kobject *kobj,
 	ssize_t n = 0;
 	struct adsp_exception_control *ctrl = &excep_ctrl;
 
+	mutex_lock(&ctrl->lock);
 	if (ctrl->buf_backup) {
 		n = copy_from_buffer(buf, -1, ctrl->buf_backup,
 			ctrl->buf_size, offset, size);
@@ -474,6 +511,7 @@ static ssize_t adsp_dump_show(struct file *filep, struct kobject *kobj,
 			complete(&ctrl->done);
 		}
 	}
+	mutex_unlock(&ctrl->lock);
 
 	return n;
 }

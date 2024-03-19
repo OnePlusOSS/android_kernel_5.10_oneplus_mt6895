@@ -1007,4 +1007,6 @@ config LEDS_MT_BRIGHTNESS_HW_CHANGED
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"
 
+source "drivers/leds/aw210xx/Kconfig"
+
 endif # NEW_LEDS

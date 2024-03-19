@@ -201,6 +201,13 @@
 #define MIPITX_CK_SW_LPTX_PRE_OE_MT6983	(0x0360UL)
 #define MIPITX_CKC_SW_LPTX_PRE_OE_MT6983	(0x0380UL)
 
+extern bool panel_is_aries(void);
+
+
+/*#ifdef VENDOR_EDIT*/
+extern unsigned int oplus_enhance_mipi_strength;
+/*#endif*/
+
 enum MIPITX_PAD_VALUE {
 	PAD_D2P_T0A = 0,
 	PAD_D2N_T0B,
@@ -822,7 +829,7 @@ int mtk_mipi_tx_ssc_en(struct phy *phy, struct mtk_panel_ext *mtk_panel)
 		} else if (data_rate >= 750) {
 			txdiv = 8;
 			div3  = 1;
-		} else if (data_rate >= 510) {
+		} else if (data_rate >= 500) {
 			txdiv = 4;
 			div3  = 3;
 		} else {
@@ -1053,42 +1060,82 @@ static unsigned int _dsi_get_pcw_mt6983(unsigned long data_rate,
 	unsigned int pcw_ratio)
 {
 	unsigned int pcw, tmp, pcw_floor, fbksel, div3 = 0;
+	u32 clk_26m = 26000;
+	unsigned long real_data_rate;
+	if (panel_is_aries()) {
+		real_data_rate = data_rate / 1000;
 
-	if (data_rate >= 6000)
-		div3 = 1;
-	else if (data_rate >= 3000)
-		div3 = 1;
-	else if (data_rate >= 2000)
-		div3 = 3;
-	else if (data_rate >= 1500)
-		div3 = 1;
-	else if (data_rate >= 1000)
-		div3 = 3;
-	else if (data_rate >= 750)
-		div3 = 1;
-	else if (data_rate >= 510)
-		div3 = 3;
-	else {
-		DDPPR_ERR("invalid data rate %u\n");
-		return -EINVAL;
+		/* The data_rate here is actually data_rate_khz. */
+		DDPINFO("%s rate_khz %u KHz\n", __func__, data_rate);
+
+		if (real_data_rate >= 6000)
+			div3 = 1;
+		else if (real_data_rate >= 3000)
+			div3 = 1;
+		else if (real_data_rate >= 2000)
+			div3 = 3;
+		else if (real_data_rate >= 1500)
+			div3 = 1;
+		else if (real_data_rate >= 1000)
+			div3 = 3;
+		else if (real_data_rate >= 750)
+			div3 = 1;
+		else if (real_data_rate >= 500)
+			div3 = 3;
+		else {
+			DDPPR_ERR("invalid data rate %u\n");
+			return -EINVAL;
+		}
+
+		real_data_rate = real_data_rate >> 1;
+		fbksel = (real_data_rate * pcw_ratio) >= 3800 ? 2 : 1;
+		data_rate = data_rate >> 1;
+
+		pcw = data_rate * pcw_ratio * div3 / fbksel / clk_26m;
+		pcw_floor = data_rate * pcw_ratio  * div3 / fbksel % clk_26m;
+		DDPINFO("%s, pcw=%d, pcw_floor=%d", __func__, pcw, pcw_floor);
+		tmp = ((pcw & 0xFF) << 24) | (((256 * pcw_floor / clk_26m) & 0xFF) << 16) |
+			(((256 * (256 * pcw_floor % clk_26m) / clk_26m) & 0xFF) << 8) |
+			((256 * (256 * (256 * pcw_floor % clk_26m) % clk_26m) / clk_26m) & 0xFF);
+
+		return tmp;
+	} else {
+		if (data_rate >= 6000)
+			div3 = 1;
+		else if (data_rate >= 3000)
+			div3 = 1;
+		else if (data_rate >= 2000)
+			div3 = 3;
+		else if (data_rate >= 1500)
+			div3 = 1;
+		else if (data_rate >= 1000)
+			div3 = 3;
+		else if (data_rate >= 750)
+			div3 = 1;
+		else if (data_rate >= 500)
+			div3 = 3;
+		else {
+			DDPPR_ERR("invalid data rate %u\n");
+			return -EINVAL;
+		}
+
+		data_rate = data_rate >> 1;
+		fbksel = (data_rate * pcw_ratio) >= 3800 ? 2 : 1;
+
+		/**
+		 * PCW bit 24~30 = floor(pcw)
+		 * PCW bit 16~23 = (pcw - floor(pcw))*256
+		 * PCW bit 8~15 = (pcw*256 - floor(pcw)*256)*256
+		 * PCW bit 0~7 = (pcw*256*256 - floor(pcw)*256*256)*256
+		 */
+		pcw = DO_COMMON_DIV(DO_COMMON_DIV(data_rate * pcw_ratio * div3, fbksel), 26);
+		pcw_floor = DO_COMMMON_MOD(DO_COMMON_DIV(data_rate * pcw_ratio  * div3, fbksel), 26);
+		tmp = ((pcw & 0xFF) << 24) | (((256 * pcw_floor / 26) & 0xFF) << 16) |
+			(((256 * (256 * pcw_floor % 26) / 26) & 0xFF) << 8) |
+			((256 * (256 * (256 * pcw_floor % 26) % 26) / 26) & 0xFF);
+
+		return tmp;
 	}
-
-	data_rate = data_rate >> 1;
-	fbksel = (data_rate * pcw_ratio) >= 3800 ? 2 : 1;
-
-	/**
-	 * PCW bit 24~30 = floor(pcw)
-	 * PCW bit 16~23 = (pcw - floor(pcw))*256
-	 * PCW bit 8~15 = (pcw*256 - floor(pcw)*256)*256
-	 * PCW bit 0~7 = (pcw*256*256 - floor(pcw)*256*256)*256
-	 */
-	pcw = DO_COMMON_DIV(DO_COMMON_DIV(data_rate * pcw_ratio * div3, fbksel), 26);
-	pcw_floor = DO_COMMMON_MOD(DO_COMMON_DIV(data_rate * pcw_ratio  * div3, fbksel), 26);
-	tmp = ((pcw & 0xFF) << 24) | (((256 * pcw_floor / 26) & 0xFF) << 16) |
-		(((256 * (256 * pcw_floor % 26) / 26) & 0xFF) << 8) |
-		((256 * (256 * (256 * pcw_floor % 26) % 26) / 26) & 0xFF);
-
-	return tmp;
 }
 
 unsigned int _dsi_get_pcw(unsigned long data_rate,
@@ -1570,6 +1617,7 @@ static int mtk_mipi_tx_pll_prepare_mt6983(struct clk_hw *hw)
 	unsigned int txdiv, txdiv0, txdiv1, tmp;
 	unsigned int div3, div3_en;
 	u32 rate;
+	u32 rate_khz;
 	unsigned int fbksel;
 
 	DDPDBG("%s+\n", __func__);
@@ -1580,9 +1628,16 @@ static int mtk_mipi_tx_pll_prepare_mt6983(struct clk_hw *hw)
 		return 0;
 	}
 
-	rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
+	if (panel_is_aries()) {
+		rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt /1000:
 			mipi_tx->data_rate / 1000000;
-	dev_dbg(mipi_tx->dev, "prepare: %u MHz\n", rate);
+		rate_khz = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
+			mipi_tx->data_rate / 1000;
+	} else {
+		rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
+			mipi_tx->data_rate / 1000000;
+		dev_dbg(mipi_tx->dev, "prepare: %u MHz\n", rate);
+	}
 
 	if (rate >= 6000) {
 		txdiv = 1;
@@ -1620,7 +1675,7 @@ static int mtk_mipi_tx_pll_prepare_mt6983(struct clk_hw *hw)
 		txdiv1 = 0;
 		div3 = 1;
 		div3_en = 0;
-	} else if (rate >= 510) {
+	} else if (rate >= 500) {
 		txdiv = 4;
 		txdiv0 = 2;
 		txdiv1 = 0;
@@ -1636,6 +1691,13 @@ static int mtk_mipi_tx_pll_prepare_mt6983(struct clk_hw *hw)
 	else
 		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL_MT6983,
 			FLD_RG_DSI_PRD_REF_SEL, 0x4);
+
+	/*#ifdef VENDOR_EDIT*/
+	if (oplus_enhance_mipi_strength == 1) {
+		mtk_mipi_tx_update_bits(mipi_tx, MIPITX_VOLTAGE_SEL_MT6983,
+			FLD_RG_DSI_HSTX_LDO_REF_SEL, 0xF << 6);
+	}
+	/*#endif*/
 
 	writel(0x0, mipi_tx->regs + MIPITX_PRESERVED_MT6983);
 	writel(0x00FF12E0, mipi_tx->regs + MIPITX_PLL_CON4);
@@ -1669,7 +1731,11 @@ static int mtk_mipi_tx_pll_prepare_mt6983(struct clk_hw *hw)
 	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_CON1,
 			FLD_RG_DSI_PLL_FBSEL_MT6983, (fbksel - 1) << 13);
 
-	tmp = mipi_tx->driver_data->dsi_get_pcw(rate, txdiv);
+	if (panel_is_aries())
+		tmp = mipi_tx->driver_data->dsi_get_pcw(rate_khz, txdiv);
+	else
+		tmp = mipi_tx->driver_data->dsi_get_pcw(rate, txdiv);
+
 	writel(tmp, mipi_tx->regs + MIPITX_PLL_CON0);
 
 	mtk_mipi_tx_update_bits(mipi_tx, MIPITX_PLL_CON1,
@@ -1787,7 +1853,11 @@ static int mtk_mipi_tx_pll_cphy_prepare_mt6983(struct clk_hw *hw)
 		return 0;
 	}
 
-	rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
+	if (panel_is_aries())
+		rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt / 1000 :
+			mipi_tx->data_rate / 1000000;
+	else
+		rate = (mipi_tx->data_rate_adpt) ? mipi_tx->data_rate_adpt :
 			mipi_tx->data_rate / 1000000;
 
 	dev_dbg(mipi_tx->dev, "prepare: %u MHz\n", rate);
@@ -3063,7 +3133,7 @@ void mtk_mipi_tx_pll_rate_switch_gce_mt6983(struct phy *phy,
 		txdiv = 8;
 		txdiv0 = 3;
 		txdiv1 = 0;
-	} else if (rate >= 510) {
+	} else if (rate >= 500) {
 		txdiv = 4;
 		txdiv0 = 2;
 		txdiv1 = 0;

@@ -177,6 +177,8 @@ int mtk_drm_helper_get_opt(struct mtk_drm_helper *helper_opt,
 	return ret;
 }
 
+unsigned int dsi1_id3_val;
+EXPORT_SYMBOL(dsi1_id3_val);
 void mtk_drm_helper_init(struct device *dev, struct mtk_drm_helper **helper_opt)
 {
 	int i, value, index, ret;
@@ -212,6 +214,11 @@ void mtk_drm_helper_init(struct device *dev, struct mtk_drm_helper **helper_opt)
 		mtk_drm_helper_set_opt_by_name(tmp_opt,
 				"MTK_DRM_OPT_MML_SUPPORT_CMD_MODE", 1);
 
+	if (of_property_read_u32(dev->of_node, "dsi1_lcm_id3", &dsi1_id3_val)) {
+		DDPPR_ERR("read dsi1_id3 from lk fail\n");
+	} else {
+		DDPMSG("read dsi1_id3  from lk 0x%x\n", dsi1_id3_val);
+	}
 	*helper_opt = tmp_opt;
 }
 

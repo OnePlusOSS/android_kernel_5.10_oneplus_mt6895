@@ -30,6 +30,20 @@
 #include "ged_global.h"
 #include "ged_dcs.h"
 
+#if defined(CONFIG_MTK_GPUFREQ_V2)
+#include <ged_gpufreq_v2.h>
+#include <gpufreq_v2.h>
+#else
+#include <ged_gpufreq_v1.h>
+#endif /* CONFIG_MTK_GPUFREQ_V2 */
+
+#include "ged_debugFS.h"
+static struct dentry *gpsHALDir;
+static struct dentry *gpsOppCostsEntry;
+#define GED_HAL_DEBUGFS_SIZE 64
+uint64_t reset_base_us;
+
+
 static struct kobject *hal_kobj;
 
 int tokenizer(char *pcSrc, int i32len, int *pi32IndexArray, int i32NumToken)
@@ -62,6 +76,179 @@ int tokenizer(char *pcSrc, int i32len, int *pi32IndexArray, int i32NumToken)
 
 	return -1;
 }
+
+static ssize_t ged_dvfs_opp_cost_write_entry
+	(const char __user *pszBuffer, size_t uiCount,
+	loff_t uiPosition, void *pvData)
+{
+	char acBuffer[GED_HAL_DEBUGFS_SIZE];
+
+	int i32Value;
+
+	if ((uiCount > 0) && (uiCount < GED_HAL_DEBUGFS_SIZE)) {
+		if (ged_copy_from_user(acBuffer, pszBuffer, uiCount) == 0) {
+			acBuffer[uiCount] = '\0';
+			if (kstrtoint(acBuffer, 0, &i32Value) == 0) {
+				ged_dvfs_reset_opp_cost(i32Value);
+				reset_base_us = ged_get_time();
+				reset_base_us = reset_base_us >> 10;
+			}
+		}
+	}
+
+	return uiCount;
+}
+static void *ged_dvfs_opp_cost_seq_start(struct seq_file *psSeqFile,
+			loff_t *puiPosition)
+{
+	if (*puiPosition == 0)
+		return SEQ_START_TOKEN;
+
+	return NULL;
+}
+static void ged_dvfs_opp_cost_seq_stop(struct seq_file *psSeqFile,
+			void *pvData)
+{
+
+}
+static void *ged_dvfs_opp_cost_seq_next(struct seq_file *psSeqFile,
+			void *pvData, loff_t *puiPosition)
+{
+	return NULL;
+}
+
+static int ged_dvfs_opp_cost_seq_show(struct seq_file *psSeqFile,
+			void *pvData)
+{
+	int len;
+	char acBuffer[MAX_OPP_LOGS_COLUMN_DIGITS];
+
+	if (pvData != NULL) {
+		int i, j;
+		int cur_idx;
+		unsigned int ui32FqCount, ui32TotalTrans;
+		struct GED_DVFS_OPP_STAT *report;
+
+		ui32FqCount = ged_get_all_available_opp_num();
+		report = NULL;
+
+		if (ui32FqCount) {
+			report =
+				vmalloc(sizeof(struct GED_DVFS_OPP_STAT) *
+					ui32FqCount);
+		}
+
+		if ((report != NULL) &&
+			!ged_dvfs_query_opp_cost(report, ui32FqCount, false)) {
+
+			cur_idx = ged_get_cur_oppidx();
+			ui32TotalTrans = 0;
+
+			seq_puts(psSeqFile, "     From  :   To\n");
+			seq_puts(psSeqFile, "           :");
+
+			for (i = 0; i < ui32FqCount; i++) {
+				len = scnprintf(acBuffer, MAX_OPP_LOGS_COLUMN_DIGITS,
+					"%10u", 1000 * ged_get_freq_by_idx(i));
+				acBuffer[len] = 0;
+				seq_puts(psSeqFile, acBuffer);
+			}
+			seq_puts(psSeqFile, "   time(ms)\n");
+			for (i = 0; i < ui32FqCount; i++) {
+				if (i == cur_idx) {
+					seq_puts(psSeqFile, "*");
+				}
+				else {
+					seq_puts(psSeqFile, " ");
+				}
+
+				len = scnprintf(acBuffer, MAX_OPP_LOGS_COLUMN_DIGITS,
+					"%10u ", 1000 * ged_get_freq_by_idx(i));
+				acBuffer[len] = 0;
+				seq_puts(psSeqFile, acBuffer);
+				for (j = 0; j < ui32FqCount; j++) {
+					len = scnprintf(acBuffer, MAX_OPP_LOGS_COLUMN_DIGITS,
+						"%10u", report[i].uMem.aTrans[j]);
+					acBuffer[len] = 0;
+					seq_puts(psSeqFile, acBuffer);
+					ui32TotalTrans += report[i].uMem.aTrans[j];
+				}
+				/* truncate to ms */
+				len = scnprintf(acBuffer, MAX_OPP_LOGS_COLUMN_DIGITS,
+					"%10u\n", (unsigned int)(report[i].ui64Active) >> 10);
+				acBuffer[len] = 0;
+				seq_puts(psSeqFile, acBuffer);
+			}
+
+			len = scnprintf(acBuffer, MAX_OPP_LOGS_COLUMN_DIGITS,
+				"Total transition : %u\n", ui32TotalTrans);
+			acBuffer[len] = 0;
+			seq_puts(psSeqFile, acBuffer);
+		} else
+			seq_puts(psSeqFile, "Not Supported.\n");
+
+		if (report != NULL)
+			vfree(report);
+	}
+
+	return 0;
+}
+const struct seq_operations gsDvfsOppCostsReadOps = {
+	.start = ged_dvfs_opp_cost_seq_start,
+	.stop = ged_dvfs_opp_cost_seq_stop,
+	.next = ged_dvfs_opp_cost_seq_next,
+	.show = ged_dvfs_opp_cost_seq_show,
+};
+
+static ssize_t opp_logs_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	int len;
+	int i, j;
+	int cur_idx;
+	unsigned int ui32FqCount;
+	struct GED_DVFS_OPP_STAT *report;
+
+	ui32FqCount = ged_get_all_available_opp_num();
+	report = NULL;
+
+	if (ui32FqCount) {
+		report =
+			vmalloc(sizeof(struct GED_DVFS_OPP_STAT) *
+			ui32FqCount);
+	}
+
+	if ((report != NULL) &&
+		!ged_dvfs_query_opp_cost(report, ui32FqCount, false)) {
+
+		cur_idx = ged_get_cur_oppidx();
+
+		len = sprintf(buf, "   time(ms)\n");
+
+
+		for (i = 0; i < ui32FqCount; i++) {
+			if (i == cur_idx)
+				len += sprintf(buf + len, "*");
+			else
+				len += sprintf(buf + len, " ");
+			len += sprintf(buf + len, "%10u",
+				1000 * ged_get_freq_by_idx(i));
+
+			/* truncate to ms */
+			len += sprintf(buf + len, "%10u\n",
+				(unsigned int)(report[i].ui64Active >> 10));
+		}
+	} else
+		len = sprintf(buf, "Not Supported.\n");
+
+	if (report != NULL)
+		vfree(report);
+
+	return len;
+}
+static KOBJ_OPLUS_ATTR_RO(opp_logs);
+
 
 //-----------------------------------------------------------------------------
 static ssize_t total_gpu_freq_level_count_show(struct kobject *kobj,
@@ -904,6 +1091,31 @@ GED_ERROR ged_hal_init(void)
 {
 	GED_ERROR err = GED_OK;
 
+	err = ged_debugFS_create_entry_dir(
+			"hal",
+			NULL,
+			&gpsHALDir);
+
+	if (unlikely(err != GED_OK)) {
+		err = GED_ERROR_FAIL;
+		GED_LOGE("ged: failed to create hal dir!\n");
+		goto ERROR;
+	}
+
+	/* Report Opp Cost */
+	err = ged_debugFS_create_entry(
+			"opp_logs",
+			gpsHALDir,
+			&gsDvfsOppCostsReadOps,
+			ged_dvfs_opp_cost_write_entry,
+			NULL,
+			&gpsOppCostsEntry);
+
+	if (unlikely(err != GED_OK)) {
+		GED_LOGE("ged: failed to create opp_logs entry!\n");
+		goto ERROR;
+	}
+
 	err = ged_sysfs_create_dir(NULL, "hal", &hal_kobj);
 	if (unlikely(err != GED_OK)) {
 		GED_LOGE("Failed to create hal dir!\n");
@@ -954,6 +1166,12 @@ GED_ERROR ged_hal_init(void)
 	err = ged_sysfs_create_file(hal_kobj, &kobj_attr_gpu_boost_level);
 	if (unlikely(err != GED_OK)) {
 		GED_LOGE("Failed to create gpu_boost_level entry!\n");
+		goto ERROR;
+	}
+
+	err = ged_sysfs_create_file(hal_kobj, &kobj_attr_opp_logs);
+	if (unlikely(err != GED_OK)) {
+		GED_LOGE("ged: failed to create opp_logs entry!\n");
 		goto ERROR;
 	}
 
@@ -1068,6 +1286,7 @@ void ged_hal_exit(void)
 #ifdef MTK_GED_KPI
 	ged_sysfs_remove_file(hal_kobj, &kobj_attr_ged_kpi);
 #endif
+	ged_sysfs_remove_file(hal_kobj, &kobj_attr_opp_logs);
 	ged_sysfs_remove_file(hal_kobj, &kobj_attr_loading_window_size);
 	ged_sysfs_remove_file(hal_kobj, &kobj_attr_loading_stride_size);
 	ged_sysfs_remove_file(hal_kobj, &kobj_attr_gpu_boost_level);

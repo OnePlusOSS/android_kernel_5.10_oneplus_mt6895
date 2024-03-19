@@ -23,6 +23,7 @@
 #include <audio_log.h>
 #include <audio_assert.h>
 #include <audio_ipi_platform.h>
+#include <uapi/linux/sched/types.h>
 
 #if IS_ENABLED(CONFIG_MTK_AUDIODSP_SUPPORT)
 #include <adsp_helper.h>
@@ -864,6 +865,7 @@ static int dsp_init_single_msg_queue(
 	char thread_name[32] = {0};
 
 	int i = 0, n = 0;
+	struct sched_param param = { .sched_priority = 3 };
 
 	if (msg_queue == NULL) {
 		pr_info("NULL!! msg_queue: %p", msg_queue);
@@ -946,6 +948,7 @@ static int dsp_init_single_msg_queue(
 	} else {
 		msg_queue->thread_enable = true;
 		dsb(SY);
+		sched_setscheduler_nocheck(msg_queue->dsp_thread_task, SCHED_FIFO, &param);
 		wake_up_process(msg_queue->dsp_thread_task);
 	}
 

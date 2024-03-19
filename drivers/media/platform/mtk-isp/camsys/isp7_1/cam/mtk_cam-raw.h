@@ -309,7 +309,9 @@ struct mtk_raw_device {
 	u64 sof_count;
 	u64 vsync_count;
 	u64 last_sof_time_ns;
-
+	/* preisp used - for sync.*/
+	int tg_count;
+	int vf_reset_cnt;
 	/* for subsample, sensor-control */
 	bool sub_sensor_ctrl_en;
 	int set_sensor_idx;
@@ -329,6 +331,7 @@ struct mtk_raw_device {
 struct mtk_yuv_device {
 	struct device *dev;
 	unsigned int id;
+	int irq;
 	void __iomem *base;
 	void __iomem *base_inner;
 	unsigned int num_clks;
@@ -394,6 +397,8 @@ void dbload_force(struct mtk_raw_device *dev);
 void toggle_db(struct mtk_raw_device *dev);
 
 void enable_tg_db(struct mtk_raw_device *dev, int en);
+void mtk_cam_raw_vf_reset(struct mtk_cam_ctx *ctx,
+	struct mtk_raw_device *dev);
 
 void initialize(struct mtk_raw_device *dev, int is_slave);
 

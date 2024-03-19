@@ -30,6 +30,11 @@
 #include <linux/mfd/mt6397/core.h>
 #include "mt6359p-accdet.h"
 #include "mt6359.h"
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define HEADSET_ERR_FB_VERSION    "1.0.0"
+#endif
+
 /* grobal variable definitions */
 #define REGISTER_VAL(x)	(x - 1)
 #define HAS_CAP(_c, _x)	(((_c) & (_x)) == (_x))
@@ -110,6 +115,10 @@ struct mt63xx_accdet_data {
 	/* when eint issued, queue work: eint_work */
 	struct work_struct eint_work;
 	struct workqueue_struct *eint_workqueue;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	struct delayed_work fb_delaywork;
+	struct workqueue_struct *fb_workqueue;
+#endif
 	u32 water_r;
 	u32 moisture_ext_r;
 	u32 moisture_int_r;
@@ -1660,6 +1669,26 @@ static void dis_micbias_work_callback(struct work_struct *work)
 	}
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+static void feedback_work_callback(struct work_struct *work)
+{
+	char fd_buf[MM_KEVENT_MAX_PAYLOAD_SIZE] = {0};
+
+	pr_notice("%s enter\n", __func__);
+
+	mini_dump_register();
+
+	scnprintf(fd_buf, sizeof(fd_buf) - 1, \
+		"payload@@ACCDET_IRQ not trigger,cable_type=%u,caps=0x%x,cur_eint=%u," \
+		"eint0=%u,eint1=%u,regs:%s", \
+		accdet->cable_type, accdet->data->caps, accdet->eint_id, \
+		accdet->eint0_state, accdet->eint1_state, accdet_log_buf);
+
+	mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_HEADSET_DET,
+					MM_FB_KEY_RATELIMIT_5MIN, fd_buf);
+}
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
+
 static void eint_work_callback(struct work_struct *work)
 {
 	if (accdet->cur_eint_state == EINT_PLUG_IN) {
@@ -1675,7 +1704,21 @@ static void eint_work_callback(struct work_struct *work)
 		accdet_init();
 
 		enable_accdet(0);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+/* delay time must less than __pm_wakeup_event time 7 * HZ */
+		if (accdet->fb_workqueue) {
+			queue_delayed_work(accdet->fb_workqueue, \
+					&accdet->fb_delaywork, 6 * HZ);
+			pr_notice("%s queue_delayed_work fb_delaywork\n", __func__);
+		}
+#endif
 	} else {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		if (accdet->fb_workqueue) {
+			cancel_delayed_work_sync(&accdet->fb_delaywork);
+			pr_notice("%s cancel_delayed_work_sync fb_delaywork\n", __func__);
+		}
+#endif
 		mutex_lock(&accdet->res_lock);
 		accdet->eint_sync_flag = false;
 		accdet->thing_in_flag = false;
@@ -1894,6 +1937,13 @@ static inline void check_cable_type(void)
 static void accdet_work_callback(struct work_struct *work)
 {
 	u32 pre_cable_type = accdet->cable_type;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (accdet->fb_workqueue) {
+		cancel_delayed_work_sync(&accdet->fb_delaywork);
+		pr_notice("%s cancel_delayed_work_sync fb_delaywork\n", __func__);
+	}
+#endif
 
 	__pm_stay_awake(accdet->wake_lock);
 	check_cable_type();
@@ -3208,6 +3258,15 @@ static int accdet_probe(struct platform_device *pdev)
 		if (ret)
 			destroy_workqueue(accdet->eint_workqueue);
 	}
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	accdet->fb_workqueue = create_singlethread_workqueue("hs_feedback");
+	INIT_DELAYED_WORK(&accdet->fb_delaywork, feedback_work_callback);
+	if (!accdet->fb_workqueue) {
+		dev_dbg(&pdev->dev, "Error: Create feedback workqueue failed\n");
+	}
+	dev_info(&pdev->dev, "%s: event_id=%u, version:%s\n", __func__, \
+			OPLUS_AUDIO_EVENTID_HEADSET_DET, HEADSET_ERR_FB_VERSION);
+#endif
 
 	ret = accdet_create_attr(&accdet_driver.driver);
 	if (ret) {

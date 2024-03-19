@@ -17,9 +17,15 @@
 #include "adaptor-hw.h"
 #include "adaptor-i2c.h"
 #include "adaptor-ctrls.h"
+#include "adaptor-fsync-ctrls.h"
 #include "adaptor-ioctl.h"
+#include "adaptor-trace.h"
 #include "imgsensor-glue/imgsensor-glue.h"
 #include "virt-sensor/virt-sensor-entry.h"
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 #undef E
 #define E(__x__) (__x__##_entry)
@@ -184,7 +190,6 @@ static void add_sensor_mode(struct adaptor_ctx *ctx,
 		para.u8, &len);
 
 	mode->esd_reset_by_user = val;
-
 
 	if (!mode->mipi_pixel_rate || !mode->max_framerate || !mode->pclk)
 		return;
@@ -401,7 +406,6 @@ static int imgsensor_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	dev_info(ctx->dev, "%s use self ref cnt\n", __func__);
 	adaptor_hw_power_on(ctx);
 #endif
-
 	adaptor_sensor_init(ctx);
 #endif
 
@@ -602,77 +606,17 @@ static int imgsensor_set_pad_format(struct v4l2_subdev *sd,
 		ctx->try_format_mode = mode;
 	} else {
 #ifndef POWERON_ONCE_OPENED
+		ADAPTOR_SYSTRACE_BEGIN("imgsensor::init_sensor");
 		adaptor_sensor_init(ctx);
+		ADAPTOR_SYSTRACE_END();
 #endif
+		ADAPTOR_SYSTRACE_BEGIN("imgsensor::set_mode_%u", mode->id);
 		set_sensor_mode(ctx, mode, 1);
+		ADAPTOR_SYSTRACE_END();
 	}
 	mutex_unlock(&ctx->mutex);
 
 	return 0;
-}
-
-static u32 get_sensor_sync_mode(struct adaptor_ctx *ctx)
-{
-	u32 sync_mode = 0;
-	union feature_para para;
-	u32 len;
-
-	para.u32[0] = 0;
-
-	subdrv_call(ctx, feature_control,
-		SENSOR_FEATURE_GET_SENSOR_SYNC_MODE,
-		para.u8, &len);
-
-	sync_mode = para.u32[0];
-
-	dev_info(ctx->dev, "sync mode = %u\n", sync_mode);
-
-	return sync_mode;
-}
-
-/* notify frame-sync streaming ON/OFF and set sensor info to frame-sync */
-static void notify_fsync_mgr_streaming(struct adaptor_ctx *ctx,
-				unsigned int flag)
-{
-	unsigned int ret = 0;
-	struct fs_streaming_st streaming_sensor_info = {0};
-
-	streaming_sensor_info.sensor_id = ctx->subdrv->id;
-	streaming_sensor_info.sensor_idx = ctx->idx;
-
-	/* fsync_map_id is cam_mux no */
-	streaming_sensor_info.tg = ctx->fsync_map_id->val + 1;
-	streaming_sensor_info.fl_active_delay =
-				ctx->subctx.frame_time_delay_frame;
-
-
-	/* using ctx->subctx.frame_length instead of ctx->cur_mode->fll */
-	/*     for any settings before streaming on */
-	streaming_sensor_info.def_fl_lc = ctx->subctx.frame_length;
-	streaming_sensor_info.max_fl_lc = ctx->subctx.max_frame_length;
-
-	/* frame sync sensor operate mode. none/master/slave */
-	streaming_sensor_info.sync_mode = get_sensor_sync_mode(ctx);
-
-
-	/* using ctx->subctx.shutter instead of ctx->subctx.exposure_def */
-	/*     for any settings before streaming on */
-	streaming_sensor_info.def_shutter_lc = ctx->subctx.shutter;
-
-
-	/* callback data */
-	streaming_sensor_info.func_ptr = cb_fsync_mgr_set_framelength;
-	streaming_sensor_info.p_ctx = ctx;
-
-
-	/* call frame-sync streaming ON/OFF */
-	if (ctx->fsync_mgr != NULL) {
-		ret = ctx->fsync_mgr->fs_streaming(flag, &streaming_sensor_info);
-
-		if (ret != 0)
-			dev_info(ctx->dev, "frame-sync streaming ERROR!\n");
-	} else
-		dev_info(ctx->dev, "frame-sync is not init!\n");
 }
 
 #ifdef IMGSENSOR_USE_PM_FRAMEWORK
@@ -1047,58 +991,6 @@ static const struct thermal_zone_of_device_ops imgsensor_tz_ops = {
 	.get_temp = imgsensor_get_temp,
 };
 
-static int notify_fsync_mgr(struct adaptor_ctx *ctx, int on)
-{
-	int ret, seninf_idx = 0;
-	const char *seninf_port = NULL;
-	char c_ab;
-	struct device_node *seninf_np;
-	struct device *dev = ctx->dev;
-
-	if (!on) {
-		/* imgsensor remove => for remove sysfs file */
-		FrameSyncUnInit(ctx->dev);
-		return 0;
-	}
-
-	seninf_np = of_graph_get_remote_node(dev->of_node, 0, 0);
-	if (!seninf_np) {
-		dev_info(dev, "no remote device node\n");
-		return -EINVAL;
-	}
-
-	ret = of_property_read_string(seninf_np, "csi-port", &seninf_port);
-
-	of_node_put(seninf_np);
-
-	if (ret || !seninf_port) {
-		dev_info(dev, "no seninf csi-port\n");
-		return -EINVAL;
-	}
-
-	/* convert seninf-port to seninf-idx */
-	ret = sscanf(seninf_port, "%d%c", &seninf_idx, &c_ab);
-	seninf_idx <<= 1;
-	seninf_idx += (ret == 2 && (c_ab == 'b' || c_ab == 'B'));
-
-	dev_info(dev, "sensor_idx %d seninf_port %s seninf_idx %d\n",
-		ctx->idx, seninf_port, seninf_idx);
-
-	/* frame-sync init */
-	ret = FrameSyncInit(&ctx->fsync_mgr, ctx->dev);
-	if (ret != 0) {
-		dev_info(ctx->dev, "frame-sync init failed !\n");
-		ctx->fsync_mgr = NULL;
-	} else
-		dev_info(dev, "frame-sync init done, ret:%d", ret);
-
-	/* notify frame-sync mgr of sensor-idx and seninf-idx */
-	//TODO
-
-	return 0;
-}
-
-
 #define SHOW(buf, len, fmt, ...) { \
 	len += snprintf(buf + len, PAGE_SIZE - len, fmt, ##__VA_ARGS__); \
 }
@@ -1198,6 +1090,50 @@ ERR_DEBUG_OPS_STORE:
 
 static DEVICE_ATTR_RW(debug_i2c_ops);
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static struct task_struct *pg_task = NULL;
+void cam_aon_do_work(struct work_struct *work)
+{
+	int rc = 0;
+	struct kernel_siginfo info;
+	struct adaptor_ctx *ctx =
+			container_of(work, struct adaptor_ctx, aon_wq);
+	dev_info(ctx->dev, "send signal to userspace");
+
+	adaptor_i2c_wr_regs_u8(ctx->subctx.i2c_client, ctx->subctx.i2c_write_id >> 1,
+		ctx->subctx.aonhemd_clear_setting_table, ctx->subctx.aonhemd_clear_setting_len);
+
+	if (ctx->pid != 0 && ctx->irq_cnt == 1) {
+		dev_info(ctx->dev, "send signal to app");
+		if (pg_task != NULL)
+			put_task_struct(pg_task);
+		pg_task = get_pid_task(find_vpid(ctx->pid), PIDTYPE_PID);
+		if (pg_task == NULL) {
+			dev_err(ctx->dev, "send_sig_info failed pg_task is null");
+			return;
+		}
+		info.si_signo = SIGIO;
+		info.si_errno = 0;
+		info.si_code = 1;
+		info.si_addr = NULL;
+		rc = send_sig_info(SIGIO, &info, pg_task);
+		if (rc < 0) {
+			dev_err(ctx->dev, "send_sig_info failed");
+			return;
+		}
+	}
+	ctx->irq_cnt++;
+	return;
+}
+
+static irqreturn_t aon_interupt_handler(int irq, void *data)
+{
+	struct adaptor_ctx *ctx = data;
+	schedule_work(&ctx->aon_wq);
+	return IRQ_HANDLED;
+}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 static int imgsensor_probe(struct i2c_client *client)
 {
 
@@ -1205,6 +1141,11 @@ static int imgsensor_probe(struct i2c_client *client)
 	struct device_node *endpoint;
 	struct adaptor_ctx *ctx;
 	int ret;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+    const char* of_support_explorer_aon = NULL;
+	int irq_flags = 0;
+#endif
 	int forbid_index;
 	dev_info(dev, "imgsensor_probe success\n");
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
@@ -1218,6 +1159,19 @@ static int imgsensor_probe(struct i2c_client *client)
 	ctx->i2c_client = client;
 	ctx->dev = dev;
 	ctx->sensor_debug_flag = &sensor_debug;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	ret = of_property_read_string(ctx->dev->of_node, "support_explorer_aon", &of_support_explorer_aon); 
+	if ( !ret && strcmp(of_support_explorer_aon, "true") == 0) {
+		ctx->support_explorer_aon_fl = 1;
+	} else {
+	ctx->support_explorer_aon_fl = 0;
+	}
+	dev_dbg(ctx->dev, "%s support_explorer_aon_fl:%d\n", __func__, ctx->support_explorer_aon_fl);
+	ctx->aon_irq_gpio = of_get_named_gpio(dev->of_node, "aon-irq-gpio", 0);
+	dev_dbg(dev, "parsing dtsi aon_irq_gpio = %d", ctx->aon_irq_gpio);
+	mutex_init(&ctx->hw_mutex);
+#endif
 
 	endpoint = of_graph_get_next_endpoint(dev->of_node, NULL);
 	if (!endpoint) {
@@ -1234,7 +1188,6 @@ static int imgsensor_probe(struct i2c_client *client)
 		dev_err(dev, "parsing endpoint node failed\n");
 		return ret;
 	}
-
 	ret = adaptor_hw_init(ctx);
 	if (ret) {
 		dev_err(dev, "failed to init hw handles\n");
@@ -1244,6 +1197,9 @@ static int imgsensor_probe(struct i2c_client *client)
 	ret = search_sensor(ctx);
 	if (ret) {
 		dev_err(dev, "no sensor found\n");
+		#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+		push_sensor_name(ctx->subdrv->name);
+		#endif
 		return ret;
 	}
 
@@ -1321,6 +1277,23 @@ static int imgsensor_probe(struct i2c_client *client)
 	if (!ctx->sensor_ws)
 		dev_info(dev, "failed to wakeup_source_register\n");
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (ctx->aon_irq_gpio > 0) {
+		ret = gpio_direction_input(ctx->aon_irq_gpio);
+		if (ret) {
+			dev_err(dev, "aon_irq_gpio request failed\n");
+		}
+		irq_flags = IRQF_TRIGGER_RISING | IRQF_ONESHOT;
+		ret = devm_request_irq(dev, gpio_to_irq(ctx->aon_irq_gpio), aon_interupt_handler,
+					irq_flags, "aon-hemd-irq", ctx);
+		disable_irq_wake(gpio_to_irq(ctx->aon_irq_gpio));
+		disable_irq(gpio_to_irq(ctx->aon_irq_gpio));
+		INIT_WORK(&ctx->aon_wq, cam_aon_do_work);
+		ctx->pid = 0;
+		ctx->irq_cnt = 0;
+	}
+#endif
+
 	return 0;
 
 free_entity:
@@ -1329,7 +1302,9 @@ free_entity:
 free_ctrl:
 	v4l2_ctrl_handler_free(&ctx->ctrls);
 	mutex_destroy(&ctx->mutex);
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_destroy(&ctx->hw_mutex);
+#endif
 	return ret;
 }
 
@@ -1357,6 +1332,9 @@ static int imgsensor_remove(struct i2c_client *client)
 
 	mutex_destroy(&ctx->mutex);
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	mutex_destroy(&ctx->hw_mutex);
+#endif
 	return 0;
 }
 
@@ -1375,7 +1353,10 @@ static const struct i2c_device_id imgsensor_id[] = {
 MODULE_DEVICE_TABLE(i2c, imgsensor_id);
 
 static const struct of_device_id imgsensor_of_match[] = {
-	{.compatible = "mediatek,imgsensor"},
+	{.compatible = "mediatek,imgsensor0"},
+	{.compatible = "mediatek,imgsensor1"},
+	{.compatible = "mediatek,imgsensor2"},
+	{.compatible = "mediatek,imgsensor3"},
 	{}
 };
 MODULE_DEVICE_TABLE(of, imgsensor_of_match);

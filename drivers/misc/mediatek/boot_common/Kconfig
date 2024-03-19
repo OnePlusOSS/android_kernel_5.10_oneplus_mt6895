@@ -1,0 +1,5 @@
+config MTK_BOOT_COMMON
+	tristate "config boot mode common info for kernel"
+	default m
+	help
+	  define this config to define boot mode common

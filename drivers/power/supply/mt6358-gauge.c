@@ -322,6 +322,20 @@ static signed int g_hw_ocv_tune_value;
 #define Set_CARTUNE_TO_KERNEL _IOW('k', 15, int)
 #define NUM_IRQ_REG                             3
 
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+#define Get_FakeOff_Param _IOW('k', 7, int)
+#define Turn_Off_Charging _IOW('k', 9, int)
+
+extern int oplus_chg_check_ui_soc_is_ready(void);
+extern int oplus_chg_get_ui_soc(void);
+extern int oplus_chg_get_notify_flag(void);
+extern int oplus_chg_show_vooc_logo_ornot(void);
+extern int oplus_get_prop_status(void);
+extern bool oplus_chg_check_chip_is_null(void);
+extern int oplus_is_vooc_project(void);
+extern bool oplus_mt_get_vbus_status(void);
+#endif
+
 static struct class *bat_cali_class;
 static int bat_cali_major;
 static dev_t bat_cali_devno;
@@ -3750,6 +3764,11 @@ struct file *filp, unsigned int cmd, unsigned long arg)
 	case Get_META_BAT_CAR_TUNE_VALUE:
 	case Set_META_BAT_CAR_TUNE_VALUE:
 	case Set_BAT_DISABLE_NAFG:
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+	case Get_FakeOff_Param:
+	case Turn_Off_Charging:
+#endif
+
 	case Set_CARTUNE_TO_KERNEL: {
 		bm_notice(
 			"%s send to unlocked_ioctl cmd=0x%08x\n",
@@ -3782,6 +3801,9 @@ static long adc_cali_ioctl(
 	int temp_car_tune;
 	int isdisNAFG = 0;
 	struct mtk_battery *gm;
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+	int fakeoff_out_data[6] = {0, 0, 0, 0, 0, 0};
+#endif /*CONFIG_OPLUS_CHARGER_MTK6789S*/
 
 	bm_notice("%s enter\n", __func__);
 
@@ -3889,6 +3911,36 @@ static long adc_cali_ioctl(
 		bm_err("**** unlocked_ioctl Set_CARTUNE_TO_KERNEL[%d,%d], ret=%d\n",
 			adc_in_data[0], adc_in_data[1], ret);
 		break;
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+	case Get_FakeOff_Param:
+		user_data_addr = (int *)arg;
+		fakeoff_out_data[0] = oplus_chg_get_ui_soc();
+		fakeoff_out_data[1] = oplus_chg_get_notify_flag();
+		if (oplus_mt_get_vbus_status() == true && oplus_get_prop_status() != POWER_SUPPLY_STATUS_NOT_CHARGING) {
+			fakeoff_out_data[2] = POWER_SUPPLY_STATUS_CHARGING;
+		} else {
+			fakeoff_out_data[2] = POWER_SUPPLY_STATUS_UNKNOWN;
+		}
+		fakeoff_out_data[3] = oplus_chg_show_vooc_logo_ornot();
+		if (oplus_is_vooc_project()) {
+			fakeoff_out_data[4] = (oplus_chg_check_chip_is_null() == false ? 1 : 0);
+			fakeoff_out_data[5] = (oplus_chg_check_ui_soc_is_ready() == true ? 1: 0);
+		} else {
+			if (gm->init_flag == 1)
+				fakeoff_out_data[4] = 2;
+			else
+				fakeoff_out_data[4] = 0;
+		}
+
+		ret = copy_to_user(user_data_addr, fakeoff_out_data, 24);
+		bm_err("ioctl : Get_FakeOff_Param: ui_soc:%d, g_NotifyFlag:%d, chr_det:%d, fast_chg:%d\n",
+			fakeoff_out_data[0], fakeoff_out_data[1], fakeoff_out_data[2], fakeoff_out_data[3]);
+		break;
+
+	case Turn_Off_Charging:
+		bm_err("ioctl : Turn_Off_Charging\n");
+		break;
+#endif
 	default:
 		bm_err("**** unlocked_ioctl unknown IOCTL: 0x%08x\n", cmd);
 		mutex_unlock(&gm->gauge->fg_mutex);

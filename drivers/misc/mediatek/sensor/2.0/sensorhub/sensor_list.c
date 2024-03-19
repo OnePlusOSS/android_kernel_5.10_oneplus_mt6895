@@ -129,10 +129,10 @@ int sensor_list_get_list(struct sensor_info *list, unsigned int num)
 		ret = sensor_list_seq_get_list(list, num);
 	} while (retry++ < max_retry && ret < 0);
 	mutex_unlock(&bus_user_lock);
-
+	pr_err("mtkdebug:1 %s ret = %d\n",__func__,ret);
 	return ret;
 }
-
+EXPORT_SYMBOL_GPL(sensor_list_get_list);
 static int sensor_list_share_mem_cfg(struct share_mem_config *cfg,
 		void *private_data)
 {

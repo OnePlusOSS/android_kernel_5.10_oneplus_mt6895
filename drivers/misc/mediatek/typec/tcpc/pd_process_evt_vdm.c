@@ -387,12 +387,17 @@ static inline bool pd_process_ctrl_msg(
 			return true;
 		break;
 #endif	/* CONFIG_USB_PD_DBG_DP_UFP_U_AUTO_ATTENTION */
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+#endif	/* CONFIG_USB_PD_ALT_MODE */
+/*#endif*/
 
 	case PE_UFP_VDM_ATTENTION_REQUEST:
 		pd_notify_tcp_vdm_event_2nd_result(
 			pd_port, TCP_DPM_RET_VDM_ACK);
 		break;
-#endif	/* CONFIG_USB_PD_ALT_MODE */
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*#endif*/	/* CONFIG_USB_PD_ALT_MODE */
+/*#endif*/
 
 #if CONFIG_USB_PD_SRC_STARTUP_DISCOVER_ID
 	case PE_SRC_VDM_IDENTITY_REQUEST:

@@ -23,5 +23,5 @@ extern int set_cpu_active_bitmask(int mask);
 extern void task_rotate_init(void);
 extern void check_for_migration(struct task_struct *p);
 #endif
-
+extern struct kobj_attribute fake_cpuinfo_max_freq_cpu_attr;
 #endif

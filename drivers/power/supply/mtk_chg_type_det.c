@@ -18,6 +18,10 @@
 
 #define MTK_CTD_DRV_VERSION	"1.0.0_MTK"
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+extern bool oplus_chg_wake_update_work(void);
+#endif
+
 struct mtk_ctd_info {
 	struct device *dev;
 	/* device tree */

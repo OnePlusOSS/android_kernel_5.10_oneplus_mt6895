@@ -81,6 +81,15 @@ config MTK_LENS_AK7345AF_SUPPORT
 	  lens driver for the camera sensor module
 	  Set as y if the driver is used in this project
 
+config MTK_LENS_AW8601xAF_SUPPORT
+	tristate "AW8601xAF Lens Driver"
+        depends on MTK_LENS
+	help
+	  AW8601xAF Lens Driver
+	  This config is used to enable the corresponding
+	  lens driver for the camera sensor module
+	  Set as y if the driver is used in this project
+
 config MTK_LENS_AK7371AF_SUPPORT
 	tristate "AK7371AF Lens Driver"
         depends on MTK_LENS
@@ -225,6 +234,15 @@ config MTK_LENS_FP5510E2AF_SUPPORT
 	  lens driver for the camera sensor module
 	  Set as y if the driver is used in this project
 
+config MTK_LENS_FP5513E4AF_SUPPORT
+	tristate "FP5513E4AF Lens Driver"
+        depends on MTK_LENS
+	help
+	  FM50AF Lens Driver
+	  This config is used to enable the corresponding
+	  lens driver for the camera sensor module
+	  Set as y if the driver is used in this project
+
 config MTK_LENS_MT9P017AF_SUPPORT
 	tristate "MT9P017AF Lens Driver"
 	help
@@ -282,6 +300,24 @@ config MTK_LENS_WV511AAF_SUPPORT
         depends on MTK_LENS
 	help
 	  WV511AAF Lens Driver
+	  This config is used to enable the corresponding
+	  lens driver for the camera sensor module
+	  Set as y if the driver is used in this project
+
+config MTK_LENS_PE916C6HAF_SUPPORT
+	tristate "PE916C6HAF Lens Driver"
+        depends on MTK_LENS
+	help
+	  PE916C6HAF Lens Driver
+	  This config is used to enable the corresponding
+	  lens driver for the camera sensor module
+	  Set as y if the driver is used in this project
+
+config MTK_LENS_GT9769AF_SUPPORT
+	tristate "GT9769AF Lens Driver"
+        depends on MTK_LENS
+	help
+	  GT9769AF Lens Driver
 	  This config is used to enable the corresponding
 	  lens driver for the camera sensor module
 	  Set as y if the driver is used in this project

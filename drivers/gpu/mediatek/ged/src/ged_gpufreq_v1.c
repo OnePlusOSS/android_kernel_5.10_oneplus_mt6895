@@ -50,6 +50,11 @@ int ged_get_min_oppidx_real(void)
 	return mt_gpufreq_get_dvfs_table_num() - 1;
 }
 
+unsigned int ged_get_all_available_opp_num(void)
+{
+	return mt_gpufreq_get_dvfs_table_num();
+}
+
 int ged_get_opp_num(void)
 {
 	return mt_gpufreq_get_dvfs_table_num();

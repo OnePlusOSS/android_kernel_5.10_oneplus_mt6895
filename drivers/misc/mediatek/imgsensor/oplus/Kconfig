@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0
+config OPLUS_CAM_EVENT_REPORT
+	tristate "config oplus camera event report"
+	default n
+	help
+		Say Y to include support
+config OPLUS_EVENT_REPORT
+	bool "event report support"
+	default n
+	help
+		Say Y to include support

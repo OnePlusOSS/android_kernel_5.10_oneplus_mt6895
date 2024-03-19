@@ -31,6 +31,9 @@
 #include <linux/kallsyms.h>
 #include <asm/cacheflush.h>
 #include "ssmr_internal.h"
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+#include <soc/oplus/system/oplus_project.h>
+//#endif
 
 #define SSMR_FEATURES_DT_UNAME "memory-ssmr-features"
 #define SVP_FEATURES_DT_UNAME "SecureVideoPath"
@@ -39,6 +42,32 @@
 #define GRANULARITY_SIZE 0x200000
 
 static struct device *ssmr_dev;
+
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+static bool is_svp_nosupported(void)
+{
+    unsigned int prj_id = 0;
+    bool status = false;
+    prj_id =  get_project();
+    switch(prj_id) {
+        case 21861:
+        case 21143:
+        case 22801:
+        case 21121:
+        case 21641:
+        case 21642:
+        case 0x2261B:
+        case 22021:
+        case 21007:
+        status = true;
+        break;
+    default:
+        status = false;
+        break;
+    }
+    return status;
+}
+//#endif /*OPLUS_FEATURE_SECURITY_COMMON*/
 
 static struct SSMR_HEAP_INFO _ssmr_heap_info[__MAX_NR_SSMR_FEATURES];
 
@@ -469,7 +498,12 @@ bool is_svp_on_mtee(void)
 bool is_svp_enabled(void)
 {
 	struct device_node *dt_node;
-
+//#ifdef OPLUS_FEATURE_SECURITY_COMMON
+    if (is_svp_nosupported()){
+        pr_info("svp not support\n");
+        return false;
+    }
+//#endif /*OPLUS_FEATURE_SECURITY_COMMON*/
 	dt_node = of_find_node_by_name(NULL, SVP_FEATURES_DT_UNAME);
 	if (!dt_node)
 		return false;

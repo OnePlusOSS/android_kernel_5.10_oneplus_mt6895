@@ -121,6 +121,12 @@ void qos_ipi_init(struct mtk_qos *qos)
 	unsigned int ret;
 
 	_tinfo = get_scmi_tinysys_info();
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (!_tinfo) {
+		pr_err("%s _tinfo is NULL\n", __func__);
+		return;
+	}
+#endif
 
 	ret = of_property_read_u32(_tinfo->sdev->dev.of_node, "scmi_qos",
 			&scmi_qos_id);

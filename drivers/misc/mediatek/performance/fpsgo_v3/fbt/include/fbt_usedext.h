@@ -17,7 +17,9 @@ extern int fpsgo_fbt2minitop_start(int count, struct fpsgo_loading *fl);
 extern int fpsgo_fbt2minitop_query(int count, struct fpsgo_loading *fl);
 extern int fpsgo_fbt2minitop_end(void);
 extern int fpsgo_fbt2minitop_query_single(pid_t pid);
-
+#if defined(CONFIG_SCHEDUTIL_USE_TL)
+extern void set_capacity_margin_dvfs_changed(bool changed);
+#endif /* CONFIG_SCHEDUTIL_USE_TL */
 extern struct workqueue_struct *g_psNotifyWorkQueue;
 
 #endif

@@ -145,6 +145,31 @@ TRACE_EVENT(block_rq_complete,
 		  __entry->nr_sector, __entry->error)
 );
 
+#ifdef CONFIG_DEVICE_XCOPY
+TRACE_EVENT(block_xcopy_dump,
+
+	TP_PROTO(sector_t start_sect, unsigned int src, unsigned int dst),
+
+	TP_ARGS(start_sect, src, dst),
+
+	TP_STRUCT__entry (
+		__field(  sector_t,	sector			)
+		__field(  unsigned int,	src			)
+		__field(  unsigned int, dst 		)
+	),
+
+	TP_fast_assign(
+		__entry->sector = start_sect;
+		__entry->src = src;
+		__entry->dst = dst;
+	),
+
+	TP_printk("partition start_secotr:%llu, src[0]:%u, dst[0]:%u",
+			  (unsigned long long)__entry->sector,
+			  __entry->src, __entry->dst)
+);
+#endif
+
 DECLARE_EVENT_CLASS(block_rq,
 
 	TP_PROTO(struct request_queue *q, struct request *rq),

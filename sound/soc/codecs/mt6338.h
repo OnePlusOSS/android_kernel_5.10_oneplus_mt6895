@@ -22748,6 +22748,10 @@ struct mt6338_priv {
 	int hp_gain_ctl;
 	int hp_hifi_mode;
 	int hp_plugged;
+#ifdef OPLUS_ARCH_EXTENDS
+	int hp_volume_flag;
+	int mic_adc_flag;
+#endif
 	int mtkaif_protocol;
 	int dmic_one_wire_mode;
 	int mic_hifi_mode;

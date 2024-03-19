@@ -60,6 +60,10 @@
 	(WB_INT_MEDV_SIZE+WB_DCV_L_SIZE+ \
 	WB_ASFRM_SIZE+WB_ASFRMExt_SIZE+WB_WMFHF_SIZE)
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define OPLUS_FEATURE_CAMERA_COMMON
+#endif
+
 // ----------------- DPE_DVS_ME  Grouping Definitions -------------------
 struct DVS_ME_CFG {
 	unsigned int                   DVS_ME_00;           //15300300

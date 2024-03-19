@@ -27,6 +27,7 @@
 #define DEFAULT_JUMP_CHECK_Q_PCT 33
 #define JUMP_VOTE_MAX_I 60
 #define FSTB_IDLE_DBNC 10
+#define FSTB_FRAME_INFO_MAX_CNT 15
 
 extern int (*fbt_notifier_cpu_frame_time_fps_stabilizer)(
 	int pid,

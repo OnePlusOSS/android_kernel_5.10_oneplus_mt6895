@@ -118,8 +118,13 @@ int ufshcd_dump_regs(struct ufs_hba *hba, size_t offset, size_t len,
 	if (!regs)
 		return -ENOMEM;
 
-	for (pos = 0; pos < len; pos += 4)
+	for (pos = 0; pos < len; pos += 4) {
+		if (offset == 0 &&
+		    pos >= REG_UIC_ERROR_CODE_PHY_ADAPTER_LAYER &&
+		    pos <= REG_UIC_ERROR_CODE_DME)
+			continue;
 		regs[pos / 4] = ufshcd_readl(hba, offset + pos);
+	}
 
 	ufshcd_hex_dump(prefix, regs, len);
 	kfree(regs);
@@ -2093,12 +2098,13 @@ void ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
 
 	lrbp->issue_time_stamp = ktime_get();
 	lrbp->compl_time_stamp = ktime_set(0, 0);
-	ufshcd_vops_setup_xfer_req(hba, task_tag, (lrbp->cmd ? true : false));
 	trace_android_vh_ufs_send_command(hba, lrbp);
 	ufshcd_add_command_trace(hba, task_tag, "send");
 	ufshcd_clk_scaling_start_busy(hba);
 	if (unlikely(ufshcd_should_inform_monitor(hba, lrbp)))
 		ufshcd_start_monitor(hba, lrbp);
+	if (hba->vops && hba->vops->setup_xfer_req)
+		hba->vops->setup_xfer_req(hba, task_tag, !!lrbp->cmd);
 	if (ufshcd_has_utrlcnr(hba)) {
 		set_bit(task_tag, &hba->outstanding_reqs);
 		ufshcd_writel(hba, 1 << task_tag,
@@ -2881,39 +2887,48 @@ ufshcd_dev_cmd_completion(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 static int ufshcd_wait_for_dev_cmd(struct ufs_hba *hba,
 		struct ufshcd_lrb *lrbp, int max_timeout)
 {
-	int err = 0;
-	unsigned long time_left;
-	unsigned long flags;
-
+	unsigned long time_left = msecs_to_jiffies(max_timeout);
+	int err;
+retry:
 	time_left = wait_for_completion_timeout(hba->dev_cmd.complete,
-			msecs_to_jiffies(max_timeout));
-
-	/* Make sure descriptors are ready before ringing the doorbell */
-	wmb();
-	spin_lock_irqsave(hba->host->host_lock, flags);
-	hba->dev_cmd.complete = NULL;
+						time_left);
 	if (likely(time_left)) {
+		/*
+		 * The caller of this function still owns the @lrbp tag so the
+		 * code below does not trigger any race conditions.
+		 */
+		hba->dev_cmd.complete = NULL;
 		err = ufshcd_get_tr_ocs(lrbp);
 		if (!err)
 			err = ufshcd_dev_cmd_completion(hba, lrbp);
-	}
-	spin_unlock_irqrestore(hba->host->host_lock, flags);
-
-	if (!time_left) {
+	} else {
 		err = -ETIMEDOUT;
 		dev_dbg(hba->dev, "%s: dev_cmd request timedout, tag %d\n",
 			__func__, lrbp->task_tag);
-		if (!ufshcd_clear_cmd(hba, lrbp->task_tag))
+		if (!ufshcd_clear_cmd(hba, 1U << lrbp->task_tag)) {
 			/* successfully cleared the command, retry if needed */
 			err = -EAGAIN;
-		/*
-		 * in case of an error, after clearing the doorbell,
-		 * we also need to clear the outstanding_request
-		 * field in hba
-		 */
-		ufshcd_outstanding_req_clear(hba, lrbp->task_tag);
+			/*
+			 * Since clearing the command succeeded we also need to
+			 * clear the task tag bit from the outstanding_reqs
+			 * variable.
+			 */
+			if (test_and_clear_bit(lrbp->task_tag,
+					    &hba->outstanding_reqs)) {
+				hba->dev_cmd.complete = NULL;
+			} else {
+				/*
+				 * A race occurred between this function and the
+				 * completion handler.
+				 */
+				time_left = 1;
+				goto retry;
+			}
+		} else {
+			dev_err(hba->dev, "%s: failed to clear tag %d\n", __func__,
+				lrbp->task_tag);
+		}
 	}
-
 	return err;
 }
 
@@ -3285,8 +3300,12 @@ EXPORT_SYMBOL_GPL(ufshcd_query_descriptor_retry);
 void ufshcd_map_desc_id_to_length(struct ufs_hba *hba, enum desc_idn desc_id,
 				  int *desc_len)
 {
+#ifdef CONFIG_DEVICE_XCOPY
+	if (desc_id >= QUERY_DESC_IDN_MAX || desc_id == QUERY_DESC_IDN_RFU_1)
+#else
 	if (desc_id >= QUERY_DESC_IDN_MAX || desc_id == QUERY_DESC_IDN_RFU_0 ||
 	    desc_id == QUERY_DESC_IDN_RFU_1)
+#endif
 		*desc_len = 0;
 	else
 		*desc_len = hba->desc_size[desc_id];
@@ -3369,7 +3388,11 @@ int ufshcd_read_desc_param(struct ufs_hba *hba,
 	}
 
 	/* Sanity check */
+#ifdef CONFIG_DEVICE_XCOPY
+	if ((desc_buf[QUERY_DESC_DESC_TYPE_OFFSET] != desc_id) && (desc_id != QUERY_DESC_IDN_XCOPY)) {
+#else
 	if (desc_buf[QUERY_DESC_DESC_TYPE_OFFSET] != desc_id) {
+#endif
 		dev_err(hba->dev, "%s: invalid desc_id %d in descriptor header\n",
 			__func__, desc_buf[QUERY_DESC_DESC_TYPE_OFFSET]);
 		ret = -EINVAL;
@@ -4385,7 +4408,7 @@ static int ufshcd_complete_dev_init(struct ufs_hba *hba)
 					QUERY_FLAG_IDN_FDEVICEINIT, 0, &flag_res);
 		if (!flag_res)
 			break;
-		usleep_range(5000, 10000);
+		usleep_range(500, 1000);
 	} while (ktime_before(ktime_get(), timeout));
 
 	if (err) {
@@ -7444,6 +7467,9 @@ static int ufs_get_device_desc(struct ufs_hba *hba)
 	int err;
 	u8 model_index;
 	u8 b_ufs_feature_sup;
+#ifdef CONFIG_DEVICE_XCOPY
+	u32 b_ufs_ext_fet_sup;
+#endif
 	u8 *desc_buf;
 	struct ufs_dev_info *dev_info = &hba->dev_info;
 
@@ -7473,6 +7499,13 @@ static int ufs_get_device_desc(struct ufs_hba *hba)
 				      desc_buf[DEVICE_DESC_PARAM_SPEC_VER + 1];
 	b_ufs_feature_sup = desc_buf[DEVICE_DESC_PARAM_UFS_FEAT];
 
+#ifdef CONFIG_DEVICE_XCOPY
+	b_ufs_ext_fet_sup  = desc_buf[DEVICE_DESC_PARAM_EXT_UFS_FEATURE_SUP + 0] << 24;
+	b_ufs_ext_fet_sup += desc_buf[DEVICE_DESC_PARAM_EXT_UFS_FEATURE_SUP + 1] << 16;
+	b_ufs_ext_fet_sup += desc_buf[DEVICE_DESC_PARAM_EXT_UFS_FEATURE_SUP + 2] << 8;
+	b_ufs_ext_fet_sup += desc_buf[DEVICE_DESC_PARAM_EXT_UFS_FEATURE_SUP + 3];
+#endif
+
 	model_index = desc_buf[DEVICE_DESC_PARAM_PRDCT_NAME];
 
 	if (dev_info->wspecversion >= UFS_DEV_HPB_SUPPORT_VERSION &&
@@ -7489,7 +7522,34 @@ static int ufs_get_device_desc(struct ufs_hba *hba)
 
 		if (ufshpb_is_legacy(hba) || (!err && hpb_en))
 			dev_info->hpb_enabled = true;
+
 	}
+
+	if (dev_info->wmanufacturerid == UFS_VENDOR_RESERVE ||
+		dev_info->wmanufacturerid == UFS_VENDOR_PHISON_CUST) {
+		blk_queue_flag_set(QUEUE_FLAG_RESERVE, hba->cmd_queue);
+#ifdef CONFIG_DEVICE_XCOPY
+		if (b_ufs_ext_fet_sup & UFS_DEV_XCOPY_SUP) {
+			dev_info->android_kabi_reserved1 = true;
+			blk_queue_flag_set(QUEUE_FLAG_DEVICE_COPY, hba->cmd_queue);
+			dev_err(hba->dev, "%s(), xcopy-device detected! xcopy enable!\n", __func__);
+		} else {
+			dev_err(hba->dev, "%s(), xcopy disable!\n", __func__);
+		}
+#endif
+	}
+
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	if (dev_info->wmanufacturerid == UFS_VENDOR_RESERVE ||
+		dev_info->wmanufacturerid == UFS_VENDOR_PHISON_CUST) {
+		blk_queue_flag_set(QUEUE_FLAG_RESERVE, hba->cmd_queue);
+		if (hba->android_kabi_reserved1 != 0) {
+			struct vendor_box* vendor_box = (struct vendor_box*)hba->android_kabi_reserved1;
+			struct ufs_fastdiscard_hba *fastdiscard_hba = vendor_box->fast_discard_parameter;
+			fastdiscard_hba->fastdiscard_enable = 1;
+		}
+	}
+#endif
 
 	err = ufshcd_read_string_desc(hba, model_index,
 				      &dev_info->model, SD_ASCII_STD);
@@ -7655,7 +7715,7 @@ static int ufshcd_quirk_tune_host_pa_tactivate(struct ufs_hba *hba)
 	peer_pa_tactivate_us = peer_pa_tactivate *
 			     gran_to_us_table[peer_granularity - 1];
 
-	if (pa_tactivate_us > peer_pa_tactivate_us) {
+	if (pa_tactivate_us >= peer_pa_tactivate_us) {
 		u32 new_peer_pa_tactivate;
 
 		new_peer_pa_tactivate = pa_tactivate_us /
@@ -7727,6 +7787,106 @@ out:
 	kfree(desc_buf);
 	return err;
 }
+
+#ifdef CONFIG_DEVICE_XCOPY
+static int ufshcd_device_xcopy_queue_init(struct ufs_hba *hba)
+{
+	int err = 0;
+	size_t buff_len;
+	u8 *desc_buf;
+	struct request_queue *q = hba->cmd_queue;
+	struct para_limit *oem_limit;
+	struct vendor_box *box;
+	struct dev_copy_box *dev_copy_box;
+
+	dev_copy_box = kzalloc(sizeof(struct dev_copy_box), GFP_KERNEL);
+	if (!dev_copy_box) {
+		err = -ENOMEM;
+		return err;
+	}
+	dev_copy_box->dev_copy_idn = QUERY_DESC_IDN_XCOPY;
+	box = (struct vendor_box*)hba->android_kabi_reserved1;
+	box->dev_copy_parameter = dev_copy_box;
+
+	//buff_len = hba->desc_size[QUERY_DESC_IDN_GEOMETRY];
+	buff_len = 13; //xcopy Descriptor has 13Bytes data.
+	desc_buf = kzalloc(buff_len, GFP_KERNEL);
+	if (!desc_buf) {
+		err = -ENOMEM;
+		goto free;
+	}
+
+	/* add the q->limits parameters. */
+	if (hba->dev_info.android_kabi_reserved1) {
+		err = ufshcd_read_desc_param(hba, ((struct dev_copy_box *)(box->dev_copy_parameter))->dev_copy_idn,
+				0, 0, desc_buf, buff_len);
+		if (err) {
+			dev_err(hba->dev, "%s: Failed reading Xcopy Desc. err = %d\n",
+				__func__, err);
+			goto out;
+		}
+		/* malloc OEM data pointer */
+		oem_limit = (struct para_limit *)kzalloc(sizeof(struct para_limit), GFP_KERNEL);
+
+		oem_limit->max_copy_blks = (desc_buf[5] << 8) + desc_buf[6];
+		oem_limit->min_copy_blks = (desc_buf[9] << 8) + desc_buf[10];
+		oem_limit->max_copy_entr = (desc_buf[11] << 8) + desc_buf[12];
+		if (oem_limit->max_copy_entr > 256) {
+			oem_limit->max_copy_entr = 256;
+		}
+		q->limits.android_kabi_reserved1 = (u64)oem_limit;
+	}
+
+out:
+	kfree(desc_buf);
+free:
+	kfree(dev_copy_box);
+
+	return err;
+}
+#endif
+
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+static int ufshcd_device_feature_init(struct ufs_hba *hba)
+{
+	int err = 0;
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	struct vendor_box *box;
+	struct ufs_fastdiscard_hba *fastdiscard_hba;
+
+	if (hba->android_kabi_reserved1 != 0) {
+		fastdiscard_hba= kzalloc(sizeof(struct ufs_fastdiscard_hba), GFP_KERNEL);
+		if (!fastdiscard_hba) {
+			err = -ENOMEM;
+			goto out;
+		}
+		box = (struct vendor_box*)hba->android_kabi_reserved1;
+		box->fast_discard_parameter = fastdiscard_hba;
+		fastdiscard_hba->fastdiscard_enable = 0;
+	}
+
+out:
+#endif
+	return err;
+}
+
+static void ufshcd_device_feature_exit(struct ufs_hba *hba)
+{
+	struct vendor_box *box;
+
+	if (hba->android_kabi_reserved1 != 0) {
+		box = (struct vendor_box *)hba->android_kabi_reserved1;
+#ifdef CONFIG_DEVICE_XCOPY
+		kfree((void *)box->dev_copy_parameter);
+#endif
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+		kfree((void *)box->fast_discard_parameter);
+#endif
+		kfree((void *)box);//rongyichuxianduoci free qingkuang
+		hba->android_kabi_reserved1 = 0;
+	}
+}
+#endif
 
 static struct ufs_ref_clk ufs_ref_clk_freqs[] = {
 	{19200000, REF_CLK_FREQ_19_2_MHZ},
@@ -7800,8 +7960,18 @@ static int ufshcd_device_params_init(struct ufs_hba *hba)
 {
 	bool flag;
 	int ret, i;
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+	unsigned long *buf;
 
-	 /* Init device descriptor sizes */
+	buf = (unsigned long *)kmalloc(sizeof(struct vendor_box), GFP_KERNEL);
+	if (!buf) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	memset(buf, 0, sizeof(struct vendor_box));
+	hba->android_kabi_reserved1 = (unsigned long)buf;
+#endif
+	/* Init device descriptor sizes */
 	for (i = 0; i < QUERY_DESC_IDN_MAX; i++)
 		hba->desc_size[i] = QUERY_DESC_MAX_SIZE;
 
@@ -7810,6 +7980,14 @@ static int ufshcd_device_params_init(struct ufs_hba *hba)
 	if (ret)
 		goto out;
 
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+	ret = ufshcd_device_feature_init(hba);
+	if (ret) {
+		dev_err(hba->dev, "%s: Failed init. err = %d\n", __func__, ret);
+		goto out;
+	}
+#endif
+
 	/* Check and apply UFS device quirks */
 	ret = ufs_get_device_desc(hba);
 	if (ret) {
@@ -7817,6 +7995,15 @@ static int ufshcd_device_params_init(struct ufs_hba *hba)
 			__func__, ret);
 		goto out;
 	}
+
+#ifdef CONFIG_DEVICE_XCOPY
+	/* xcopy queue enable */
+	ret = ufshcd_device_xcopy_queue_init(hba);
+	if (ret) {
+		dev_err(hba->dev, "%s: Failed enable xcopy. err = %d\n", __func__, ret);
+		goto out;
+	}
+#endif
 
 	ufshcd_get_ref_clk_gating_wait(hba);
 
@@ -8469,6 +8656,9 @@ static int ufshcd_set_dev_pwr_mode(struct ufs_hba *hba,
 	struct scsi_device *sdp;
 	unsigned long flags;
 	int ret, retries;
+#ifdef CONFIG_DEVICE_XCOPY
+	struct ufs_dev_info *dev_info = &hba->dev_info;
+#endif
 
 	spin_lock_irqsave(hba->host->host_lock, flags);
 	sdp = hba->sdev_ufs_device;
@@ -8485,6 +8675,15 @@ static int ufshcd_set_dev_pwr_mode(struct ufs_hba *hba,
 
 	if (ret)
 		return ret;
+
+#ifdef CONFIG_DEVICE_XCOPY
+	/*
+	 * add the xcopy flags
+	 * */
+	if (dev_info->android_kabi_reserved1 == true) {
+		blk_queue_flag_set(QUEUE_FLAG_DEVICE_COPY, sdp->request_queue);
+	}
+#endif
 
 	/*
 	 * If scsi commands fail, the scsi mid-layer schedules scsi error-
@@ -8703,13 +8902,18 @@ static int ufshcd_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 		req_link_state = UIC_LINK_OFF_STATE;
 	}
 
+#ifndef UFS_HPB_LAZY_LOAD
+	//Adjust ufshpb_suspend after clock on to read top srgn
 	ufshpb_suspend(hba);
-
+#endif
 	/*
 	 * If we can't transition into any of the low power modes
 	 * just gate the clocks.
 	 */
 	ufshcd_hold(hba, false);
+#ifdef UFS_HPB_LAZY_LOAD
+	ufshpb_suspend(hba);
+#endif
 	hba->clk_gating.is_suspended = true;
 
 	if (ufshcd_is_clkscaling_supported(hba))
@@ -9153,6 +9357,9 @@ void ufshcd_remove(struct ufs_hba *hba)
 {
 	ufs_bsg_remove(hba);
 	ufshpb_remove(hba);
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+	ufshcd_device_feature_exit(hba);
+#endif
 	ufs_sysfs_remove_nodes(hba->dev);
 	blk_cleanup_queue(hba->tmf_queue);
 	blk_mq_free_tag_set(&hba->tmf_tag_set);

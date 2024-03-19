@@ -585,6 +585,7 @@ static int mtu3_gadget_set_self_powered(struct usb_gadget *gadget,
 	return 0;
 }
 
+#ifndef OPLUS_FEATURE_CHG_BASIC
 static void mtu3_gadget_set_ready(struct usb_gadget *gadget)
 {
 	struct mtu3 *mtu = gadget_to_mtu3(gadget);
@@ -596,6 +597,7 @@ static void mtu3_gadget_set_ready(struct usb_gadget *gadget)
 
 	mtu->is_gadget_ready = 1;
 }
+#endif
 
 static int mtu3_gadget_pullup(struct usb_gadget *gadget, int is_on)
 {
@@ -628,7 +630,11 @@ static int mtu3_gadget_pullup(struct usb_gadget *gadget, int is_on)
 	enable_irq(mtu->irq);
 
 	if (!mtu->is_gadget_ready && is_on)
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		mtu->is_gadget_ready = 1;
+#else
 		mtu3_gadget_set_ready(gadget);
+#endif
 
 	return 0;
 }

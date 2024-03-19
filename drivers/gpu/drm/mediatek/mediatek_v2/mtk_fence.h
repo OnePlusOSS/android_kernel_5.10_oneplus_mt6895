@@ -179,6 +179,8 @@ void mtk_release_session_fence(unsigned int session_id);
 struct mtk_fence_info *mtk_fence_get_layer_info(unsigned int session_id,
 						unsigned int timeline_id);
 
+int mtk_fence_curr_idx(unsigned int session_id, unsigned int layer_id);
+
 #ifdef __cplusplus
 } /* extern C */
 #endif

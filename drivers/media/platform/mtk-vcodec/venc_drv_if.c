@@ -239,10 +239,13 @@ void venc_check_release_lock(void *ctx_check)
 	int i;
 
 	for (i = 0; i < MTK_VENC_HW_NUM; i++) {
+		mutex_lock(&ctx->dev->enc_hw_mutex);
 		if (ctx->core_locked[i] == 1) {
 			venc_encode_unprepare(ctx, i, &flags);
+			venc_unlock(ctx, i);
 			mtk_v4l2_err("[%d] daemon killed when holding lock %d", ctx->id, i);
 		}
+		mutex_unlock(&ctx->dev->enc_hw_mutex);
 	}
 }
 

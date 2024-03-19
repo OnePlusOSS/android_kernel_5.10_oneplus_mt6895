@@ -17,6 +17,9 @@
 #include <linux/mempool.h>
 #include <linux/pfn.h>
 #include <linux/bio.h>
+#ifdef CONFIG_DEVICE_XCOPY
+#include <linux/blk_types.h>
+#endif
 #include <linux/stringify.h>
 #include <linux/gfp.h>
 #include <linux/bsg.h>
@@ -362,6 +365,15 @@ struct queue_limits {
 	ANDROID_KABI_RESERVE(1);
 };
 
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+struct vendor_box {
+	void *dev_copy_parameter;
+	void *fast_discard_parameter;
+	void *hpb_parameter;
+	void *fbarrier_parameter;
+};
+#endif
+
 typedef int (*report_zones_cb)(struct blk_zone *zone, unsigned int idx,
 			       void *data);
 
@@ -573,10 +585,6 @@ struct request_queue {
 	struct bsg_class_device bsg_dev;
 #endif
 
-#ifdef CONFIG_BLK_DEV_THROTTLING
-	/* Throttle data */
-	struct throtl_data *td;
-#endif
 	struct rcu_head		rcu_head;
 	wait_queue_head_t	mq_freeze_wq;
 	/*
@@ -641,7 +649,12 @@ struct request_queue {
 #define QUEUE_FLAG_RQ_ALLOC_TIME 27	/* record rq->alloc_time_ns */
 #define QUEUE_FLAG_HCTX_ACTIVE	28	/* at least one blk-mq hctx is active */
 #define QUEUE_FLAG_NOWAIT       29	/* device supports NOWAIT */
-
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+#define QUEUE_FLAG_RESERVE	30	/* internal device */
+#endif
+#ifdef CONFIG_DEVICE_XCOPY
+#define QUEUE_FLAG_DEVICE_COPY  32	/* device supports data copy */
+#endif
 #define QUEUE_FLAG_MQ_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_SAME_COMP) |		\
 				 (1 << QUEUE_FLAG_NOWAIT))
@@ -687,6 +700,12 @@ bool blk_queue_flag_test_and_set(unsigned int flag, struct request_queue *q);
 #define blk_queue_fua(q)	test_bit(QUEUE_FLAG_FUA, &(q)->queue_flags)
 #define blk_queue_registered(q)	test_bit(QUEUE_FLAG_REGISTERED, &(q)->queue_flags)
 #define blk_queue_nowait(q)	test_bit(QUEUE_FLAG_NOWAIT, &(q)->queue_flags)
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+#define blk_queue_reserve_device(q)	test_bit(QUEUE_FLAG_RESERVE, &(q)->queue_flags)
+#endif
+#ifdef CONFIG_DEVICE_XCOPY
+#define blk_queue_device_copy(q)	test_bit(QUEUE_FLAG_DEVICE_COPY, &(q)->queue_flags)
+#endif
 
 extern void blk_set_pm_only(struct request_queue *q);
 extern void blk_clear_pm_only(struct request_queue *q);
@@ -822,6 +841,11 @@ static inline bool rq_mergeable(struct request *rq)
 	if (req_op(rq) == REQ_OP_WRITE_ZEROES)
 		return false;
 
+#ifdef CONFIG_DEVICE_XCOPY
+	if (req_op(rq) == REQ_OP_DEVICE_COPY)
+		return false;
+#endif
+
 	if (req_op(rq) == REQ_OP_ZONE_APPEND)
 		return false;
 
@@ -867,6 +891,18 @@ extern unsigned long blk_max_low_pfn, blk_max_pfn;
 #endif
 #define BLK_BOUNCE_ANY		(-1ULL)
 #define BLK_BOUNCE_ISA		(DMA_BIT_MASK(24))
+
+#ifdef CONFIG_DEVICE_XCOPY
+struct para_limit {
+       unsigned int            max_copy_blks;
+       unsigned int            min_copy_blks;
+       unsigned int            max_copy_entr;
+};
+
+struct dev_copy_box {
+       unsigned char dev_copy_idn;
+};
+#endif
 
 /*
  * default timeout for SG_IO if none specified
@@ -987,6 +1023,10 @@ static inline struct request_queue *bdev_get_queue(struct block_device *bdev)
 #define SECTOR_SIZE (1 << SECTOR_SHIFT)
 #endif
 
+#ifdef CONFIG_DEVICE_XCOPY
+#define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - SECTOR_SHIFT)
+#endif
+
 /*
  * blk_rq_pos()			: the current sector
  * blk_rq_bytes()		: bytes left in the entire request
@@ -1068,9 +1108,33 @@ static inline struct bio_vec req_bvec(struct request *rq)
 	return mp_bvec_iter_bvec(rq->bio->bi_io_vec, rq->bio->bi_iter);
 }
 
+#ifdef CONFIG_DEVICE_XCOPY
+static inline int blk_max_device_xcopy_cnt(struct blk_copy_payload *payload)
+{
+    block_t *tail = payload->src_addr;
+    int xcopy_cnt = 0;
+
+    while (*tail) {
+            ++tail;
+            xcopy_cnt = tail - payload->src_addr;
+            if (xcopy_cnt >= BLK_MAX_COPY_RANGE)
+                    break;
+    }
+
+	return xcopy_cnt;
+}
+#endif
+
 static inline unsigned int blk_queue_get_max_sectors(struct request_queue *q,
 						     int op)
 {
+#ifdef CONFIG_DEVICE_XCOPY
+	struct para_limit *limits = (struct para_limit *) q->limits.android_kabi_reserved1;
+
+	if (unlikely(op == REQ_OP_DEVICE_COPY))
+		return limits->max_copy_entr;
+#endif
+
 	if (unlikely(op == REQ_OP_DISCARD || op == REQ_OP_SECURE_ERASE))
 		return min(q->limits.max_discard_sectors,
 			   UINT_MAX >> SECTOR_SHIFT);

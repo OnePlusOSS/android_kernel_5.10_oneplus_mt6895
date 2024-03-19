@@ -427,7 +427,7 @@ static const struct rdma_data mt6879_rdma_data = {
 };
 
 static const struct rdma_data mt6895_rdma0_data = {
-	.tile_width = 1344,
+	.tile_width = 1320,
 	.rb_swap = 1,
 	.write_sec_reg = true,
 	.golden = {

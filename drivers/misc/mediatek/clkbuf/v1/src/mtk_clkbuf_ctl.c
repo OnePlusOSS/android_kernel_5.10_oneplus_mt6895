@@ -62,6 +62,35 @@ int clk_buf_hw_ctrl(const char *xo_name, bool onoff)
 }
 EXPORT_SYMBOL(clk_buf_hw_ctrl);
 
+
+int clk_buf_set_voter_by_name(const char *xo_name, const char *voter)
+{
+	int id, ret = 0;
+
+	if (!clkbuf_ctl.init_done) {
+		pr_notice("clkbuf HW not init yet\n");
+		return -ENODEV;
+	}
+
+	id = clkbuf_dcxo_get_xo_id_by_name(xo_name);
+	if (id < 0) {
+		pr_notice("xo name: %s not found, err: %d\n", xo_name, id);
+		return id;
+	}
+
+	if (id == 0) {
+		pr_notice("xo %s is invalid for control!!\n", xo_name);
+		return id;
+	}
+
+	ret = clkbuf_dcxo_pmic_store("DCXO", xo_name, "EN_BB");
+
+	ret |= clkbuf_dcxo_pmic_store("XO_VOTER", xo_name, voter);
+
+	return ret;
+}
+EXPORT_SYMBOL(clk_buf_set_voter_by_name);
+
 static ssize_t __clk_buf_dump_xo_en_sta(char *buf)
 {
 	u32 mode = 0;
@@ -162,7 +191,7 @@ static ssize_t __clk_buf_dump_bblpm_info(char *buf)
 		return len;
 
 	len += snprintf(buf + len, PAGE_SIZE - len,
-			"bblpm_state: %u\n", val);
+			"bblpm_state: %u ", val);
 
 	return len;
 }

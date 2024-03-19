@@ -117,8 +117,13 @@ def main(**args):
         print 'Please check whether ' + project_defconfig + ' defined CONFIG_BUILD_CONFIG_FILE.'
         sys.exit(2)
 
-    file_text.append("PATH=${ROOT_DIR}/../prebuilts/perl/linux-x86/bin:${ROOT_DIR}/build/build-tools/path/linux-x86:/usr/bin:/bin")
-    file_text.append("MAKE_GOALS=\"all\"")
+    file_text.append("PATH=${ROOT_DIR}/../prebuilts/perl/linux-x86/bin:${ROOT_DIR}/prebuilts/kernel-build-tools/linux-x86/bin:/usr/bin:/bin:$PATH")
+    file_text.append("HERMETIC_TOOLCHAIN=")
+    file_text.append("DTC='${OUT_DIR}/scripts/dtc/dtc'")
+    file_text.append("DEPMOD=")
+    file_text.append("MAKE_GOALS=\"${MAKE_GOALS}")
+    file_text.append("all")
+    file_text.append("\"")
     file_text.append("TRIM_NONLISTED_KMI=")
     file_text.append("KMI_SYMBOL_LIST_STRICT_MODE=")
     file_text.append("MODULES_ORDER=")
@@ -139,6 +144,7 @@ def main(**args):
         rel_kernel_path = 'REL_KERNEL_PATH=`./${KERNEL_DIR}/scripts/get_rel_path.sh ${ROOT_DIR} %s`' % (kernel_dir)
         file_text.append(rel_kernel_path)
         all_defconfig = '%s ../../../${REL_KERNEL_PATH}/${OUT_DIR}/%s.config %s %s' % (special_defconfig, project, kernel_defconfig_overlays, mode_config)
+        print 'all_defconfig is ' + all_defconfig
         pre_defconfig_cmds = 'PRE_DEFCONFIG_CMDS=\"cp -p ${KERNEL_DIR}/%s/%s ${OUT_DIR}/%s.config\"' % (defconfig_dir, project_defconfig_name, project)
     all_defconfig = 'DEFCONFIG=\"%s\"' % (all_defconfig.strip())
     file_text.append(all_defconfig)
