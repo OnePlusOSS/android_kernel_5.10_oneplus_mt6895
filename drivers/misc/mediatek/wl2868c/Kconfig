@@ -1,0 +1,13 @@
+config MTK_CAMERA_LDO
+	tristate "Mediatek camera ldo driver"
+	default n
+	help
+	  This is CAMERA ldo driver.
+
+config REGULATOR_OPLUS_WL2868C_FP_LDO
+	bool "Fingerprint uses LDO of WL2868C"
+	depends on MTK_CAMERA_LDO
+	default n
+	help
+	  Say Y here to agree that the fingerprint supports the
+	  WL2868C PMIC chip.

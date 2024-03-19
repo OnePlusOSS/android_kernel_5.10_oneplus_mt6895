@@ -27,6 +27,12 @@ struct sugov_tunables {
 	struct gov_attr_set	attr_set;
 	unsigned int		up_rate_limit_us;
 	unsigned int		down_rate_limit_us;
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+	spinlock_t		target_loads_lock;
+	unsigned int		*target_loads;
+	unsigned int 		*util_loads;
+	int			ntarget_loads;
+#endif
 };
 
 struct sugov_policy {
@@ -42,7 +48,9 @@ struct sugov_policy {
 	s64			down_rate_delay_ns;
 	unsigned int		next_freq;
 	unsigned int		cached_raw_freq;
-
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+	unsigned int len;
+#endif
 	/* The next fields are only needed if fast switch cannot be used: */
 	struct			irq_work irq_work;
 	struct			kthread_work work;
@@ -53,6 +61,12 @@ struct sugov_policy {
 
 	bool			limits_changed;
 	bool			need_freq_update;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	unsigned int	flags;
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_CPUFREQ_IOWAIT_PROTECT)
+	u64			last_update;
+#endif
 };
 
 #if IS_ENABLED(CONFIG_MTK_OPP_CAP_INFO)
@@ -65,6 +79,12 @@ void mtk_arch_set_freq_scale(void *data, const struct cpumask *cpus,
 extern int set_sched_capacity_margin_dvfs(unsigned int capacity_margin);
 extern unsigned int get_sched_capacity_margin_dvfs(void);
 #endif
+#endif
+
+#ifdef CONFIG_SCHEDUTIL_USE_TL
+extern unsigned int cpufreq_get_cpu_freq(int cpu, int idx);
+extern unsigned int choose_util(struct sugov_policy *sg_policy, unsigned int util);
+extern unsigned int get_nr_caps(int cluster_id);
 #endif
 
 extern unsigned long pd_get_opp_capacity(int cpu, int opp);

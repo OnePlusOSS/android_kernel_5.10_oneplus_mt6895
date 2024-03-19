@@ -142,17 +142,19 @@ static int pd_tcp_notifier_call(struct notifier_block *nb,
 			typec_set_data_role(rpmd->typec_port, TYPEC_HOST);
 			typec_set_pwr_role(rpmd->typec_port, TYPEC_SOURCE);
 			switch (noti->typec_state.local_rp_level) {
-			case TYPEC_CC_RP_3_0:
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+			case TYPEC_RP_3_0:
 				opmode = TYPEC_PWR_MODE_3_0A;
 				break;
-			case TYPEC_CC_RP_1_5:
+			case TYPEC_RP_1_5:
 				opmode = TYPEC_PWR_MODE_1_5A;
 				break;
-			case TYPEC_CC_RP_DFT:
+			case TYPEC_RP_DFT:
 			default:
 				opmode = TYPEC_PWR_MODE_USB;
 				break;
 			}
+/*endif*/
 			typec_set_pwr_opmode(rpmd->typec_port, opmode);
 			typec_set_vconn_role(rpmd->typec_port, TYPEC_SOURCE);
 			/* set typec switch orientation */
@@ -607,7 +609,7 @@ static int rt_pd_manager_probe(struct platform_device *pdev)
 		ret = -ENODEV;
 		goto err_get_chg_dev;
 	}
-
+#ifndef CONFIG_OPLUS_CHARGER_MTK6789S
 #if CONFIG_WATER_DETECTION
 	rpmd->chg_psy = power_supply_get_by_name("mtk-master-charger");
 	if (!rpmd->chg_psy) {
@@ -616,6 +618,7 @@ static int rt_pd_manager_probe(struct platform_device *pdev)
 		goto err_get_chg_psy;
 	}
 #endif /* CONFIG_WATER_DETECTION */
+#endif
 #endif /* CONFIG_MTK_CHARGER */
 
 	rpmd->tcpc = tcpc_dev_get_by_name("type_c_port0");
@@ -664,10 +667,12 @@ err_reg_tcpc_notifier:
 err_init_typec:
 err_get_tcpc_dev:
 #if IS_ENABLED(CONFIG_MTK_CHARGER)
+#ifndef CONFIG_OPLUS_CHARGER_MTK6789S
 #if CONFIG_WATER_DETECTION
 	power_supply_put(rpmd->chg_psy);
 err_get_chg_psy:
 #endif /* CONFIG_WATER_DETECTION */
+#endif
 err_get_chg_dev:
 #endif /* CONFIG_MTK_CHARGER */
 	return ret;

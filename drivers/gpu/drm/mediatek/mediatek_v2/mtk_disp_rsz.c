@@ -257,7 +257,11 @@ static void mtk_rsz_addon_config(struct mtk_ddp_comp *comp,
 	struct mtk_addon_rsz_config config = addon_config->addon_rsz_config;
 	struct mtk_rsz_config_struct *rsz_config = NULL;
 	struct mtk_disp_rsz *rsz = comp_to_rsz(comp);
-	enum mtk_rsz_color_format fmt = RGB888;
+	/*ifdef OPLUS_FEATURE_DISPLAY*/
+	enum mtk_rsz_color_format fmt = ARGB8101010;
+	/*#else*/
+	/*enum mtk_rsz_color_format fmt = RGB888;*/
+	/*#endif*/
 	bool tile_mode = false;
 	u32 reg_val = 0;
 	u32 tile_idx = 0;
@@ -622,7 +626,7 @@ static const struct mtk_disp_rsz_data mt6855_rsz_driver_data = {
 };
 
 static const struct mtk_disp_rsz_data mt6983_rsz_driver_data = {
-	.tile_length = 1440, .in_max_height = 4096,
+	.tile_length = 1668, .in_max_height = 4096,
 	.support_shadow = false,
 	.need_bypass_shadow = true,
 };

@@ -7036,7 +7036,12 @@ static signed int DIP_release(
 #else
 	wake_lock(&dip_wake_lock);
 #endif
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	DIP_EnableClock(MFALSE);
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	if (G_u4DipEnClkCnt > 0)
+		DIP_EnableClock(MFALSE);
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 #ifdef CONFIG_PM_WAKELOCKS
 	__pm_relax(dip_wake_lock);
 #else
@@ -8790,7 +8795,12 @@ int32_t DIP_MDPResetCallback(uint64_t engineFlag)
 int32_t DIP_MDPClockOffCallback(uint64_t engineFlag)
 {
 	/* LOG_DBG("DIP_MDPClockOffCallback"); */
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	DIP_EnableClock(MFALSE);
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+	if (G_u4DipEnClkCnt > 0)
+		DIP_EnableClock(MFALSE);
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 #ifdef CONFIG_PM_WAKELOCKS
 		__pm_relax(isp_mdp_wake_lock);
 #else

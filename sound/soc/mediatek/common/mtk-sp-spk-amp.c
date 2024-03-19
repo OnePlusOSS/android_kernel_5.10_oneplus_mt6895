@@ -42,7 +42,12 @@
 #define MTK_SPK_NAME "Speaker Codec"
 #define MTK_SPK_REF_NAME "Speaker Codec Ref"
 
+#if IS_ENABLED(CONFIG_SND_SOC_SIA81XX)
 static unsigned int mtk_spk_type;
+#else
+static unsigned int mtk_spk_type = MTK_SPK_GOODIX_TFA98XX;
+#endif
+
 static int mtk_spk_i2s_out = MTK_SPK_I2S_3, mtk_spk_i2s_in = MTK_SPK_I2S_0;
 static unsigned int mtk_spk_out_ch;
 static struct mtk_spk_i2c_ctrl mtk_spk_list[MTK_SPK_TYPE_NUM] = {

@@ -146,7 +146,62 @@
 
 #define MTK_DDP_COMP_USER "DISP"
 
+#if defined(CONFIG_PXLW_IRIS)
+int mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
+		   unsigned int offset, void *handle)
+{
+	int ret = 0;
+#ifndef DRM_CMDQ_DISABLE
+	ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		       comp->regs_pa + offset, value, ~0);
+	if (ret < 0)
+		DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+				__func__, __LINE__, ret);
+#else
+	writel(value, comp->regs + offset);
+#endif
+	return ret;
+}
 
+int mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
+			   unsigned int offset, void *handle)
+{
+	int ret = 0;
+#ifndef DRM_CMDQ_DISABLE
+	if (handle) {
+		ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		       comp->regs_pa + offset, value, ~0);
+		if (ret < 0)
+			DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+					__func__, __LINE__, ret);
+		return ret;
+	}
+#endif
+	writel_relaxed(value, comp->regs + offset);
+	return ret;
+}
+
+int mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
+			unsigned int offset, unsigned int mask, void *handle)
+{
+	int ret = 0;
+	unsigned int tmp;
+#ifndef DRM_CMDQ_DISABLE
+	if(handle) {
+		ret = cmdq_pkt_write((struct cmdq_pkt *)handle, comp->cmdq_base,
+		    comp->regs_pa + offset, value, mask);
+		if (ret < 0)
+		DDPPR_ERR("%s:%d, cmdq error! ret:%d\n",
+				__func__, __LINE__, ret);
+		return ret;
+	}
+#endif
+	tmp = readl(comp->regs + offset);
+	tmp = (tmp & ~mask) | (value & mask);
+	writel(tmp, comp->regs + offset);
+	return ret;
+}
+#else
 void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 		   unsigned int offset, void *handle)
 {
@@ -158,6 +213,7 @@ void mtk_ddp_write(struct mtk_ddp_comp *comp, unsigned int value,
 #endif
 }
 
+//#ifdef OPLUS_ADFR
 void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 			   unsigned int offset, void *handle)
 {
@@ -171,6 +227,7 @@ void mtk_ddp_write_relaxed(struct mtk_ddp_comp *comp, unsigned int value,
 	writel_relaxed(value, comp->regs + offset);
 
 }
+//#endif
 
 void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 			unsigned int offset, unsigned int mask, void *handle)
@@ -188,6 +245,7 @@ void mtk_ddp_write_mask(struct mtk_ddp_comp *comp, unsigned int value,
 	tmp = (tmp & ~mask) | (value & mask);
 	writel(tmp, comp->regs + offset);
 }
+#endif /* CONFIG_PXLW_IRIS */
 
 void mtk_ddp_write_mask_cpu(struct mtk_ddp_comp *comp,
 	unsigned int value, unsigned int offset, unsigned int mask)
@@ -614,6 +672,14 @@ int mtk_ddp_comp_get_type(enum mtk_ddp_comp_id comp_id)
 	return mtk_ddp_matches[comp_id].type;
 }
 
+int mtk_ddp_comp_get_alias(enum mtk_ddp_comp_id comp_id)
+{
+	if (comp_id >= DDP_COMPONENT_ID_MAX)
+		return -EINVAL;
+
+	return mtk_ddp_matches[comp_id].alias_id;
+}
+
 static bool mtk_drm_find_comp_in_ddp(struct mtk_ddp_comp ddp_comp,
 				     const struct mtk_crtc_path_data *path_data)
 {
@@ -950,7 +1016,7 @@ void mtk_ddp_comp_clk_unprepare(struct mtk_ddp_comp *comp)
 
 	if (comp->clk)
 		clk_disable_unprepare(comp->clk);
-	DDPMSG("%s: comp %d unprepare done\n", __func__, comp->id);
+	DDPINFO("%s: comp %d unprepare done\n", __func__, comp->id);
 
 	if (comp->larb_dev)
 #ifdef MTK_SMI_CLK_CTRL

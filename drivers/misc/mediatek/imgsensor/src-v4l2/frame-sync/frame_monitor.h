@@ -17,10 +17,13 @@
 #define CCU_CAM_TG_MAX 4
 
 /* Sync To: "ccu_platform.h" */
-#define CAMSV_MAX       (10)
+#define CAMSV_MAX       (16)
 #define CAMSV_TG_MIN    (5)
 #define CAMSV_TG_MAX    (CAMSV_TG_MIN+CAMSV_MAX)
-#define FM_TG_CNT       (CAMSV_TG_MAX)
+#define MRAW_MAX        (4)
+#define MRAW_TG_MIN     (24)
+#define MRAW_TG_MAX     (MRAW_TG_MIN+MRAW_MAX)
+#define FM_TG_CNT       (MRAW_TG_MAX)
 
 
 /* for per sensor */
@@ -34,7 +37,8 @@ struct vsync_time {
 
 /* for per Rproc IPC send */
 /* TODO : add a general param for array size, and sync this for fs, algo, fm */
-#define TG_MAX_NUM (CCU_CAM_TG_MAX - CCU_CAM_TG_MIN)
+// #define TG_MAX_NUM (CCU_CAM_TG_MAX - CCU_CAM_TG_MIN)
+#define TG_MAX_NUM (6)
 struct vsync_rec {
 	unsigned int ids;
 	unsigned int cur_tick;
@@ -59,7 +63,7 @@ void frm_power_on_ccu(unsigned int flag);
 
 void frm_reset_ccu_vsync_timestamp(unsigned int idx, unsigned int en);
 
-unsigned int frm_get_ccu_pwn_cnt(void);
+int frm_get_ccu_pwn_cnt(void);
 #endif
 
 
@@ -70,6 +74,7 @@ void frm_init_frame_info_st_data(
 void frm_reset_frame_info(unsigned int idx);
 
 unsigned int frm_convert_cammux_tg_to_ccu_tg(unsigned int tg);
+unsigned int frm_convert_cammux_id_to_ccu_tg_id(unsigned int cammux_id);
 
 void frm_update_tg(unsigned int idx, unsigned int tg);
 
@@ -97,9 +102,6 @@ void frm_get_curr_frame_mesurement_and_ts_data(
 	unsigned int *p_act_fl_us, unsigned int *p_ts_arr);
 
 
-int frm_timestamp_checker(unsigned int m_tg, unsigned int s_tg);
-
-
 #ifdef FS_UT
 /*******************************************************************************
  * !!! please only use bellow function on software debug or ut_test !!!
@@ -113,6 +115,10 @@ void frm_update_next_vts_bias_us(unsigned int idx, unsigned int vts_bias);
 
 void frm_set_sensor_curr_fl_us(unsigned int idx, unsigned int fl_us);
 
+void frm_update_predicted_fl_us(
+	unsigned int idx,
+	unsigned int curr_fl_us, unsigned int next_fl_us);
+
 unsigned int frm_get_predicted_curr_fl_us(unsigned int idx);
 
 void frm_get_predicted_fl_us(
@@ -120,6 +126,8 @@ void frm_get_predicted_fl_us(
 	unsigned int fl_us[], unsigned int *sensor_curr_fl_us);
 
 void frm_get_next_vts_bias_us(unsigned int idx, unsigned int *vts_bias);
+
+void frm_debug_copy_frame_info_vsync_rec_data(struct vsync_rec *p_vsync_res);
 
 void frm_debug_set_last_vsync_data(struct vsync_rec *v_rec);
 #endif // FS_UT

@@ -34,6 +34,10 @@
 #include "mtk_heap_priv.h"
 #include "mtk_heap.h"
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
+#include "oplus_boostpool/oplus_boost_pool.h"
+#endif
+
 static struct dma_heap *mtk_mm_heap;
 static struct dma_heap *mtk_mm_uncached_heap;
 
@@ -64,7 +68,7 @@ struct mtk_mm_heap_buffer {
 				| __GFP_NORETRY) & ~__GFP_RECLAIM) \
 				| __GFP_COMP)
 #define LOW_ORDER_GFP (GFP_HIGHUSER | __GFP_ZERO | __GFP_COMP)
-static gfp_t order_flags[] = {HIGH_ORDER_GFP, LOW_ORDER_GFP, LOW_ORDER_GFP};
+static gfp_t order_flags[] = {HIGH_ORDER_GFP, HIGH_ORDER_GFP, LOW_ORDER_GFP};
 /*
  * The selection of the orders used for allocation (1MB, 64K, 4K) is designed
  * to match with the sizes often found in IOMMUs. Using order 4 pages instead
@@ -74,6 +78,10 @@ static gfp_t order_flags[] = {HIGH_ORDER_GFP, LOW_ORDER_GFP, LOW_ORDER_GFP};
 static const unsigned int orders[] = {8, 4, 0};
 #define NUM_ORDERS ARRAY_SIZE(orders)
 struct dmabuf_page_pool *pools[NUM_ORDERS];
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
+struct dynamic_boost_pool *camera_boost_pool = NULL;
+#endif
 
 static struct sg_table *dup_sg_table(struct sg_table *table)
 {
@@ -475,6 +483,12 @@ static void mtk_mm_heap_buf_free(struct deferred_freelist_item *item,
 				if (compound_order(page) == orders[j])
 					break;
 			}
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
+		if (0 == dynamic_boost_pool_free(camera_boost_pool, page, j))
+			continue;
+		else
+#endif
 			dmabuf_page_pool_free(pools[j], page);
 		}
 	}
@@ -574,6 +588,13 @@ static struct dma_buf *mtk_mm_heap_do_allocate(struct dma_heap *heap,
 	int i, ret = -ENOMEM;
 	struct task_struct *task = current->group_leader;
 
+	if (len >= SZ_1G)
+		pr_warn("%s mtk_mm_heap allocate %lu >= sz_1g size\n",
+			current->comm, len);
+
+	if (len / PAGE_SIZE > totalram_pages() / 2)
+		return ERR_PTR(-ENOMEM);
+
 	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
 	if (!buffer)
 		return ERR_PTR(-ENOMEM);
@@ -586,6 +607,11 @@ static struct dma_buf *mtk_mm_heap_do_allocate(struct dma_heap *heap,
 
 	INIT_LIST_HEAD(&pages);
 	i = 0;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
+	dynamic_boost_pool_alloc_pack(camera_boost_pool, &size_remaining, &max_order, &pages, &i);
+#endif
+
 	while (size_remaining > 0) {
 		/*
 		 * Avoid trying to allocate memory if the process
@@ -793,6 +819,10 @@ static int mtk_mm_heap_create(void)
 			return -ENOMEM;
 		}
 	}
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
+	camera_boost_pool = dynamic_boost_pool_create_pack();
+#endif
 
 	exp_info.name = "mtk_mm";
 	exp_info.ops = &mtk_mm_heap_ops;

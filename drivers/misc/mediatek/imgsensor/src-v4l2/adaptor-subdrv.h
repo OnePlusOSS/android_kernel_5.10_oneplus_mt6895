@@ -108,6 +108,14 @@ struct subdrv_ctx {
 	bool is_streaming;
 	u32 sof_cnt;
 	u32 ref_sof_cnt;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	bool is_esd_enable;
+
+	u16 *aonhemd_setting_table;
+	u32 aonhemd_setting_len;
+	u16 *aonhemd_clear_setting_table;
+	u32 aonhemd_clear_setting_len;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 };
 
 struct subdrv_ops {
@@ -135,7 +143,9 @@ struct subdrv_ops {
 			struct mtk_mbus_frame_desc *fd);
 	int (*get_temp)(struct subdrv_ctx *ctx, int *temp);
 	int (*vsync_notify)(struct subdrv_ctx *ctx, unsigned int sof_cnt);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
 	int (*update_sof_cnt)(struct subdrv_ctx *ctx, unsigned int sof_cnt);
+#endif
 	int (*get_csi_param)(struct subdrv_ctx *ctx,
 		enum SENSOR_SCENARIO_ID_ENUM scenario_id,
 		struct mtk_csi_param *csi_param);
@@ -150,6 +160,12 @@ struct subdrv_entry {
 	const struct subdrv_pw_seq_entry *pw_seq;
 	const struct subdrv_ops *ops;
 	int pw_seq_cnt;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	const struct subdrv_pw_seq_entry *aon_pw_seq;
+	int aon_pw_seq_cnt;
+	const struct subdrv_pw_seq_entry *pw_off_seq;
+	int pw_off_seq_cnt;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 };
 
 #define subdrv_call(ctx, o, args...) \
@@ -164,6 +180,22 @@ struct subdrv_entry {
 		__ret = __ctx->subdrv->ops->o(&ctx->subctx, ##args); \
 	__ret; \
 })
+
+#define gc02m1_subdrv_i2c_rd_u8_u8(subctx, reg) \
+({ \
+	u8 __val = 0xff; \
+	gc02m1_adaptor_i2c_rd_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, &__val); \
+	__val; \
+})
+
+#define gc02m1_subdrv_i2c_wr_u8_u8(subctx, reg, val) \
+	gc02m1_adaptor_i2c_wr_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, val)
+
+#define gc02m1_subdrv_i2c_wr_regs_u8(subctx, list, len) \
+	gc02m1_adaptor_i2c_wr_regs_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, list, len)
 
 #define subdrv_i2c_rd_u8(subctx, reg) \
 ({ \
@@ -229,5 +261,66 @@ struct subdrv_entry {
 	(_shutter) : \
 	(((_shutter) > (_fine_integ)) ? (((_shutter) - (_fine_integ)) / 1000) : 0) \
 )
+
+#define subdrv_i2c_rd_u8_u8(subctx, reg) \
+({ \
+	u8 __val = 0xff; \
+	adaptor_i2c_rd_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, &__val); \
+	__val; \
+})
+
+#define subdrv_i2c_wr_u8_u8(subctx, reg, val) \
+	adaptor_i2c_wr_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, reg, val)
+
+#define subdrv_i2c_wr_regs_u8_u8(subctx, list, len) \
+	adaptor_i2c_wr_regs_u8_u8(subctx->i2c_client, \
+		subctx->i2c_write_id >> 1, list, len)
+
+#define CALC_LINE_TIME_IN_NS(pclk, linelength) \
+({ \
+	unsigned int val = 0; \
+	do { \
+		if (((pclk) / 1000) == 0) { \
+			val = 0; \
+			break; \
+		} \
+		val = \
+			((unsigned long long)(linelength)*1000000+(((pclk)/1000)-1)) \
+			/((pclk)/1000); \
+	} while (0); \
+	val; \
+})
+
+#define CONVERT_2_TOTAL_TIME(lineTimeInNs, lc) \
+({ \
+	unsigned int val = 0; \
+	do { \
+		if ((lineTimeInNs) == 0) { \
+			val = 0; \
+			break; \
+		} \
+		val = \
+			(unsigned int)((unsigned long long)(lc)*(lineTimeInNs)/1000); \
+	} while (0); \
+	val; \
+})
+
+#define CONVERT_2_TOTAL_TIME_V2(pclk, linelength, lc) \
+({ \
+	unsigned int val = 0; \
+	unsigned int lineTimeInNs = 0; \
+	lineTimeInNs = CALC_LINE_TIME_IN_NS((pclk), (linelength)); \
+	do { \
+		if ((lineTimeInNs) == 0) { \
+			val = 0; \
+			break; \
+		} \
+		val = \
+			(unsigned int)((unsigned long long)(lc)*(lineTimeInNs)/1000); \
+	} while (0); \
+	val; \
+})
 
 #endif

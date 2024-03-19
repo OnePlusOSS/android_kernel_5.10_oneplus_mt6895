@@ -29,7 +29,14 @@ config MTK_DRE30_SUPPORT
 	  Decide whether to support ambient-light adaptive luma and
 	  display visual enhancement ver.3.
 	  This feature requires the cowork of AAL user-space algorithm process.
-
+config MTK_ROUND_CORNER_SUPPORT
+        bool "enable medietak display round corner"
+        default n
+        help
+          define CONFIG_MTK_ROUND_CORNER_SUPPORT to enable Mediatek Round Corner on display.
+          If you want to use Meditek Round Corner on display, please make sure it is Y in xxx_defconfig.mk.
+          This feature require round corner pattern provided in lcm driver folder.
+          If unsure, set N.
 config MTK_DISP_LOGGER
 	bool "Default enable display logger function"
 	help
@@ -49,6 +56,11 @@ config MTK_RECU_FENCE_LOCK
 	  limitation. So the option will control whether display run
 	  workaround flow.
 
+config PXLW_IRIS
+	bool "Insert extra checks and debug info into the DRM range managers"
+	default n
+	depends on DRM=y
+	depends on STACKTRACE_SUPPORT
 config MTK_FB_MMDVFS_SUPPORT
        bool "No HRT hardware is required to support MMDVFS"
        help

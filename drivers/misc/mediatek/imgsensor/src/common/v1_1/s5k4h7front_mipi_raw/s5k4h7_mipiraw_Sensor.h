@@ -86,7 +86,6 @@ struct imgsensor_struct {
 struct imgsensor_info_struct {
 	kal_uint16 sensor_id;	//record sensor id defined in Kd_imgsensor.h
 	//#ifdef VENDOR_EDIT
-	/*Zhenagjiang.zhu@camera.drv 2017/10/18,modify for different module */
 	kal_uint16 module_id;
 	//#endif
 	kal_uint32 checksum_value;	//checksum value for Camera Auto Test

@@ -11,7 +11,6 @@
 #include <linux/mutex.h>
 #include <linux/of_address.h>
 #include <linux/of_device.h>
-#include <linux/namei.h>
 #include "vdec_fmt_driver.h"
 #include "vdec_fmt_dmabuf.h"
 #include "vdec_fmt_pm.h"
@@ -142,6 +141,81 @@ static void fmt_clear_gce_task(unsigned int taskid)
 		fmt_dmabuf_put(fmt->gce_task[taskid].oinfo.dbuf);
 	}
 	mutex_unlock(&fmt->mux_task);
+}
+
+void cmdq_usage_cb_func(u32 thd_id){
+	struct mtk_vdec_fmt *fmt = fmt_mtkdev;
+
+	fmt_debug(0, "thd:%d", thd_id);
+	queue_work(fmt->cmdq_cb_workqueue, &fmt->cmdq_cb_work);
+}
+
+static void fmt_active_resource_time_check(struct work_struct *work)
+{
+	int i;
+	struct mtk_vdec_fmt *fmt = fmt_mtkdev;
+	struct timespec64 curr_time, time_diff;
+	int cmdq_ret;
+	bool task_pending = false;
+
+	mutex_lock(&fmt->mux_active_time);
+	ktime_get_real_ts64(&curr_time);
+	fmt_debug(0, "curr time s %ld ns %ld last active time s %ld ns %ld ",
+		curr_time.tv_sec, curr_time.tv_nsec,
+		fmt->fmt_active_time.tv_sec, fmt->fmt_active_time.tv_nsec);
+
+	time_diff = timespec64_sub(curr_time, fmt->fmt_active_time);
+	fmt_debug(0, "time_diff tv_sec %ld tv_nsec %ld",
+		time_diff.tv_sec, time_diff.tv_nsec);
+
+	if (time_diff.tv_sec > 10) {
+		fmt_debug(0, "fmt not activate too long, release resource");
+		for (i = 0; i < FMT_INST_MAX; i++) {
+			if (fmt->gce_task[i].used == 1 && fmt->gce_task[i].pkt_ptr != NULL) {
+				fmt_debug(0, "clear active taskid %d pkt_ptr %p",
+					i, fmt->gce_task[i].pkt_ptr);
+					if (cmdq_pkt_is_exec(fmt->gce_task[i].pkt_ptr)) {
+						fmt_debug(0, "pkt is executing taskid %d pkt_ptr %p",
+						i, fmt->gce_task[i].pkt_ptr);
+						ktime_get_real_ts64(&fmt->fmt_active_time);
+						mutex_unlock(&fmt->mux_active_time);
+						return;
+					}
+				task_pending = true;
+				cmdq_pkt_destroy(fmt->gce_task[i].pkt_ptr);
+				fmt->gce_task[i].used = 0;
+				fmt->gce_task[i].pkt_ptr = NULL;
+				fmt->gce_task[i].identifier = 0;
+				fmt_dmabuf_free_iova(fmt->gce_task[i].iinfo.dbuf,
+				fmt->gce_task[i].iinfo.attach, fmt->gce_task[i].iinfo.sgt);
+				fmt_dmabuf_free_iova(fmt->gce_task[i].oinfo.dbuf,
+				fmt->gce_task[i].oinfo.attach, fmt->gce_task[i].oinfo.sgt);
+				fmt_dmabuf_put(fmt->gce_task[i].iinfo.dbuf);
+				fmt_dmabuf_put(fmt->gce_task[i].oinfo.dbuf);
+			}
+		}
+		fmt_debug(0, "task_pending %d", task_pending);
+		if (task_pending) {
+			ktime_get_real_ts64(&fmt->fmt_active_time);
+			for (i = 0; i < fmt->gce_th_num; i++) {
+				while (atomic_read(&fmt->gce_job_cnt[i]) > 0) {
+					fmt_debug(0, "gce_job_cnt %d: %d", i,
+						atomic_read(&fmt->gce_job_cnt[i]));
+					atomic_dec(&fmt->gce_job_cnt[i]);
+				}
+				fmt_end_dvfs_emi_bw(fmt, i);
+			}
+			fmt_debug(0, "fmt_clock_off");
+			fmt_clock_off(fmt);
+			cmdq_ret = cmdq_mbox_enable(fmt->clt_fmt[0]->chan);
+			fmt_debug(0, "cmdq_mbox_enable cmdq_ret %d", cmdq_ret);
+			while (cmdq_ret > 0) {
+				cmdq_ret = cmdq_mbox_disable(fmt->clt_fmt[0]->chan);
+				fmt_debug(0, "cmdq_mbox_disable cmdq_ret %d", cmdq_ret);
+			}
+		}
+	}
+	mutex_unlock(&fmt->mux_active_time);
 }
 
 static int fmt_set_gce_cmd(struct cmdq_pkt *pkt,
@@ -552,8 +626,11 @@ static int fmt_gce_cmd_flush(unsigned long arg)
 		usleep_range(10000, 20000);
 	}
 
-	mutex_lock(fmt->mux_gce_th[identifier]);
+	mutex_lock(&fmt->mux_active_time);
+	ktime_get_real_ts64(&fmt->fmt_active_time);
+	mutex_unlock(&fmt->mux_active_time);
 
+	mutex_lock(fmt->mux_gce_th[identifier]);
 	while (lock != 0) {
 		lock = fmt_lock(identifier,
 			(bool)buff.secure);
@@ -681,6 +758,11 @@ static int fmt_gce_cmd_flush(unsigned long arg)
 		return ret;
 	}
 
+	if (atomic_read(&fmt->gce_task_wait_cnt[taskid]) > 0) {
+		fmt_err("GCE taskid %d is get but wait cnt incorrect", taskid);
+		atomic_set(&fmt->gce_task_wait_cnt[taskid], 0);
+	}
+
 	memcpy(&fmt->gce_task[taskid].cmdq_buff, &buff, sizeof(buff));
 
 	// flush cmd async
@@ -725,6 +807,10 @@ static int fmt_gce_wait_callback(unsigned long arg)
 		return -EINVAL;
 	}
 
+	mutex_lock(&fmt->mux_active_time);
+	ktime_get_real_ts64(&fmt->fmt_active_time);
+	mutex_unlock(&fmt->mux_active_time);
+
 	identifier = fmt->gce_task[taskid].identifier;
 	if (identifier >= fmt->gce_th_num) {
 		fmt_err("invalid identifier %u",
@@ -732,29 +818,40 @@ static int fmt_gce_wait_callback(unsigned long arg)
 		return -EINVAL;
 	}
 
-	if (IS_ERR_OR_NULL(fmt->gce_task[taskid].pkt_ptr)) {
-		fmt_err("invalid pkt_prt %p", fmt->gce_task[taskid].pkt_ptr);
+	mutex_lock(fmt->mux_cmdq_pkt[identifier]);
+	if (atomic_read(&fmt->gce_task_wait_cnt[taskid]) > 0) {
+		fmt_err("GCE taskid %d is already waiting, wait task cnt %d", taskid,
+			atomic_read(&fmt->gce_task_wait_cnt[taskid]));
+		mutex_unlock(fmt->mux_cmdq_pkt[identifier]);
 		return -EINVAL;
 	}
 
-	if (atomic_read(&fmt->gce_task_wait_cnt[taskid]) > 0) {
-		fmt_err("GCE taskid %d is already waiting", taskid);
+	atomic_inc(&fmt->gce_task_wait_cnt[taskid]);
+	if (IS_ERR_OR_NULL(fmt->gce_task[taskid].pkt_ptr)) {
+		fmt_err("invalid pkt_prt %p", fmt->gce_task[taskid].pkt_ptr);
+		atomic_dec(&fmt->gce_task_wait_cnt[taskid]);
+		mutex_unlock(fmt->mux_cmdq_pkt[identifier]);
 		return -EINVAL;
 	}
-	atomic_inc(&fmt->gce_task_wait_cnt[taskid]);
+
 	ret = cmdq_pkt_wait_complete(fmt->gce_task[taskid].pkt_ptr);
 
 	if (ret != 0L) {
-		fmt_debug(0, "wait before flush, id %d taskid %d pkt_ptr %p",
-		identifier, taskid, fmt->gce_task[taskid].pkt_ptr);
-		return -EINVAL;
+		if (ret == -EINVAL) {
+			fmt_debug(0, "wait before flush, id %d taskid %d pkt_ptr %p",
+			identifier, taskid, fmt->gce_task[taskid].pkt_ptr);
+			atomic_dec(&fmt->gce_task_wait_cnt[taskid]);
+			mutex_unlock(fmt->mux_cmdq_pkt[identifier]);
+			return -EINVAL;
+		} else if (ret == -ETIMEDOUT)
+			fmt_debug(0, "wait timeout, id %d taskid %d pkt_ptr %p",
+			identifier, taskid, fmt->gce_task[taskid].pkt_ptr);
 	}
 
 	if (fmt_dbg_level == 4)
 		fmt_dump_addr_reg();
 
 	mutex_lock(fmt->mux_gce_th[identifier]);
-
 	mutex_lock(&fmt->mux_fmt);
 	atomic_dec(&fmt->gce_job_cnt[identifier]);
 	if ((atomic_read(&fmt->gce_job_cnt[0])
@@ -768,6 +865,10 @@ static int fmt_gce_wait_callback(unsigned long arg)
 			if (ret != 0L) {
 				fmt_err("fmt_clock_off failed!%d",
 				ret);
+				atomic_dec(&fmt->gce_task_wait_cnt[taskid]);
+				mutex_unlock(&fmt->mux_fmt);
+				mutex_unlock(fmt->mux_gce_th[identifier]);
+				mutex_unlock(fmt->mux_cmdq_pkt[identifier]);
 				return -EINVAL;
 			}
 	}
@@ -776,11 +877,12 @@ static int fmt_gce_wait_callback(unsigned long arg)
 		fmt_unlock(identifier);
 
 	mutex_unlock(fmt->mux_gce_th[identifier]);
-
-	cmdq_pkt_destroy(fmt->gce_task[taskid].pkt_ptr);
-	fmt_clear_gce_task(taskid);
-
+	if (fmt->gce_task[taskid].pkt_ptr) {
+		cmdq_pkt_destroy(fmt->gce_task[taskid].pkt_ptr);
+	}
 	atomic_dec(&fmt->gce_task_wait_cnt[taskid]);
+	fmt_clear_gce_task(taskid);
+	mutex_unlock(fmt->mux_cmdq_pkt[identifier]);
 
 	return ret;
 }
@@ -1158,6 +1260,8 @@ static int vdec_fmt_probe(struct platform_device *pdev)
 	if (IS_ERR_OR_NULL(fmt->clt_fmt[0]))
 		goto err_device;
 
+	cmdq_get_usage_cb(fmt->clt_fmt[0]->chan, cmdq_usage_cb_func);
+
 	of_property_read_u16(dev->of_node,
 						"rdma0_sw_rst_done_eng",
 						&fmt->gce_codec_eid[FMT_RDMA0_SW_RST_DONE_ENG]);
@@ -1197,6 +1301,13 @@ static int vdec_fmt_probe(struct platform_device *pdev)
 			goto err_device;
 	}
 
+	for (i = 0; i < (int)FMT_CORE_NUM; i++) {
+		fmt->mux_cmdq_pkt[i] = devm_kzalloc(dev,
+		sizeof(struct mutex), GFP_KERNEL);
+		if (fmt->mux_cmdq_pkt[i] == NULL)
+			goto err_device;
+	}
+
 	for (i = 0; i < GCE_EVENT_MAX; i++)
 		fmt_debug(0, "gce event %d id %d", i, fmt->gce_codec_eid[i]);
 
@@ -1209,9 +1320,19 @@ static int vdec_fmt_probe(struct platform_device *pdev)
 	for (i = 0; i < fmt->gce_th_num; i++) {
 		sema_init(&fmt->fmt_sem[i], 1);
 		mutex_init(fmt->mux_gce_th[i]);
+		mutex_init(fmt->mux_cmdq_pkt[i]);
 	}
 	mutex_init(&fmt->mux_fmt);
 	mutex_init(&fmt->mux_task);
+	mutex_init(&fmt->mux_active_time);
+	fmt->cmdq_cb_workqueue =
+	alloc_ordered_workqueue(VDEC_FMT_DEVNAME,
+			WQ_MEM_RECLAIM | WQ_FREEZABLE);
+	if (!fmt->cmdq_cb_workqueue) {
+		fmt_debug(0, "Failed to create cmdq cb wq");
+		goto err_device;
+	}
+	INIT_WORK(&fmt->cmdq_cb_work, fmt_active_resource_time_check);
 
 	for (i = 0; i < fmt->gce_th_num; i++)
 		fmt->gce_status[i] = GCE_NONE;
@@ -1266,6 +1387,9 @@ static int vdec_fmt_probe(struct platform_device *pdev)
 
 	atomic_set(&fmt->fmt_error, 0);
 
+	for (i = 0; i < FMT_INST_MAX; i++)
+		atomic_set(&fmt->gce_task_wait_cnt[i], 0);
+
 	fmt_debug(0, "initialization completed");
 	return 0;
 
@@ -1289,6 +1413,8 @@ static int vdec_fmt_remove(struct platform_device *pdev)
 {
 	struct mtk_vdec_fmt *fmt = platform_get_drvdata(pdev);
 
+	flush_workqueue(fmt->cmdq_cb_workqueue);
+	destroy_workqueue(fmt->cmdq_cb_workqueue);
 	fmt_unprepare_dvfs_emi_bw();
 	device_destroy(fmt->fmt_class, fmt->fmt_devno);
 	class_destroy(fmt->fmt_class);
@@ -1317,8 +1443,6 @@ static struct platform_driver vdec_fmt_driver = {
 static int __init fmt_init(void)
 {
 	int ret;
-	struct path path;
-	char *pathname = "/dev/fmt_sync";
 
 	fmt_debug(0, "+ fmt init +");
 	ret = platform_driver_register(&vdec_fmt_driver);
@@ -1330,14 +1454,6 @@ static int __init fmt_init(void)
 	ret = fmt_sync_device_init();
 	if (ret != 0)
 		fmt_debug(0, "fmt_sync init failed");
-
-	while (kern_path(pathname, LOOKUP_FOLLOW, &path))
-		NULL;
-
-	fmt_debug(0, "get path success name:%s inode:%lu",
-		path.dentry->d_name.name,
-		path.dentry->d_inode);
-	path_put(&path);
 	fmt_debug(0, "- fmt init -");
 
 	return 0;
@@ -1352,4 +1468,3 @@ module_exit(fmt_exit);
 
 
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);

@@ -27,6 +27,8 @@
 #define CAMSV_EXP_ORDER_SHIFT 20
 #define CAMSV_GROUP_AMOUNT 4
 
+#define CAMSV_CHECK_TS 0
+
 enum mtkcam_sv_hw_path_control {
 	MTKCAM_SV_SPECIAL_SCENARIO_ADDITIONAL_RAW = MTKCAM_IPI_HW_PATH_OFFLINE_M2M + 2,
 	MTKCAM_SV_SPECIAL_SCENARIO_EXT_ISP = MTKCAM_IPI_HW_PATH_OFFLINE_M2M + 3,
@@ -216,6 +218,8 @@ struct mtk_camsv_device {
 	atomic_t is_fifo_overflow;
 
 	unsigned int sof_count;
+	/* preisp used - for sync.*/
+	unsigned int tg_cnt;
 	u64 last_sof_time_ns;
 	unsigned int frame_wait_to_process;
 	struct notifier_block notifier_blk;
@@ -248,7 +252,6 @@ struct mtk_camsv_frame_params {
 	u64 sensor_img_tstamp[2];
 	u64 sensor_meta_tstamp[3];
 };
-
 static inline bool mtk_camsv_is_yuv_format(unsigned int fmt)
 {
 	bool ret = false;
@@ -298,9 +301,11 @@ unsigned int mtk_cam_sv_xsize_cal(
 int mtk_cam_sv_tg_config(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_top_config(
-	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
+	struct mtk_camsv_device *dev,
+	struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_dmao_config(struct mtk_camsv_device *dev,
-	struct mtkcam_ipi_input_param *cfg_in_param, int hw_scen, int raw_imgo_stride);
+	struct mtkcam_ipi_input_param *cfg_in_param, int hw_scen,
+	int raw_imgo_stride);
 int mtk_cam_sv_fbc_config(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 
@@ -313,7 +318,8 @@ int mtk_cam_sv_dmao_enable(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
 int mtk_cam_sv_fbc_enable(
 	struct mtk_camsv_device *dev, struct mtkcam_ipi_input_param *cfg_in_param);
-
+void mtk_cam_sv_vf_reset(struct mtk_cam_ctx *ctx,
+	struct mtk_camsv_device *dev);
 int mtk_cam_sv_tg_disable(struct mtk_camsv_device *dev);
 int mtk_cam_sv_top_disable(struct mtk_camsv_device *dev);
 int mtk_cam_sv_dmao_disable(struct mtk_camsv_device *dev);

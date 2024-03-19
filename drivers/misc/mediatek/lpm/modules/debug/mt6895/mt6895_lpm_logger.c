@@ -24,6 +24,18 @@
 #include <mtk_lpm_sysfs.h>
 #include <mt6895_cond.h>
 
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+#include <linux/proc_fs.h>
+#endif
+
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+//add for mtk connectivity power monitor
+#include <linux/miscdevice.h>
+#include <linux/fs.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
+
 #define MT6895_LOG_DEFAULT_MS		5000
 
 #define PCM_32K_TICKS_PER_SEC		(32768)
@@ -172,6 +184,77 @@ static struct lpm_log_helper mt6895_log_help = {
 	.prev = 0,
 };
 
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+//add for mtk connectivity power monitor
+#define RET_ERR  1
+#define RET_OK  0
+#define OPLUS_26M_PCT_GAP	50
+#define OPLUS_TIME_GAP	PCM_32K_TICKS_PER_SEC
+
+static struct miscdevice lpm_object;
+static struct workqueue_struct *mQueue = NULL;
+static struct delayed_work mWork;
+static char mUevent[256] = {'\0'};
+static unsigned long mWakeupLast = OPLUS_TIME_GAP;
+
+static void oplusWorkHandler(struct work_struct *data)
+{
+	char *envp[2];
+
+	if (mUevent[0] == '\0')
+		return;
+
+	envp[0] = mUevent;
+	envp[1] = NULL;
+	kobject_uevent_env(
+		&lpm_object.this_device->kobj,
+		KOBJ_CHANGE, envp);
+}
+
+int oplusLpmUeventInit(void)
+{
+        u_int8_t ret = RET_OK;
+
+        if (lpm_object.this_device != NULL) {
+                return RET_OK;
+        }
+        lpm_object.name = "lpm";
+        lpm_object.minor = MISC_DYNAMIC_MINOR;
+        ret = misc_register(&lpm_object);
+        if (ret == RET_OK) {
+                ret = kobject_uevent(&lpm_object.this_device->kobj, KOBJ_ADD);
+                if (ret != RET_OK) {
+                        misc_deregister(&lpm_object);
+                        return RET_ERR;
+                }
+        }
+	if (mQueue == NULL) {
+		mQueue = create_singlethread_workqueue("oplus_conn_uevent");
+		INIT_DELAYED_WORK(&mWork, oplusWorkHandler);
+	}
+
+        return ret;
+}
+
+int oplusLpmSendUevent(const char *src)
+{
+        if (lpm_object.this_device == NULL) {
+                return RET_ERR;
+        }
+	if (src == NULL) {
+		return RET_ERR;
+	}
+
+	strlcpy(mUevent, src, sizeof(mUevent));
+	if (mQueue) {
+		queue_delayed_work(mQueue, &mWork, msecs_to_jiffies(200));
+	} else {
+		schedule_delayed_work(&mWork, msecs_to_jiffies(200));
+	}
+
+	return RET_OK;
+}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 
 #define IRQ_NUMBER	\
 	(sizeof(mt6895_spm_wakesrc_irqs)/sizeof(struct spm_wakesrc_irq_list))
@@ -421,9 +504,51 @@ static u32 is_blocked_cnt;
 			LOG_BUF_SIZE - log_size, "spm ");
 	}
 	WARN_ON(strlen(log_buf) >= LOG_BUF_SIZE);
-
 	pr_info("[name:spm&][SPM] %s\n", log_buf);
 }
+
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+static char lpm_message[1400] = {0};
+
+struct r13_blocker_detail_info {
+	u32 bitinfo;
+	char name[30];
+};
+
+struct r13_blocker_detail_info wakeup_r13_table[] = {
+	{R13_MD_SRCCLKENA_0,"R13_MD_SRCCLKENA_0"},
+	{R13_MD32_APSRC_REQ,"R13_MD32_APSRC_REQ"},
+	{R13_MD_DDR_EN_0,"R13_MD_DDR_EN_0"},
+	{R13_CONN_DDR_EN,"R13_CONN_DDR_EN"},
+	{R13_MD_SRCCLKENA_1,"R13_MD_SRCCLKENA_1"},
+	{R13_MM_STATE,"R13_MM_STATE"},
+	{R13_MD32_STATE,"R13_MD32_STATE"},
+	{R13_MD1_STATE,"R13_MD1_STATE"},
+	{R13_CONN_STATE,"R13_CONN_STATE"},
+	{R13_CONN_SRCCKENA,"R13_CONN_SRCCKENA"},
+	{R13_CONN_APSRC_REQ,"R13_MD_SRCCLKENA_0"},
+	{R13_SCP_STATE,"R13_SCP_STATE"},
+	{R13_AUDIO_DSP_STATE,"R13_AUDIO_DSP_STATE"},
+	{R13_MD_VRF18_REQ_0,"R13_MD_VRF18_REQ_0"},
+	{R13_DDR_EN_STATE,"R13_DDR_EN_STATE"},
+};
+int wakeup_r13_table_size = sizeof(wakeup_r13_table)/sizeof(wakeup_r13_table[0]);
+void record_suspend_r13_info(u32 r13)
+{
+	int i = 0;
+
+	//r13 = r13 & (~((u32)R13_IGNORE_BIT));
+	strcat(lpm_message, "r13_set_bit=");
+	for(i= 0; i< wakeup_r13_table_size; i++) {
+		if((r13 & wakeup_r13_table[i].bitinfo) != 0) {
+			strcat(lpm_message, wakeup_r13_table[i].name);
+			strcat(lpm_message, " ");
+		}
+	}
+	strcat(lpm_message, "\n");
+	return;
+}
+#endif
 
 static int lpm_show_message(int type, const char *prefix, void *data)
 {
@@ -668,7 +793,27 @@ static int lpm_show_message(int type, const char *prefix, void *data)
 				plat_mmio_read(SYS_TIMER_VALUE_L),
 				plat_mmio_read(SYS_TIMER_VALUE_H),
 				spm_26M_off_pct);
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+			//add for mtk connectivity power monitor
+			if ((wakesrc->r13 & (R13_CONN_DDR_EN|R13_CONN_STATE|R13_CONN_SRCCKENA|R13_CONN_APSRC_REQ|R13_CONN_SRCCLKENB))
+				&& (spm_26M_off_pct < OPLUS_26M_PCT_GAP)) {
+				mWakeupLast += wakesrc->timer_out;
+				if (mWakeupLast > OPLUS_TIME_GAP) {
+					char uevent[100] = {'\0'};
+					snprintf(uevent, sizeof(uevent), "lpm=src:%s;r13:%d;timer_out:%d;26M_off_pct:%d;", buf, wakesrc->r13, wakesrc->timer_out, spm_26M_off_pct);
+					oplusLpmSendUevent(uevent);
+					mWakeupLast = 0;
+				}
+			}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 		}
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+		if(!strcmp(scenario,"suspend")) {
+			memset(lpm_message, 0, sizeof(lpm_message));
+			strcpy(lpm_message,log_buf);
+			record_suspend_r13_info(wakesrc->r13);
+		}
+#endif
 	}
 	WARN_ON(log_size >= LOG_BUF_OUT_SZ);
 
@@ -691,6 +836,26 @@ end:
 	return wr;
 }
 
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+static int lpm_message_show(struct seq_file *s, void *v)
+{
+
+	seq_printf(s, "%s", lpm_message);
+	return 0;
+}
+
+static int lpm_message_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, lpm_message_show, NULL);
+}
+
+static const struct proc_ops lpm_message_fops = {
+	.proc_open		= lpm_message_open,
+	.proc_read		= seq_read,
+	.proc_lseek		= seq_lseek,
+	.proc_release	= seq_release,
+};
+#endif
 
 static struct lpm_dbg_plat_ops mt6895_dbg_ops = {
 	.lpm_show_message = lpm_show_message,
@@ -703,7 +868,16 @@ int mt6895_dbg_ops_register(void)
 {
 	int ret;
 
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+	//add for mtk connectivity power monitor
+	ret = oplusLpmUeventInit();
+	if (ret != 0) {
+		pr_info("oplusLpmUeventInit error");
+	}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 	ret = lpm_dbg_plat_ops_register(&mt6895_dbg_ops);
-
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+	proc_create("lpm_message", 0444, NULL, &lpm_message_fops);
+#endif
 	return ret;
 }

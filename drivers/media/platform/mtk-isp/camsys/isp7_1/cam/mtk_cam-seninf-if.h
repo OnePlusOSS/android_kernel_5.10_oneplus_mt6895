@@ -18,6 +18,9 @@ int mtk_cam_seninf_calc_pixelrate(struct device *dev, s64 width, s64 height, s64
 				  s64 vblank, int fps_n, int fps_d, s64 sensor_pixel_rate);
 
 int mtk_cam_seninf_dump(struct v4l2_subdev *sd, u32 seq_id, bool force_check);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+int mtk_cam_seninf_get_csi_irq_status(struct v4l2_subdev *sd, struct v4l2_ctrl *ctrl);
+#endif
 
 int mtk_cam_seninf_check_timeout(struct v4l2_subdev *sd, u64 time_waited);
 u64 mtk_cam_seninf_get_frame_time(struct v4l2_subdev *sd, u32 seq_id);
@@ -109,4 +112,7 @@ int mtk_cam_seninf_get_pad_data_info(struct v4l2_subdev *sd,
 
 void
 mtk_cam_seninf_set_secure(struct v4l2_subdev *sd, int enable, unsigned int SecInfo_addr);
+
+bool is_fsync_listening_on_pd(struct v4l2_subdev *sd);
+
 #endif

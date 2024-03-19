@@ -577,7 +577,10 @@ static int mt6369_of_parse_cb(struct device_node *np,
 					   &info->oc_irq_enable_delay_ms);
 		if (ret || !info->oc_irq_enable_delay_ms)
 			info->oc_irq_enable_delay_ms = DEFAULT_DELAY_MS;
-		INIT_DELAYED_WORK(&info->oc_work, mt6369_oc_irq_enable_work);
+	//#ifdef OPLUS_FEATURE_RF_PMIC_OCP
+	//#else
+	//INIT_DELAYED_WORK(&info->oc_work, mt6369_oc_irq_enable_work);
+	//#endif OPLUS_FEATURE_RF_PMIC_OCP
 	}
 	return 0;
 }
@@ -594,6 +597,9 @@ static int mt6369_regulator_probe(struct platform_device *pdev)
 	for (i = 0; i < MT6369_MAX_REGULATOR; i++) {
 		info = &mt6369_regulators[i];
 		info->irq = platform_get_irq_byname_optional(pdev, info->desc.name);
+		//#ifdef OPLUS_FEATURE_RF_PMIC_OCP
+		info->oc_irq_enable_delay_ms = DEFAULT_DELAY_MS;
+		//#endif OPLUS_FEATURE_RF_PMIC_OCP
 		config.driver_data = info;
 
 		rdev = devm_regulator_register(&pdev->dev, &info->desc, &config);
@@ -606,6 +612,10 @@ static int mt6369_regulator_probe(struct platform_device *pdev)
 
 		if (info->irq <= 0)
 			continue;
+		//#ifdef OPLUS_FEATURE_RF_PMIC_OCP
+		else
+			INIT_DELAYED_WORK(&info->oc_work, mt6369_oc_irq_enable_work);
+		//#endif OPLUS_FEATURE_RF_PMIC_OCP
 		ret = devm_request_threaded_irq(&pdev->dev, info->irq, NULL,
 						mt6369_oc_irq,
 						IRQF_TRIGGER_HIGH,

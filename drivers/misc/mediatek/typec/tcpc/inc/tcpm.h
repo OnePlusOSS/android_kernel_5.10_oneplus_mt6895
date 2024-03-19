@@ -140,7 +140,14 @@ enum {
 	TCP_NOTIFY_CABLE_TYPE,
 	TCP_NOTIFY_TYPEC_OTP,
 	TCP_NOTIFY_PLUG_OUT,
-	TCP_NOTIFY_MISC_END = TCP_NOTIFY_CABLE_TYPE,
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	/*TCP_NOTIFY_MISC_END = TCP_NOTIFY_CABLE_TYPE,*/
+	TCP_NOTIFY_WD0_STATE,
+	TCP_NOTIFY_CHRDET_STATE,
+	TCP_NOTIFY_SWITCH_GET_STATE,
+	TCP_NOTIFY_SWITCH_SET_STATE,
+	TCP_NOTIFY_MISC_END = TCP_NOTIFY_SWITCH_SET_STATE,
+/*#endif*/
 };
 
 struct tcp_ny_pd_state {
@@ -317,6 +324,30 @@ struct tcp_ny_typec_otp {
 	bool otp;
 };
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+struct tcp_ny_wd0_state {
+	bool wd0;
+};
+
+struct tcp_ny_chrdet_state {
+	bool chrdet;
+};
+
+struct tcp_ny_switch_set_status {
+	bool	 state;		/* 0: DP/DM state;  1: fastchg state */
+	bool 	(*pfunc)(int);	/* recevier call the pfunc to ack.*/
+};
+
+struct tcp_ny_switch_get_status {
+	bool	(*pfunc)(int);  /*recevier call the pfunc to ack.
+				* 0: default DP/DM state
+				* 1: fastchg state
+				* 2: audio state
+				* 3: unknow state
+				*/
+};
+#endif
+
 struct tcp_notify {
 	union {
 		struct tcp_ny_enable_state en_state;
@@ -337,6 +368,12 @@ struct tcp_notify {
 		struct tcp_ny_fod_status fod_status;
 		struct tcp_ny_cable_type cable_type;
 		struct tcp_ny_typec_otp typec_otp;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		struct tcp_ny_wd0_state wd0_state;
+		struct tcp_ny_chrdet_state chrdet_state;
+		struct tcp_ny_switch_set_status switch_set_status;
+		struct tcp_ny_switch_get_status switch_get_status;
+#endif
 	};
 };
 
@@ -937,6 +974,9 @@ extern int tcpm_put_tcp_dpm_event(
 	struct tcpc_device *tcpc, struct tcp_dpm_event *event);
 
 /* TCPM DPM PD I/F */
+#ifdef OPLUS_FEATURE_CHG_BASIC
+extern bool tcpm_inquire_pdphy_ready(struct tcpc_device *tcpc);
+#endif
 
 extern int tcpm_inquire_pd_contract(
 	struct tcpc_device *tcpc, int *mv, int *ma);
@@ -1127,6 +1167,10 @@ extern int tcpm_set_apdo_charging_policy(
 extern int tcpm_inquire_pd_source_apdo(struct tcpc_device *tcpc,
 	uint8_t apdo_type, uint8_t *cap_i, struct tcpm_power_cap_val *cap);
 extern bool tcpm_inquire_during_pps_charge(struct tcpc_device *tcpc);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+extern int tcpm_set_extra_pps_curr_en(struct tcpc_device *tcpc, bool en);
+extern bool tcpm_inquire_extra_pps_curr(struct tcpc_device *tcpc);
+#endif
 #endif	/* CONFIG_USB_PD_REV30_PPS_SINK */
 
 #if CONFIG_USB_PD_REV30_BAT_INFO
@@ -1465,6 +1509,13 @@ static inline int tcpm_put_tcp_dpm_event(
 {
 	return TCPM_ERROR_NO_IMPLEMENT;
 }
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static inline bool tcpm_inquire_pdphy_ready(struct tcpc_device *tcpc)
+{
+	return TCPM_ERROR_NO_IMPLEMENT;
+}
+#endif
 
 static inline int tcpm_inquire_pd_contract(
 	struct tcpc_device *tcpc, int *mv, int *ma)

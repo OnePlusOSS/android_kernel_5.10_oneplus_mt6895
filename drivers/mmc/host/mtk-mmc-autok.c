@@ -8,7 +8,7 @@
 
 #define MSDC_CLKTXDLY		0
 #define MSDC_PB0_DEFAULT_VAL		0x403C0007
-#define MSDC_PB1_DEFAULT_VAL		0xFFE64309
+#define MSDC_PB1_DEFAULT_VAL		0xFFE74309
 #define MSDC_PB2_DEFAULT_RESPWAIT	0x3
 #define MSDC_PB2_DEFAULT_RESPSTSENSEL	0x1
 #define MSDC_PB2_DEFAULT_CRCSTSENSEL	0x1
@@ -3314,9 +3314,13 @@ fail:
 int execute_online_tuning(struct msdc_host *host, u8 *res)
 {
 	unsigned int ret = 0;
+    #ifdef OPLUS_FEATURE_CAMERA_COMMON
+	unsigned int uEdge = 0;
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
 	int err = 0;
 	unsigned int uCmdEdge = 0;
 	unsigned int uDatEdge = 0;
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	u64 RawData64 = 0LL;
 	unsigned int score = 0;
 	unsigned int j, k;
@@ -3355,6 +3359,57 @@ int execute_online_tuning(struct msdc_host *host, u8 *res)
 			    p_autok_tune_res);
 		}
 	}
+    #ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/* Step1&2 : Tuning Cmd/Data Path */
+	autok_tuning_parameter_init(host, p_autok_tune_res);
+	memset(pBdInfo, 0, sizeof(struct AUTOK_REF_INFO));
+
+	uEdge = 0;
+	do {
+		autok_adjust_param(host, CMD_EDGE, &uEdge, AUTOK_WRITE);
+		autok_adjust_param(host, RD_FIFO_EDGE, &uEdge, AUTOK_WRITE);
+		RawData64 = 0LL;
+		for (j = 0; j < 64; j++) {
+			autok_adjust_paddly(host, &j, CMD_PAD_RDLY);
+			autok_adjust_paddly(host, &j, DAT_PAD_RDLY);
+			//for (k = 0; k < AUTOK_CMD_TIMES / 2; k++) {
+			for (k = 0; k < 4; k++) {
+				ret = autok_send_tune_cmd(host, opcode,
+					    TUNE_DATA, &autok_host_para);
+				if ((ret & E_RES_CMD_TMO) != 0) {
+					msdc_reset_hw(host);
+					RawData64 |= (u64) (1LL << j);
+					break;
+				} else if ((ret & (E_RES_RSP_CRC | E_RES_DAT_CRC
+						    | E_RES_DAT_TMO)) != 0) {
+					RawData64 |= (u64) (1LL << j);
+					break;
+				} else if ((ret & E_RES_FATAL_ERR) != 0)
+					goto fail;
+			}
+		}
+		score = autok_simple_score64(tune_result_str64, RawData64);
+		AUTOK_DBGPRINT(AUTOK_DBG_RES, "[AUTOK]DAT %d \t %d \t %s\r\n",
+			uEdge, score, tune_result_str64);
+		if (uEdge)
+			autok_window_apply(DAT_FALL,
+			    RawData64, p_autok_tune_res);
+		else
+			autok_window_apply(DAT_RISE,
+			    RawData64, p_autok_tune_res);
+		if (autok_check_scan_res64(RawData64,
+			    &pBdInfo->scan_info[uEdge],
+			    AUTOK_TUNING_INACCURACY) != 0) {
+			host->autok_error = -1;
+			goto fail;
+		}
+
+		uEdge ^= 0x1;
+	} while (uEdge);
+
+	autok_tuning_parameter_init(host, p_autok_tune_res);
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 	/* Step1 : Tuning Cmd Path */
 	autok_tuning_parameter_init(host, p_autok_tune_res);
 	memset(pBdInfo, 0, sizeof(struct AUTOK_REF_INFO));
@@ -3426,7 +3481,7 @@ int execute_online_tuning(struct msdc_host *host, u8 *res)
 				if ((ret & (E_RES_CMD_TMO
 						    | E_RES_RSP_CRC)) != 0) {
 					AUTOK_RAWPRINT
-					    ("[AUTOK]Err CMD Fail@RD\r\n");
+					    ("[AUTOK]Err CMD Fail@RD, ret = 0x%08x\r\n", ret);
 					host->autok_error = -1;
 					goto fail;
 				} else if ((ret & (E_RES_DAT_CRC
@@ -3472,6 +3527,7 @@ int execute_online_tuning(struct msdc_host *host, u8 *res)
 	autok_tuning_parameter_init(host, p_autok_tune_res);
 
 	autok_result_dump(host, p_autok_tune_res);
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	msdc_autok_version_apply(p_autok_tune_res);
 	if (res != NULL) {
@@ -4060,8 +4116,12 @@ int autok_vcore_merge_sel(struct msdc_host *host, unsigned int merge_cap)
 	unsigned int ret = 0;
 	struct timespec64 tm_s, tm_e;
 	unsigned int tm_val = 0;
+    #ifdef OPLUS_FEATURE_CAMERA_COMMON
+	unsigned int uEdge = 0;
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
 	unsigned int uCmdEdge = 0;
 	unsigned int uDatEdge = 0;
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	u64 RawData64 = 0LL;
 	unsigned int RawData = 0;
 	unsigned int j, k;
@@ -4090,6 +4150,77 @@ int autok_vcore_merge_sel(struct msdc_host *host, unsigned int merge_cap)
 	/* Init set window 0xFF as infinite */
 	for (j = CMD_MAX_WIN; j <= H_CLK_TX_MAX_WIN; j++)
 		host->autok_res[AUTOK_VCORE_MERGE][j] = 0xFF;
+
+    #ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/* Step1 & 2 :  Cmd & Dat Path */
+	if (clk_mode == 3) {
+		data_dly = 0;
+		for (j = 0; j < AUTOK_VCORE_NUM; j++)
+			data_dly += host->autok_res[j][DAT_RD_D_DLY1];
+		data_dly = data_dly / AUTOK_VCORE_NUM;
+		autok_paddly_update(DAT_PAD_RDLY, data_dly,
+			host->autok_res[AUTOK_VCORE_MERGE]);
+		autok_adjust_paddly(host, &data_dly, DAT_PAD_RDLY);
+		AUTOK_DBGPRINT(AUTOK_DBG_RES,
+			"[AUTOK]dat dly = %d\r\n", data_dly);
+		goto ds_merge;
+	}
+	if (!(merge_cap & (MERGE_CMD | MERGE_DAT)))
+		goto ds_merge;
+	memset(pInfo, 0, sizeof(struct AUTOK_REF_INFO_NEW));
+	uEdge = 0;
+	do {
+		RawData64 = 0LL;
+		for (j = 0; j < AUTOK_VCORE_NUM; j++) {
+			for (k = 0; k < 8; k++) {
+				if (uEdge)
+					RawData64 |=
+					(((u64)host->autok_res[j][DAT_SCAN_F0 + k])
+					<< (8 * k));
+				else
+					RawData64 |=
+					(((u64)host->autok_res[j][DAT_SCAN_R0 + k])
+					<< (8 * k));
+			}
+		}
+		score = autok_simple_score64(tune_result_str64, RawData64);
+		AUTOK_DBGPRINT(AUTOK_DBG_RES,
+			"[AUTOK]DAT %d \t %d \t %s merge\r\n",
+		    uEdge, score, tune_result_str64);
+		if (autok_check_scan_res64_new(RawData64,
+			&pInfo->scan_info[uEdge], 0) != 0)
+			goto fail;
+		max_win[uEdge] = autok_ds_dly_sel(&pInfo->scan_info[uEdge], &dly_sel[uEdge]);
+		if (uEdge)
+			autok_window_apply(DAT_FALL, RawData64,
+			    host->autok_res[AUTOK_VCORE_MERGE]);
+		else
+			autok_window_apply(DAT_RISE, RawData64,
+				host->autok_res[AUTOK_VCORE_MERGE]);
+		uEdge ^= 0x1;
+	} while (uEdge);
+	if (max_win[0] >= max_win[1]) {
+		pInfo->opt_edge_sel = 0;
+		pInfo->opt_dly_cnt = dly_sel[0];
+	} else {
+		pInfo->opt_edge_sel = 1;
+		pInfo->opt_dly_cnt = dly_sel[1];
+	}
+	AUTOK_DBGPRINT(AUTOK_DBG_RES,
+		"[AUTOK]dat edge = %d dat dly = %d max win = %d\r\n",
+	    pInfo->opt_edge_sel, pInfo->opt_dly_cnt,
+	    max_win[pInfo->opt_edge_sel]);
+
+	host->autok_res[AUTOK_VCORE_MERGE][CMD_MAX_WIN] =
+		max_win[pInfo->opt_edge_sel];
+	autok_param_update(CMD_EDGE, pInfo->opt_edge_sel,
+		host->autok_res[AUTOK_VCORE_MERGE]);
+	autok_paddly_update(CMD_PAD_RDLY, pInfo->opt_dly_cnt,
+		host->autok_res[AUTOK_VCORE_MERGE]);
+	autok_adjust_param(host, CMD_EDGE,
+		&pInfo->opt_edge_sel, AUTOK_WRITE);
+	autok_adjust_paddly(host, &pInfo->opt_dly_cnt, CMD_PAD_RDLY);
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	/* Step1 :  Cmd Path */
 	if (!(merge_cap & MERGE_CMD))
@@ -4211,6 +4342,8 @@ data_merge:
 		"[AUTOK]dat edge = %d dat dly = %d max win = %d\r\n",
 	    pInfo->opt_edge_sel, pInfo->opt_dly_cnt,
 	    max_win[pInfo->opt_edge_sel]);
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 	host->autok_res[AUTOK_VCORE_MERGE][DAT_MAX_WIN]
 		= max_win[pInfo->opt_edge_sel];
 	autok_param_update(RD_FIFO_EDGE, pInfo->opt_edge_sel,
@@ -4512,6 +4645,17 @@ int sd_execute_autok(struct msdc_host *host, u32 opcode)
 		if (ret)
 			goto exit;
 		if (mmc->ios.timing == MMC_TIMING_UHS_SDR104) {
+    #ifdef OPLUS_FEATURE_CAMERA_COMMON
+			if (host->is_autok_done)
+				memcpy(host->autok_res[AUTOK_VCORE_LEVEL1],
+						host->autok_res[AUTOK_VCORE_MERGE],
+						TUNING_PARA_SCAN_COUNT);
+			else
+				memcpy(host->autok_res[AUTOK_VCORE_LEVEL0],
+						host->autok_res[AUTOK_VCORE_MERGE],
+						TUNING_PARA_SCAN_COUNT);
+			need_merge = 1;
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
 			if (host->is_autok_done) {
 				memcpy(host->autok_res[AUTOK_VCORE_LEVEL1],
 						host->autok_res[AUTOK_VCORE_MERGE],
@@ -4521,6 +4665,7 @@ int sd_execute_autok(struct msdc_host *host, u32 opcode)
 				memcpy(host->autok_res[AUTOK_VCORE_LEVEL0],
 						host->autok_res[AUTOK_VCORE_MERGE],
 						TUNING_PARA_SCAN_COUNT);
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 			host->is_autok_done = 1;
 		}
 	} else if (mmc->ios.timing == MMC_TIMING_MMC_HS200) {
@@ -4669,6 +4814,10 @@ void msdc_init_tune_setting(struct msdc_host *host)
 	/* Reserve MSDC_IOCON_DDR50CKD bit, clear all other bits */
 	val = readl(host->base + MSDC_IOCON) & MSDC_IOCON_DDR50CKD;
 	writel(val, host->base + MSDC_IOCON);
+	/*#ifdef OPLUS_FEATURE_TP_BASIC */
+	/*add for non standard SDIO slave*/
+	sdr_set_field(host->base + MSDC_IOCON, MSDC_IOCON_RSPL, 1);
+	/*#endif OPLUS_FEATURE_TP_BASIC */
 
 	writel(0x00000000, host->base + MSDC_DAT_RDDLY0);
 	writel(0x00000000, host->base + MSDC_DAT_RDDLY1);

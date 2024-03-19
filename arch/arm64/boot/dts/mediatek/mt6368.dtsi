@@ -6,6 +6,8 @@
 #include <dt-bindings/spmi/spmi.h>
 
 &spmi {
+	clock-frequency = <1000000>;
+
 	second_pmic@5 {
 		compatible = "mediatek,mt6368";
 		reg = <0x5 SPMI_USID>;
@@ -34,7 +36,11 @@
 			headset-eint-num = <0>;
 			headset-eint-trig-mode = <1>;
 			headset-key-mode = <0>;
-			headset-three-key-threshold = <0 80 220 400>;
+			//#ifdef OPLUS_ARCH_EXTENDS
+			headset-three-key-threshold = <0 82 170 306>;
+			//#else /* OPLUS_ARCH_EXTENDS */
+			//headset-three-key-threshold = <0 80 220 400>;
+			//#endif /* OPLUS_ARCH_EXTENDS */
 			headset-three-key-threshold-CDD = <0 121 192 600>;
 			headset-four-key-threshold = <0 58 121 192 400>;
 			io-channels = <&mt6368_adc AUXADC_ACCDET>;

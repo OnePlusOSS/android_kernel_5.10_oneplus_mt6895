@@ -39,10 +39,13 @@ extern int clk_buf_ctrl(const char *xo_name, bool onoff);
 extern int clk_buf_hw_ctrl(const char *xo_name, bool onoff);
 extern int clk_buf_dump_log(void);
 extern int clk_buf_get_xo_en_sta(const char *xo_name);
+//#ifdef OPLUS_FEATURE_CAMERA_COMMON
+extern int clk_buf_set_voter_by_name(const char *xo_name, const char *voter);
+extern int clk_buf_voter_ctrl_by_id(const uint8_t subsys_id, enum RC_CTRL_CMD rc_req);
+//#endif
 
 extern int srclken_dump_sta_log(void);
 extern int srclken_dump_cfg_log(void);
 extern int srclken_dump_last_sta_log(void);
-extern int clk_buf_voter_ctrl_by_id(const uint8_t subsys_id, enum RC_CTRL_CMD rc_req);
 
 #endif /* CLKBUF_CTL_H */

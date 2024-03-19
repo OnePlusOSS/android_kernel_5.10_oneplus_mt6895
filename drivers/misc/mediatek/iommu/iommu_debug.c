@@ -3632,11 +3632,15 @@ struct iova_map_list {
 
 static struct iova_map_list map_list = {.init_flag = ATOMIC_INIT(0)};
 
+static bool bypass_iova_evt = true;
 void mtk_iova_map(int tab_id, u64 iova, size_t size)
 {
 	u32 id = (iova >> 32);
 	unsigned long flags;
 	struct iova_map_info *iova_buf;
+
+	if (bypass_iova_evt)
+		return;
 
 	if (id >= MTK_IOVA_SPACE_NUM) {
 		pr_err("out of iova space: 0x%llx\n", iova);
@@ -3671,6 +3675,9 @@ void mtk_iova_unmap(int tab_id, u64 iova, size_t size)
 	unsigned long flags;
 	struct iova_map_info *plist;
 	struct iova_map_info *tmp_plist;
+
+	if (bypass_iova_evt)
+		return;
 
 	if (id >= MTK_IOVA_SPACE_NUM) {
 		pr_err("out of iova space: 0x%llx\n", iova);
@@ -3714,6 +3721,9 @@ static void mtk_iommu_iova_map_dump(struct seq_file *s, u64 iova, u32 tab_id)
 	unsigned long flags;
 	struct iova_map_info *plist = NULL;
 	struct iova_map_info *n = NULL;
+
+	if (bypass_iova_evt)
+		return;
 
 	if (id >= MTK_IOVA_SPACE_NUM) {
 		pr_err("out of iova space: 0x%llx\n", iova);
@@ -3931,6 +3941,11 @@ int mtk_iommu_register_fault_callback(int port,
 		pr_info("%s fail, port=%d\n", __func__, port);
 		return -1;
 	}
+
+/*	pr_debug("%s, %s, port:0x%x(%s), idx:%d\n",
+		__func__, is_vpu ? "apu_port" : "mm_port",
+		port, m4u_data->plat_data->port_list[type][idx].name,
+		idx);*/
 	if (is_vpu)
 		idx += m4u_data->plat_data->port_nr[type];
 	m4u_data->m4u_cb[idx].port = port;
@@ -4566,6 +4581,9 @@ static void mtk_iommu_iova_alloc_dump_top(struct seq_file *s,
 	int total_cnt = 0, dom_count = 0, tab_id = -1, dom_id = -1, i = 0;
 	u64 size = 0, total_size = 0, dom_size = 0;
 
+	if (bypass_iova_evt)
+		return;
+
 	/* check fwspec by device */
 	if (dev != NULL) {
 		fwspec = dev_iommu_fwspec_get(dev);
@@ -4624,6 +4642,9 @@ static void mtk_iommu_iova_alloc_dump(struct seq_file *s, struct device *dev)
 	struct iova_info *plist = NULL;
 	struct iova_info *n = NULL;
 
+	if (bypass_iova_evt)
+		return;
+
 	if (dev != NULL) {
 		fwspec = dev_iommu_fwspec_get(dev);
 		if (fwspec == NULL) {
@@ -4655,6 +4676,9 @@ static void mtk_iova_dbg_alloc(struct device *dev, struct iova_domain *iovad,
 	struct iova_info *iova_buf;
 	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	u32 tab_id;
+
+	if (bypass_iova_evt)
+		return;
 
 	if (!fwspec) {
 		pr_info("%s fail, dev(%s) is not iommu-dev\n",
@@ -4699,6 +4723,9 @@ static void mtk_iova_dbg_free(struct iova_domain *iovad, dma_addr_t iova, size_t
 	struct iova_info *tmp_plist;
 	struct device *dev = NULL;
 	u32 tab_id = PGTBALE_NUM;
+
+	if (bypass_iova_evt)
+		return;
 
 	spin_lock(&iova_list.lock);
 	list_for_each_entry_safe(plist, tmp_plist,

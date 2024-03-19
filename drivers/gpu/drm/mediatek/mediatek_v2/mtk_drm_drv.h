@@ -31,6 +31,20 @@
 #define MTK_FILL_MIPI_IMPEDANCE
 #endif
 
+
+//#ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT
+/*
+* add for fingerprint notify frigger
+*/
+#define MTK_ONSCREENFINGERPRINT_EVENT 20
+//#endif
+
+#if defined(CONFIG_PXLW_IRIS)
+/* #define MTK_DRM_LOCKTIME_CHECK */
+#else
+#define MTK_DRM_LOCKTIME_CHECK
+#endif
+
 struct device;
 struct device_node;
 struct drm_crtc;
@@ -177,11 +191,31 @@ struct mtk_drm_private {
 	bool dma_parms_allocated;
 
 	bool already_first_config;
+//#ifdef OPLUS_ADFR
+	struct workqueue_struct *fakeframe_wq;
+	struct hrtimer fakeframe_timer;
+	struct work_struct fakeframe_work;
+	/* add for mux switch control */
+	struct completion switch_te_gate;
+	bool vsync_switch_pending;
+	bool need_vsync_switch;
+	struct workqueue_struct *vsync_switch_wq;
+	struct work_struct vsync_switch_work;
+
+	/* indicate that whether the current frame backlight has been updated */
+	bool oplus_adfr_backlight_updated;
+	/* need qsync mode recovery after backlight status updated */
+	bool osync_mode_recovery;
+	/* set timer to reset qsync after the backlight is no longer updated */
+	struct hrtimer osync_mode_timer;
+	struct workqueue_struct *osync_mode_wq;
+	struct work_struct osync_mode_work;
+//endif
 
 	struct mml_drm_ctx *mml_ctx;
 	atomic_t mml_job_done;
 	wait_queue_head_t signal_mml_job_done_wq;
-
+	unsigned int *dummy_table_backup;
 	unsigned int seg_id;
 };
 
@@ -336,7 +370,9 @@ int lcm_fps_ctx_reset(struct drm_crtc *crtc);
 int lcm_fps_ctx_update(unsigned long long cur_ns,
 		unsigned int crtc_id, unsigned int mode);
 int mtk_mipi_clk_change(struct drm_crtc *crtc, unsigned int data_rate);
-bool mtk_drm_lcm_is_connect(void);
+/*#ifdef OPLUS_FEATURE_DISPLAY*/
+bool mtk_drm_lcm_is_connect(struct mtk_drm_crtc *mtk_crtc);
+/*#endif*/
 size_t mtk_gce_get_dummy_table(unsigned int mmsys_id, struct dummy_mapping **table);
 
 

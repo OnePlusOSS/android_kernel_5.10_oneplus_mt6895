@@ -147,6 +147,9 @@ static int btif_block_rx_dma_irq_test(void);
 #endif
 #endif
 
+
+static int btif_rxd_status;
+
 /*-----------end of static function declearation----------------*/
 
 static const char *g_state[B_S_MAX] = {
@@ -2179,10 +2182,12 @@ static int btif_rx_data_consummer(struct _mtk_btif_ *p_btif)
 					    (wr_idx - (p_bbs)->rd_idx) :
 					    BBS_SIZE(p_bbs) -
 					    ((p_bbs)->rd_idx - wr_idx);
-					if (p_btif->rx_cb)
+					if (p_btif->rx_cb) {
+						btif_rxd_status = 10;
 						(*(p_btif->rx_cb)) (p_buf,
 								length);
-					else
+						btif_rxd_status = 11;
+					} else
 						BTIF_ERR_FUNC("rx_cb = NULL\n");
 					/*update rx data read index*/
 					p_bbs->rd_idx = wr_idx;
@@ -2190,19 +2195,23 @@ static int btif_rx_data_consummer(struct _mtk_btif_ *p_btif)
 					unsigned int len_tail =
 					    BBS_SIZE(p_bbs) - (p_bbs)->rd_idx;
 					p_buf = BBS_PTR(p_bbs, p_bbs->rd_idx);
-					if (p_btif->rx_cb)
+					if (p_btif->rx_cb) {
+						btif_rxd_status = 12;
 						(*(p_btif->rx_cb))(p_buf,
 								len_tail);
-					else
+						btif_rxd_status = 13;
+					} else
 						BTIF_ERR_FUNC("rx_cb = NULL\n");
 					length = BBS_COUNT_CUR(p_bbs, wr_idx);
 					length -= len_tail;
 					/*p_buf = &(p_bbs->buf[0]);*/
 					p_buf = BBS_PTR(p_bbs, 0);
-					if (p_btif->rx_cb)
+					if (p_btif->rx_cb) {
+						btif_rxd_status = 14;
 						(*(p_btif->rx_cb))
 								(p_buf, length);
-					else
+						btif_rxd_status = 15;
+					} else
 						BTIF_ERR_FUNC("rx_cb = NULL\n");
 					/*update rx data read index*/
 					p_bbs->rd_idx = wr_idx;
@@ -2331,16 +2340,21 @@ static int btif_rx_thread(void *p_data)
 
 
 	while (1) {
+		btif_rxd_status = 0;
 		if (wait_for_completion_interruptible(&p_btif->rx_comp))
 			BTIF_WARN_FUNC("wait_for_completion is interrupted");
 
+		btif_rxd_status = 1;
 		if (mutex_lock_killable(&(p_btif->rx_thread_mtx))) {
+			btif_rxd_status = 2;
 			BTIF_ERR_FUNC(
 				"mutex lock(rx_thread_mtx) return failed\n");
 			break;
 		}
 
+		btif_rxd_status = 3;
 		if (kthread_should_stop()) {
+			btif_rxd_status = 4;
 			BTIF_WARN_FUNC("btif rx thread stopping ...\n");
 			mutex_unlock(&(p_btif->rx_thread_mtx));
 			break;
@@ -2351,7 +2365,9 @@ static int btif_rx_thread(void *p_data)
 		if (i >= MAX_BTIF_RXD_TIME_REC)
 			i = 0;
 #endif
+		btif_rxd_status = 5;
 		btif_rx_data_consummer(p_btif);
+		btif_rxd_status = 6;
 		mutex_unlock(&(p_btif->rx_thread_mtx));
 	}
 	return 0;
@@ -2702,8 +2718,10 @@ unsigned int btif_bbs_write(struct _btif_buf_str_ *p_bbs,
 			       BBS_COUNT(p_bbs));
 		btif_dump_bbs_str("Rx buffer tooo long", p_bbs);
 		hal_btif_dump_reg(p_btif->p_btif_info, REG_ALL);
+		hal_dma_dump_reg(p_btif->p_tx_dma->p_dma_info, REG_ALL);
 		hal_dma_dump_reg(p_btif->p_rx_dma->p_dma_info, REG_ALL);
 		_btif_dump_memory("<DMA Rx vFIFO>", p_buf, buf_len);
+		pr_info("%s btif_rxd_status = %d\n", __func__, btif_rxd_status);
 		BBS_INIT(p_bbs);
 	}
 
@@ -2801,14 +2819,14 @@ int _btif_dump_memory(char *str, unsigned char *p_buf, unsigned int buf_len)
 {
 	unsigned int idx = 0;
 
-	pr_debug("%s:, length:%d\n", str, buf_len);
-	for (idx = 0; idx < buf_len;) {
-		pr_debug("%02x ", p_buf[idx]);
-		idx++;
-		if (idx % 8 == 0)
-			pr_debug("\n");
-	}
-	return 0;
+    pr_info("%s:, length:%d\n", str, buf_len);
+    for (idx = 0; idx < buf_len;) {
+        pr_info("%02x ", p_buf[idx]);
+        idx++;
+        if (idx % 8 == 0)
+            pr_info("\n");
+    }
+    return 0;
 }
 
 int btif_send_data(struct _mtk_btif_ *p_btif,

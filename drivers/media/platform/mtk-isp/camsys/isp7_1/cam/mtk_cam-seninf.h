@@ -32,6 +32,10 @@ struct seninf_cam_mux {
 	int idx;
 };
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define DT_REMAP_MAX_CNT 4
+#endif
+
 struct seninf_vc {
 	u8 vc;
 	u8 dt;
@@ -45,6 +49,9 @@ struct seninf_vc {
 	u16 exp_hsize;
 	u16 exp_vsize;
 	u8 bit_depth;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	u8 dt_remap_to_type;
+#endif
 };
 
 struct seninf_vcinfo {
@@ -186,6 +193,7 @@ struct seninf_ctx {
 
 	int open_refcnt;
 	struct mutex mutex;
+	struct mutex pwr_mutex;
 
 	/* csi irq */
 	unsigned int data_not_enough_cnt;
@@ -207,6 +215,11 @@ struct seninf_ctx {
 	unsigned int size_err_flag;
 	unsigned int dbg_timeout;
 	unsigned int dbg_last_dump_req;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	unsigned int esd;
+#endif
+
+	int fsync_vsync_src_pad; // e.g., raw, 3A-meta(general-embedded)
 };
 
 #endif

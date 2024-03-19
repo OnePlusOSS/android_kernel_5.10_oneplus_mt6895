@@ -319,6 +319,10 @@ static const char *ccf_state(struct provider_clk *pvdck)
 	return "disabled";
 }
 
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+static char lpm_message[4000] = { 0 };
+#endif
+
 static void dump_enabled_clks(struct provider_clk *pvdck)
 {
 	const char * const *pll_names;
@@ -327,6 +331,9 @@ static void dump_enabled_clks(struct provider_clk *pvdck)
 	const char *comp_name;
 	struct clk_hw *c_hw = __clk_get_hw(pvdck->ck);
 	struct clk_hw *p_hw;
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+	char log_temp[100]= { 0 };
+#endif
 
 	if (!clkchk_pvdck_is_prepared(pvdck) && !clkchk_pvdck_is_enabled(pvdck))
 		return;
@@ -365,6 +372,16 @@ static void dump_enabled_clks(struct provider_clk *pvdck)
 					clkchk_pvdck_is_enabled(pvdck),
 					clk_hw_get_rate(c_hw),
 					p_hw ? clk_hw_get_name(p_hw) : "None");
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+			sprintf(log_temp,"[%-21s: %8s, %3d, %3d, %10ld, %21s]\n",
+					c_name,
+					ccf_state(pvdck),
+					clkchk_pvdck_is_prepared(pvdck),
+					clkchk_pvdck_is_enabled(pvdck),
+					clk_hw_get_rate(c_hw),
+					p_hw ? clk_hw_get_name(p_hw) : "None");
+			strcat(lpm_message,log_temp);
+#endif
 			break;
 		}
 	}
@@ -531,6 +548,9 @@ static int clk_chk_dev_pm_suspend(struct device *dev)
 	struct provider_clk *pvdck = get_all_provider_clks();
 
 	if (check_pll_off()) {
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+		memset(lpm_message, 0, sizeof(lpm_message));
+#endif
 		for (; pvdck->ck != NULL; pvdck++)
 			dump_enabled_clks(pvdck);
 
@@ -552,6 +572,26 @@ const struct dev_pm_ops clk_chk_dev_pm_ops = {
 	.resume_noirq = NULL,
 };
 EXPORT_SYMBOL(clk_chk_dev_pm_ops);
+
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+static int suspend_enabled_clocks_show(struct seq_file *s, void *v)
+{
+	seq_printf(s,"%s",lpm_message);
+	return 0;
+}
+
+static int suspend_enabled_clocks_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, suspend_enabled_clocks_show, NULL);
+}
+
+static const struct proc_ops suspend_enabled_clocks_fops = {
+	.proc_open		= suspend_enabled_clocks_open,
+	.proc_read		= seq_read,
+	.proc_lseek		= seq_lseek,
+	.proc_release	= seq_release,
+};
+#endif
 
 /*
  * for clock exception event handling
@@ -644,7 +684,9 @@ int set_clkchk_notify(void)
 	r = register_mtk_clk_notifier(&mtk_clkchk_notifier);
 	if (r)
 		pr_err("clk-chk notifier register err(%d)\n", r);
-
+#ifdef CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG
+	proc_create("suspend_clks", 0444, NULL, &suspend_enabled_clocks_fops);
+#endif
 	return r;
 }
 EXPORT_SYMBOL(set_clkchk_notify);

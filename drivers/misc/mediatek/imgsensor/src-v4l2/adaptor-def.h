@@ -4,6 +4,15 @@
 #ifndef __ADAPTOR_DEF_H__
 #define __ADAPTOR_DEF_H__
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define OPLUS_FEATURE_CAMERA_COMMON
+#endif
+
+#if defined(OPLUS_FEATURE_CAMERA_COMMON) && defined(CONFIG_OPLUS_CAM_EVENT_REPORT_MODULE)
+//Add for DFX camera log report
+#include "../oplus/oplus_cam_event_report.h"
+#endif /* OPLUS_FEATURE_CAMERA_COMMON */
+
 #define MODE_MAXCNT 20
 #define OF_SENSOR_NAMES_MAXCNT 20
 //#define POWERON_ONCE_OPENED

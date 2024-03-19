@@ -48,12 +48,11 @@
 #endif /* MTK_GPU_BM_2 */
 #include <ged_dcs.h>
 
-/*#if IS_ENABLED(CONFIG_DRM_MEDIATEK)
+#if IS_ENABLED(CONFIG_DRM_MEDIATEK)
 #include "mtk_drm_arr.h"
 #else
 #include "disp_arr.h"
 #endif
-*/
 
 #ifdef MTK_GED_KPI
 
@@ -1874,9 +1873,12 @@ GED_ERROR ged_kpi_queue_buffer_ts(int pid, u64 ullWdnd, int i32FrameID,
 			, &psMonitor->sSyncWaiter
 			, ged_kpi_gpu_3d_fence_sync_cb);
 
-		if (ret < 0) {
+		/* acquire fence is already signaled before cb registration */
+		if (ret == -ENOENT) {
+			// manually execute cb as cb would not be called in this case
 			ged_kpi_gpu_3d_fence_sync_cb(psMonitor->psSyncFence,
 				&psMonitor->sSyncWaiter);
+			ret = 0;
 		}
 	}
 	return ret;
@@ -2040,12 +2042,11 @@ GED_ERROR ged_kpi_system_init(void)
 		return GED_ERROR_FAIL;
 	}
 
-/*#if IS_ENABLED(CONFIG_DRM_MEDIATEK)
+#if IS_ENABLED(CONFIG_DRM_MEDIATEK)
 	drm_register_fps_chg_callback(ged_dfrc_fps_limit_cb);
 #elif IS_ENABLED(CONFIG_MTK_HIGH_FRAME_RATE)
 	disp_register_fps_chg_callback(ged_dfrc_fps_limit_cb);
 #endif
-*/
 
 	g_psWorkQueue =
 		alloc_ordered_workqueue("ged_kpi",
@@ -2077,12 +2078,11 @@ void ged_kpi_system_exit(void)
 		ged_kpi_iterator_delete_func, NULL);
 	spin_unlock_irqrestore(&gs_hashtableLock, ulIRQFlags);
 	destroy_workqueue(g_psWorkQueue);
-/*#if IS_ENABLED(CONFIG_DRM_MEDIATEK)
+#if IS_ENABLED(CONFIG_DRM_MEDIATEK)
 	drm_unregister_fps_chg_callback(ged_dfrc_fps_limit_cb);
 #elif IS_ENABLED(CONFIG_MTK_HIGH_FRAME_RATE)
 	disp_unregister_fps_chg_callback(ged_dfrc_fps_limit_cb);
 #endif
-*/
 	ged_thread_destroy(ghThread);
 #ifndef GED_BUFFER_LOG_DISABLE
 	ged_log_buf_free(ghLogBuf_KPI);

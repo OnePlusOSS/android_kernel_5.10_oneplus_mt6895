@@ -1046,7 +1046,15 @@ void qmu_done_rx(struct musb *musb, u8 ep_num)
 		Rx_gpd_free_count[ep_num]++;
 		musb_g_giveback(musb_ep, request, 0);
 		req = next_request(musb_ep);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (!req)
+			return;
+#endif
 		request = &req->request;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (!request)
+			return;
+#endif
 	}
 
 	/* QMU should keep take HWO gpd , so there is error */

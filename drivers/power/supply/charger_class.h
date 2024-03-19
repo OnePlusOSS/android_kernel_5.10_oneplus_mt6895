@@ -200,6 +200,9 @@ struct charger_ops {
 	int (*get_property)(struct charger_device *dev,
 			    enum charger_property prop,
 			    union charger_propval *val);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	int (*enable_bc12)(struct charger_device *dev, bool en);
+/*#endif*/
 };
 
 static inline void *charger_dev_get_drvdata(

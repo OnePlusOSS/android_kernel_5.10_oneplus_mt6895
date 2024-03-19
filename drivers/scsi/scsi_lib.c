@@ -1558,6 +1558,10 @@ static blk_status_t scsi_prepare_cmd(struct request *req)
 	cmd->prot_op = SCSI_PROT_NORMAL;
 	if (blk_rq_bytes(req))
 		cmd->sc_data_direction = rq_dma_dir(req);
+#ifdef CONFIG_DEVICE_XCOPY
+	else if (op_is_copy(req_op(req)))
+		cmd->sc_data_direction = DMA_TO_DEVICE;
+#endif
 	else
 		cmd->sc_data_direction = DMA_NONE;
 

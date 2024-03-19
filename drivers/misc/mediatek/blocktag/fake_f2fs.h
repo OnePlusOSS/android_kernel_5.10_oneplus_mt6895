@@ -8,7 +8,11 @@
 // Those defines is used in trace/event/f2fs.h
 #ifndef _FAKE_F2FS_H
 #define _FAKE_F2FS_H
+#ifndef CONFIG_DEVICE_XCOPY
 typedef u32 block_t;
+#else
+#include <linux/blk_types.h>
+#endif
 typedef u32 nid_t;
 
 #define	CP_UMOUNT   0x00000001

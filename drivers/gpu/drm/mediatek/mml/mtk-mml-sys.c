@@ -945,6 +945,12 @@ static void sys_addon_connect(struct mml_sys *sys,
 		return;
 	}
 
+	if (cfg->task->err) {
+		mml_err("%s tile error stop make command task %p pipe %u",
+			__func__, cfg->task, pipe);
+		return;
+	}
+
 	ddp_command_make(cfg->task, pipe, pkt);
 
 	sys_ddp_enable(sys, cfg->task, pipe);

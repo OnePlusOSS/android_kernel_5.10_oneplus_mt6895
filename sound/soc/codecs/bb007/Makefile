@@ -11,7 +11,6 @@
 # GNU General Public License for more details.
 #
 
-# Zhao.Pan@MULTIMEDIA.AUDIODRIVER.MACHINE, 2020/10/10, add for audiohal feedback
 ifneq ($(wildcard $(srctree)/$(src)/k6895v1_64_95t_alpha),)
 obj-m += k6895v1_64_95t_alpha/
 endif

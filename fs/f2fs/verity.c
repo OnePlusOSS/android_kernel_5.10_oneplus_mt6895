@@ -144,6 +144,15 @@ static int f2fs_begin_enable_verity(struct file *filp)
 	if (err)
 		return err;
 
+#ifdef CONFIG_F2FS_FS_DEDUP
+	mark_file_modified(inode);
+	if (f2fs_is_outer_inode(inode)) {
+		err = f2fs_revoke_deduped_inode(inode, __func__);
+		if (err)
+			return err;
+	}
+#endif
+
 	set_inode_flag(inode, FI_VERITY_IN_PROGRESS);
 	return 0;
 }
@@ -261,13 +270,14 @@ static struct page *f2fs_read_merkle_tree_page(struct inode *inode,
 					       pgoff_t index,
 					       unsigned long num_ra_pages)
 {
-	DEFINE_READAHEAD(ractl, NULL, inode->i_mapping, index);
 	struct page *page;
 
 	index += f2fs_verity_metadata_pos(inode) >> PAGE_SHIFT;
 
 	page = find_get_page_flags(inode->i_mapping, index, FGP_ACCESSED);
 	if (!page || !PageUptodate(page)) {
+		DEFINE_READAHEAD(ractl, NULL, inode->i_mapping, index);
+
 		if (page)
 			put_page(page);
 		else if (num_ra_pages > 1)

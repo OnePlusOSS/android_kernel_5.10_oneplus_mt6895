@@ -1972,7 +1972,6 @@ static int mtk_imgsys_power_ctrl_ccu(struct mtk_imgsys_dev *imgsys_dev, int on_o
 out:
 	return ret;
 }
-
 static void module_uninit(struct kref *kref)
 {
 	struct mtk_imgsys_dev *imgsys_dev;

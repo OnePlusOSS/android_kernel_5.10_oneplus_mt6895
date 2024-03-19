@@ -30,7 +30,7 @@
 #endif
 
 #ifdef CONFIG_MTK_ROUND_CORNER_SUPPORT
-#include "../mediatek/mtk_corner_pattern/mtk_data_hw_roundedpattern.h"
+#include "../mediatek/mediatek_v2/mtk_corner_pattern/mtk_data_hw_roundedpattern.h"
 #endif
 
 #include "../../../misc/mediatek/gate_ic/gate_i2c.h"
@@ -94,7 +94,6 @@ static struct i2c_driver _lcm_i2c_driver = {
  *****************************************************************************/
 
 #ifdef VENDOR_EDIT
-// shifan@bsp.tp 20191226 add for loading tp fw when screen lighting on
 extern void lcd_queue_load_tp_fw(void);
 #endif /*VENDOR_EDIT*/
 

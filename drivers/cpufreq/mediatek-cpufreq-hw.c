@@ -14,6 +14,9 @@
 #include <linux/of_platform.h>
 #include <linux/pm_qos.h>
 #include <linux/slab.h>
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+#include <linux/oplus_omrg.h>
+#endif
 
 #define LUT_MAX_ENTRIES			32U
 #define LUT_FREQ			GENMASK(11, 0)
@@ -22,7 +25,12 @@
 #define SVS_HW_STATUS			BIT(1)
 #define POLL_USEC			1000
 #define TIMEOUT_USEC			300000
+#define FACTORY_BOOT 			4
+#define META_BOOT 			1
+#define LIMET_FREQ				1600000
 
+static int boot_mode;
+static unsigned int proj;
 enum {
 	REG_FREQ_LUT_TABLE,
 	REG_FREQ_ENABLE,
@@ -121,6 +129,9 @@ static unsigned int mtk_cpufreq_hw_fast_switch(struct cpufreq_policy *policy,
 		index = cpufreq_table_find_index_dl(policy, target_freq);
 
 	writel_relaxed(index, c->reg_bases[REG_FREQ_PERF_STATE]);
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+	omrg_cpufreq_check_limit(policy, policy->freq_table[index].frequency);
+#endif
 
 	return policy->freq_table[index].frequency;
 }
@@ -192,9 +203,20 @@ static int mtk_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+static void mtk_cpufreq_ready(struct cpufreq_policy *policy)
+{
+	omrg_cpufreq_register(policy);
+}
+#endif
+
 static int mtk_cpufreq_hw_cpu_exit(struct cpufreq_policy *policy)
 {
 	struct cpufreq_mtk *c;
+
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+	omrg_cpufreq_unregister(policy);
+#endif
 
 	c = mtk_freq_domain_map[policy->cpu];
 	if (!c) {
@@ -216,6 +238,9 @@ static struct cpufreq_driver cpufreq_mtk_hw_driver = {
 	.target_index	= mtk_cpufreq_hw_target_index,
 	.get		= mtk_cpufreq_hw_get,
 	.init		= mtk_cpufreq_hw_cpu_init,
+#if IS_ENABLED(CONFIG_OPLUS_OMRG)
+	.ready		= mtk_cpufreq_ready,
+#endif
 	.exit		= mtk_cpufreq_hw_cpu_exit,
 	.fast_switch	= mtk_cpufreq_hw_fast_switch,
 	.name		= "mtk-cpufreq-hw",
@@ -227,8 +252,8 @@ static int mtk_cpu_create_freq_table(struct platform_device *pdev,
 {
 	struct device *dev = &pdev->dev;
 	void __iomem *base_table;
-	u32 data, i, freq, prev_freq = 0;
-
+	int i,j = 0;
+	u32 data, freq, prev_freq = 0;
 	c->table = devm_kcalloc(dev, LUT_MAX_ENTRIES + 1,
 				sizeof(*c->table), GFP_KERNEL);
 	if (!c->table)
@@ -236,10 +261,15 @@ static int mtk_cpu_create_freq_table(struct platform_device *pdev,
 
 	base_table = c->reg_bases[REG_FREQ_LUT_TABLE];
 
-	for (i = 0; i < LUT_MAX_ENTRIES; i++) {
-		data = readl_relaxed(base_table + (i * LUT_ROW_SIZE));
+	for (i = 0; j < LUT_MAX_ENTRIES; i++, j++) {
+		data = readl_relaxed(base_table + (j * LUT_ROW_SIZE));
 		freq = FIELD_GET(LUT_FREQ, data) * 1000;
-
+		if ((boot_mode == FACTORY_BOOT || boot_mode == META_BOOT) && (proj == 22021 || proj == 22221)) {
+			if (freq > LIMET_FREQ) {
+				i--;
+				continue;
+			}
+		}
 		if (freq == prev_freq)
 			break;
 
@@ -321,7 +351,8 @@ static int mtk_cpu_resources_init(struct platform_device *pdev,
 
 	return 0;
 }
-
+extern int get_boot_mode(void);
+extern unsigned int get_project(void);
 static int mtk_cpufreq_hw_driver_probe(struct platform_device *pdev)
 {
 	struct device_node *cpu_np;
@@ -329,7 +360,9 @@ static int mtk_cpufreq_hw_driver_probe(struct platform_device *pdev)
 	const u16 *offsets;
 	unsigned int cpu;
 	int ret;
-
+	boot_mode = get_boot_mode();
+	proj = get_project();
+	pr_info("kuroky boot_mode :%d proj :%u\n", boot_mode, proj);
 	offsets = of_device_get_match_data(&pdev->dev);
 	if (!offsets)
 		return -EINVAL;

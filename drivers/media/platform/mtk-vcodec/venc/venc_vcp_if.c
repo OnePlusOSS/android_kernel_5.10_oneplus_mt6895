@@ -29,6 +29,7 @@
 #else
 #define IPI_TIMEOUT_MS          (5000U + ((mtk_vcodec_dbg | mtk_v4l2_dbg_level) ? 5000U : 0U))
 #endif
+#define IPI_FIRST_VENC_SETPARAM_TIMEOUT_MS    (60000U)
 
 struct vcp_enc_mem_list {
 	struct vcodec_mem_obj mem;
@@ -106,6 +107,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 	unsigned long timeout = 0;
 	struct share_obj obj;
 	unsigned int suspend_block_cnt = 0;
+	struct venc_ap_ipi_msg_set_param *ap_out_msg;
 
 	if (inst->vcu_inst.abort || inst->vcu_inst.daemon_pid != get_vcp_generation())
 		return -EIO;
@@ -148,6 +150,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 	obj.len = len;
 	ipi_size = ((sizeof(u32) * 2) + len + 3) /4;
 	inst->vcu_inst.failure = 0;
+	inst->ctx->err_msg = *(__u32 *)msg;
 
 	mtk_v4l2_debug(2, "id %d len %d msg 0x%x is_ack %d %d", obj.id, obj.len, *(u32 *)msg,
 		is_ack, inst->vcu_inst.signaled);
@@ -164,11 +167,18 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 		inst->vcu_inst.abort = 1;
 		if (inst->vcu_inst.daemon_pid == get_vcp_generation())
 			trigger_vcp_halt(VCP_A_ID);
+		inst->ctx->err_msg = *(__u32 *)msg;
 		return -EIO;
 	}
 	if (!is_ack) {
 		/* wait for VCP's ACK */
 		timeout = msecs_to_jiffies(IPI_TIMEOUT_MS);
+		if (*(__u32 *)msg == AP_IPIMSG_ENC_SET_PARAM &&
+			inst->ctx->state == MTK_STATE_INIT) {
+			ap_out_msg = (struct venc_ap_ipi_msg_set_param *) msg;
+			if (ap_out_msg->param_id == VENC_SET_PARAM_ENC)
+				timeout = msecs_to_jiffies(IPI_FIRST_VENC_SETPARAM_TIMEOUT_MS);
+		}
 		ret = wait_event_timeout(inst->vcu_inst.wq_hd, inst->vcu_inst.signaled, timeout);
 		inst->vcu_inst.signaled = false;
 
@@ -180,6 +190,7 @@ static int venc_vcp_ipi_send(struct venc_inst *inst, void *msg, int len, bool is
 			inst->vcu_inst.abort = 1;
 			if (inst->vcu_inst.daemon_pid == get_vcp_generation())
 				trigger_vcp_halt(VCP_A_ID);
+			inst->ctx->err_msg = *(__u32 *)msg;
 			return -EIO;
 		}
 	}
@@ -508,14 +519,18 @@ int vcp_enc_ipi_handler(void *arg)
 			venc_vcp_ipi_send(inst, msg, sizeof(*msg), 1);
 			break;
 		case VCU_IPIMSG_ENC_POWER_ON:
+			mutex_lock(&ctx->dev->enc_hw_mutex);
 			venc_lock(ctx, msg->status, 0);
 			venc_encode_prepare(ctx, msg->status, &flags);
+			mutex_unlock(&ctx->dev->enc_hw_mutex);
 			msg->msg_id = AP_IPIMSG_ENC_POWER_ON_DONE;
 			venc_vcp_ipi_send(inst, msg, sizeof(*msg), 1);
 			break;
 		case VCU_IPIMSG_ENC_POWER_OFF:
+			mutex_lock(&ctx->dev->enc_hw_mutex);
 			venc_encode_unprepare(ctx, msg->status, &flags);
 			venc_unlock(ctx, msg->status);
+			mutex_unlock(&ctx->dev->enc_hw_mutex);
 			msg->msg_id = AP_IPIMSG_ENC_POWER_OFF_DONE;
 			venc_vcp_ipi_send(inst, msg, sizeof(*msg), 1);
 			break;
@@ -608,6 +623,7 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 	struct mtk_vcodec_ctx *ctx;
 	int timeout = 0;
 	bool backup = false;
+	struct venc_inst *inst = NULL;
 
 	if (!(mtk_vcodec_vcp & (1 << MTK_INST_ENCODER)))
 		return 0;
@@ -631,6 +647,11 @@ static int vcp_venc_notify_callback(struct notifier_block *this,
 			ctx = list_entry(p, struct mtk_vcodec_ctx, list);
 			if (ctx != NULL && ctx->state != MTK_STATE_ABORT) {
 				ctx->state = MTK_STATE_ABORT;
+				inst = (struct venc_inst *)(ctx->drv_handle);
+				if (inst != NULL) {
+					inst->vcu_inst.failure = VENC_IPI_MSG_STATUS_FAIL;
+					inst->vcu_inst.abort = 1;
+				}
 				venc_check_release_lock(ctx);
 				mtk_venc_queue_error_event(ctx);
 			}
@@ -717,34 +738,34 @@ static unsigned int venc_h265_get_level(struct venc_inst *inst,
 {
 	switch (level) {
 	case V4L2_MPEG_VIDEO_HEVC_LEVEL_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 0 : 1;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 2 : 3;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 4 : 5;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 6 : 7;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 8 : 9;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 10 : 11;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 12 : 13;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 14 : 15;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 16 : 17;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 13 : 14;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 15 : 16;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 18 : 19;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 20 : 21;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 23 : 24;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 25 : 26;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 27 : 28;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 29 : 30;
 	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 22 : 23;
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 31 : 32;
 	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 24 : 25;
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 33 : 34;
 	default:
 		mtk_vcodec_debug(inst, "unsupported level %d", level);
-		return 26;
+		return 25;
 	}
 }
 

@@ -44,6 +44,7 @@
 #include "../mml/mtk-mml-drm-adaptor.h"
 
 extern unsigned int g_mml_mode;
+extern bool panel_is_aries(void);
 
 static struct drm_mtk_layering_info layering_info;
 static bool g_hrt_valid;
@@ -60,6 +61,9 @@ static int g_emi_bound_table[HRT_LEVEL_NUM];
 
 #define DISP_RSZ_LAYER_NUM 2
 #define DISP_MML_LAYER_LIMIT 1
+#define DISP_MML_CAPS_MASK                                                                         \
+	(MTK_MML_DISP_DIRECT_LINK_LAYER | MTK_MML_DISP_DIRECT_DECOUPLE_LAYER |                     \
+	 MTK_MML_DISP_DECOUPLE_LAYER | MTK_MML_DISP_MDP_LAYER)
 
 static struct {
 	enum LYE_HELPER_OPT opt;
@@ -1013,7 +1017,7 @@ static int insert_entry(struct hrt_sort_entry **head,
 }
 
 static int add_layer_entry(struct drm_mtk_layer_config *l_info, bool sort_by_y,
-			   int overlap_w)
+			   int overlap_w, int l_idx)
 {
 	struct hrt_sort_entry *begin_t, *end_t;
 	struct hrt_sort_entry **p_entry;
@@ -1037,8 +1041,10 @@ static int add_layer_entry(struct drm_mtk_layer_config *l_info, bool sort_by_y,
 
 	begin_t->overlap_w = overlap_w;
 	begin_t->layer_info = l_info;
+	begin_t->idx = l_idx;
 	end_t->overlap_w = -overlap_w;
 	end_t->layer_info = l_info;
+	end_t->idx = l_idx;
 
 	if (*p_entry == NULL) {
 		*p_entry = begin_t;
@@ -1124,16 +1130,24 @@ static int free_all_layer_entry(bool sort_by_y)
 }
 
 static int scan_x_overlap(struct drm_mtk_layering_info *disp_info,
-			  int disp_index, int ovl_overlap_limit_w)
+			  int disp_index, int ovl_overlap_limit_w, uint32_t *max_layer)
 {
 	struct hrt_sort_entry *tmp_entry;
 	int overlap_w_sum, max_overlap;
+	uint32_t temp_layer = 0;
 
 	overlap_w_sum = 0;
 	max_overlap = 0;
 	tmp_entry = x_entry_list;
 	while (tmp_entry) {
 		overlap_w_sum += tmp_entry->overlap_w;
+
+		if (tmp_entry->overlap_w > 0)
+			temp_layer |= 1 << tmp_entry->idx;
+		else
+			temp_layer &= ~(1 << tmp_entry->idx);
+		if (overlap_w_sum > max_overlap)
+			*max_layer = temp_layer;
 		max_overlap = (overlap_w_sum > max_overlap) ? overlap_w_sum
 							    : max_overlap;
 		tmp_entry = tmp_entry->tail;
@@ -1146,6 +1160,7 @@ static int scan_y_overlap(struct drm_mtk_layering_info *disp_info,
 {
 	struct hrt_sort_entry *tmp_entry;
 	int overlap_w_sum, tmp_overlap, max_overlap;
+	uint32_t temp_layer = 0;
 
 	overlap_w_sum = 0;
 	tmp_overlap = 0;
@@ -1154,25 +1169,47 @@ static int scan_y_overlap(struct drm_mtk_layering_info *disp_info,
 	while (tmp_entry) {
 		overlap_w_sum += tmp_entry->overlap_w;
 		if (tmp_entry->overlap_w > 0) {
+			temp_layer |= 1 << tmp_entry->idx;
 			add_layer_entry(tmp_entry->layer_info, false,
-					tmp_entry->overlap_w);
+					tmp_entry->overlap_w, tmp_entry->idx);
 		} else {
+			temp_layer &= ~(1 << tmp_entry->idx);
 			remove_layer_entry(tmp_entry->layer_info, false);
 		}
-
-		if (overlap_w_sum > ovl_overlap_limit_w &&
-		    overlap_w_sum > max_overlap) {
-			tmp_overlap = scan_x_overlap(disp_info, disp_index,
-						     ovl_overlap_limit_w);
-		} else {
-			tmp_overlap = overlap_w_sum;
+   		if (!panel_is_aries()) {
+			if (overlap_w_sum > ovl_overlap_limit_w &&
+				overlap_w_sum > max_overlap) {
+				temp_layer = 0;
+				tmp_overlap = scan_x_overlap(disp_info, disp_index,
+						     ovl_overlap_limit_w, &temp_layer);
+			} else {
+				tmp_overlap = overlap_w_sum;
+			}
+   		} else {
+			if (overlap_w_sum > max_overlap) {
+				temp_layer = 0;
+				tmp_overlap = scan_x_overlap(disp_info, disp_index,
+						     ovl_overlap_limit_w, &temp_layer);
+			} else {
+				tmp_overlap = overlap_w_sum;
+			}
 		}
 
+		DDPINFO("(%d,%d,%d,%d), overlap: curr_layer=%d, Y=%d, X=%d, max=%d\n",
+		tmp_entry->layer_info->dst_offset_x,
+		tmp_entry->layer_info->dst_offset_y,
+		tmp_entry->layer_info->dst_width,
+		tmp_entry->layer_info->dst_height,
+		tmp_entry->overlap_w,
+		overlap_w_sum,
+		tmp_overlap,
+		max_overlap);
 		max_overlap =
 			(tmp_overlap > max_overlap) ? tmp_overlap : max_overlap;
 		tmp_entry = tmp_entry->tail;
 	}
 
+	DDPINFO("final max=%d\n", max_overlap);
 	return max_overlap;
 }
 
@@ -1256,11 +1293,13 @@ static int get_layer_weight(int disp_idx,
 
 	weight = HRT_UINT_WEIGHT;
 
+#if 0
 	if (hrt_lp_switch_get() == 1 &&
 			((!layer_info) || (layer_info && layer_info->compress))) {
 		weight *= 66;
 		do_div(weight, 100);
 	}
+#endif
 
 	return weight * bpp;
 }
@@ -1349,10 +1388,11 @@ static int _calc_hrt_num(struct drm_device *dev,
 
 			if (layer_info->src_width > 40 || skipped == 1) {
 				sum_overlap_w += overlap_w;
-				add_layer_entry(layer_info, true, overlap_w);
+				add_layer_entry(layer_info, true, overlap_w, i);
 			} else {
 				skipped = 1;
 			}
+
 		} else if (i == disp_info->gles_head[disp]) {
 			/* Add GLES layer */
 			if (hrt_type != HRT_TYPE_EMI) {
@@ -2394,7 +2434,7 @@ static bool same_ratio_limitation(struct drm_crtc *crtc,
 
 #define UNIT 32768
 #define TILE_LOSS 4
-static int check_cross_pipe_rpo(
+static int check_cross_pipe_rpo(struct mtk_rsz_param param[2],
 	unsigned int src_x, unsigned int src_w,
 	unsigned int dst_x, unsigned int dst_w,
 	unsigned int disp_w)
@@ -2413,7 +2453,7 @@ static int check_cross_pipe_rpo(
 	u32 out_x[2] = {0};
 	bool is_dual = true;
 	int width = disp_w;
-	struct mtk_rsz_param param[2];
+
 
 	if (right < width / 2)
 		tile_idx = 0;
@@ -2561,6 +2601,7 @@ static int RPO_rule(struct drm_crtc *crtc,
 
 	for (i = 0; i < disp_info->layer_num[disp_idx] &&
 						i < DISP_RSZ_LAYER_NUM; i++) {
+		struct mtk_rsz_param param[2] = {0};
 		c = &disp_info->input_config[disp_idx][i];
 
 		/*if (i == 0 && c->src_fmt == MTK_DRM_FORMAT_DIM)
@@ -2613,14 +2654,22 @@ static int RPO_rule(struct drm_crtc *crtc,
 			break;
 
 		if (mtk_crtc->is_dual_pipe &&
-			check_cross_pipe_rpo(src_roi.x, src_roi.width,
+			check_cross_pipe_rpo(param, src_roi.x, src_roi.width,
 						dst_roi.x, dst_roi.width, disp_w))
 			break;
 
 		/* Check the tile length and in max height of RSZ */
-		if (src_roi.width > private->rsz_in_max[0] ||
-		    src_roi.height > private->rsz_in_max[1])
-			break;
+
+		if (mtk_crtc->is_dual_pipe) {
+			if (param[0].in_len > private->rsz_in_max[0] ||
+			    param[1].in_len > private->rsz_in_max[0] ||
+			    src_roi.height > private->rsz_in_max[1])
+				break;
+		} else {
+			if (src_roi.width > private->rsz_in_max[0] ||
+			    src_roi.height > private->rsz_in_max[1])
+				break;
+		}
 
 		c->layer_caps |= MTK_DISP_RSZ_LAYER;
 		rsz_idx = i;
@@ -2974,13 +3023,8 @@ static int get_crtc_num(
 		}
 	}
 
-	if (input_config_num != crtc_num) {
-		DDPPR_ERR("%s:%d mode[%d] num:%d not matched config num:%d\n",
-				__func__, __LINE__,
-				disp_info_user->disp_mode[0],
-				crtc_num, input_config_num);
+	if (input_config_num != crtc_num)
 		crtc_num = min(crtc_num, input_config_num);
-	}
 
 	return crtc_num;
 }

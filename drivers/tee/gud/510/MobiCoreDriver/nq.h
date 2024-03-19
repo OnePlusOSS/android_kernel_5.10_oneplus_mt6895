@@ -84,4 +84,7 @@ void nq_exit(void);
 int nq_cpu_on(unsigned int cpu);
 int nq_cpu_off(unsigned int cpu);
 
+void boost_tee(void);
+void deboost_tee(void);
+
 #endif /* MC_NQ_H */

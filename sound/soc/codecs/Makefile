@@ -555,7 +555,10 @@ obj-$(CONFIG_SND_SOC_TAS5720)	+= snd-soc-tas5720.o
 obj-$(CONFIG_SND_SOC_TAS6424)	+= snd-soc-tas6424.o
 obj-$(CONFIG_SND_SOC_TDA7419)	+= snd-soc-tda7419.o
 obj-$(CONFIG_SND_SOC_TAS2770) += snd-soc-tas2770.o
-obj-$(CONFIG_SND_SOC_TFA9874)	+= tfa98xx/
+#ifdef OPLUS_ARCH_EXTENDS
+#obj-$(CONFIG_SND_SOC_TFA9874)	+= tfa98xx/
+obj-m	+= audio/
+#endif /* OPLUS_ARCH_EXTENDS */
 obj-$(CONFIG_SND_SOC_AA006)	+= aa006/
 obj-$(CONFIG_SND_SOC_BB007)	+= bb007/
 obj-$(CONFIG_SND_SOC_AD10)	+= ad10/

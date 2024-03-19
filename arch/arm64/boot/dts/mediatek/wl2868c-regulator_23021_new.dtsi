@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (C) 2021 MediaTek Inc.
+ */
+
+&pio {
+	wl2868c_default_a: state_default_a {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO149__FUNC_GPIO149>;
+		};
+	};
+	wl2868c_reset_high_a: state_reset_high_a {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO149__FUNC_GPIO149>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+	wl2868c_reset_low_a: state_reset_low_a {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO149__FUNC_GPIO149>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+/*
+	wl2868c_default_b: state_default_b {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO161__FUNC_GPIO161>;
+		};
+	};
+	wl2868c_reset_high_b: state_reset_high_b {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO161__FUNC_GPIO161>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+	wl2868c_reset_low_b: state_reset_low_b {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO161__FUNC_GPIO161>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+*/
+	I2C3_pins_default: I2C3_pins_default {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO129__FUNC_SCL3>,
+				 <PINMUX_GPIO130__FUNC_SDA3>;
+			bias-pull-up = <MTK_PULL_SET_RSEL_101>;
+		};
+	};
+
+/*
+	I2C9_pins_default: I2C9_pins_default {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO131__FUNC_SCL9>,
+				 <PINMUX_GPIO132__FUNC_SDA9>;
+			bias-pull-up = <MTK_PULL_SET_RSEL_101>;
+		};
+	};
+*/
+};
+
+&i2c3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&I2C3_pins_default>;
+	status = "okay";
+
+	clock-frequency = <400000>;
+	wl2868ca@2F {
+		compatible = "wl2868c-pmic";
+		reg = <0x2F>;
+		//vin12-supply = <&gpio159_regulator>;
+		pinctrl-names = "default", "reset_high", "reset_low";
+		pinctrl-0 = <&wl2868c_default_a>;
+		pinctrl-1 = <&wl2868c_reset_high_a>;
+		pinctrl-2 = <&wl2868c_reset_low_a>;
+		regulators {
+			wl2868c_ldo1a:ONLDO1 {
+				regulator-name = "wl2868c_ldo1a";
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1200000>;
+			};
+			wl2868c_ldo2a:ONLDO2 {
+				regulator-name = "wl2868c_ldo2a";
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1200000>;
+			};
+			wl2868c_ldo3a:ONLDO3 {
+				regulator-name = "wl2868c_ldo3a";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <2904000>;
+			};
+			wl2868c_ldo4a:ONLDO4 {
+				regulator-name = "wl2868c_ldo4a";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <2904000>;
+			};
+			wl2868c_ldo5a:ONLDO5 {
+				regulator-name = "wl2868c_ldo5a";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <3400000>;
+			};
+			wl2868c_ldo6a:ONLDO6 {
+				regulator-name = "wl2868c_ldo6a";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <3000000>;
+			};
+			wl2868c_ldo7a:ONLDO7 {
+				regulator-name = "wl2868c_ldo7a";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <3000000>;
+			};
+		};
+	};
+};
+
+/*
+&i2c9 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&I2C9_pins_default>;
+	status = "okay";
+
+	clock-frequency = <400000>;
+	wl2868cb@2F {
+		compatible = "wl2868c-pmic";
+		reg = <0x2F>;
+		//vin12-supply = <&gpio159_regulator>;
+		pinctrl-names = "default", "reset_high", "reset_low";
+		pinctrl-0 = <&wl2868c_default_b>;
+		pinctrl-1 = <&wl2868c_reset_high_b>;
+		pinctrl-2 = <&wl2868c_reset_low_b>;
+		regulators {
+			wl2868c_ldo1b:ONLDO1 {
+				regulator-name = "wl2868c_ldo1b";
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1200000>;
+			};
+			wl2868c_ldo2b:ONLDO2 {
+				regulator-name = "wl2868c_ldo2b";
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1200000>;
+			};
+			wl2868c_ldo3b:ONLDO3 {
+				regulator-name = "wl2868c_ldo3b";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <2904000>;
+			};
+			wl2868c_ldo4b:ONLDO4 {
+				regulator-name = "wl2868c_ldo4b";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <2904000>;
+			};
+			wl2868c_ldo5b:ONLDO5 {
+				regulator-name = "wl2868c_ldo5b";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <3400000>;
+			};
+			wl2868c_ldo6b:ONLDO6 {
+				regulator-name = "wl2868c_ldo6b";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <3000000>;
+			};
+			wl2868c_ldo7b:ONLDO7 {
+				regulator-name = "wl2868c_ldo7b";
+				regulator-min-microvolt = <2680000>;
+				regulator-max-microvolt = <3000000>;
+			};
+		};
+	};
+};
+*/

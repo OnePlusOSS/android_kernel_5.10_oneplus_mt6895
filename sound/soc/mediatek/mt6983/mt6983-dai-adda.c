@@ -211,6 +211,9 @@ static const struct snd_kcontrol_new mtk_adda_dl_ch1_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL7_CH1", AFE_CONN3_1, I_DL7_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL8_CH1", AFE_CONN3_1, I_DL8_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH1", AFE_CONN3_2, I_DL11_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH3", AFE_CONN3_2, I_DL11_CH3, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH5", AFE_CONN3_2, I_DL11_CH5, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH7", AFE_CONN3_2, I_DL11_CH7, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH3", AFE_CONN3,
 				    I_ADDA_UL_CH3, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH2", AFE_CONN3,
@@ -245,6 +248,9 @@ static const struct snd_kcontrol_new mtk_adda_dl_ch2_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL7_CH2", AFE_CONN4_1, I_DL7_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL8_CH2", AFE_CONN4_1, I_DL8_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH2", AFE_CONN4_2, I_DL11_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH4", AFE_CONN4_2, I_DL11_CH4, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH6", AFE_CONN4_2, I_DL11_CH6, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH8", AFE_CONN4_2, I_DL11_CH8, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH3", AFE_CONN4,
 				    I_ADDA_UL_CH3, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH2", AFE_CONN4,
@@ -277,6 +283,9 @@ static const struct snd_kcontrol_new mtk_adda_dl_ch3_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH1", AFE_CONN52_1, I_DL4_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL5_CH1", AFE_CONN52_1, I_DL5_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL6_CH1", AFE_CONN52_1, I_DL6_CH1, 1, 0),
+//#ifdef  OPLUS_ARCH_EXTENDS
+	SOC_DAPM_SINGLE_AUTODISABLE("DL8_CH1", AFE_CONN52_1, I_DL8_CH1, 1, 0),
+//#endif
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH1", AFE_CONN52_2, I_DL11_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH3", AFE_CONN52,
 				    I_ADDA_UL_CH3, 1, 0),
@@ -303,6 +312,9 @@ static const struct snd_kcontrol_new mtk_adda_dl_ch4_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH2", AFE_CONN53_1, I_DL4_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL5_CH2", AFE_CONN53_1, I_DL5_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL6_CH2", AFE_CONN53_1, I_DL6_CH1, 1, 0),
+//#ifdef  OPLUS_ARCH_EXTENDS
+	SOC_DAPM_SINGLE_AUTODISABLE("DL8_CH2", AFE_CONN53_1, I_DL8_CH2, 1, 0),
+//#endif
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH2", AFE_CONN53_2, I_DL11_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH3", AFE_CONN53,
 				    I_ADDA_UL_CH3, 1, 0),
@@ -855,12 +867,24 @@ static int mtk_stf_event(struct snd_soc_dapm_widget *w,
 	if (ul_rate == MTK_AFE_ADDA_UL_RATE_48K) {
 		half_tap_num = ARRAY_SIZE(stf_coeff_table_48k);
 		stf_coeff_table = stf_coeff_table_48k;
+		regmap_update_bits(afe->regmap,
+				   AFE_SIDETONE_DEBUG,
+				   STF_EN_SEL_MASK_SFT,
+				   10 << STF_EN_SEL_SFT);
 	} else if (ul_rate == MTK_AFE_ADDA_UL_RATE_32K) {
 		half_tap_num = ARRAY_SIZE(stf_coeff_table_32k);
 		stf_coeff_table = stf_coeff_table_32k;
+		regmap_update_bits(afe->regmap,
+				   AFE_SIDETONE_DEBUG,
+				   STF_EN_SEL_MASK_SFT,
+				   8 << STF_EN_SEL_SFT);
 	} else {
 		half_tap_num = ARRAY_SIZE(stf_coeff_table_16k);
 		stf_coeff_table = stf_coeff_table_16k;
+		regmap_update_bits(afe->regmap,
+				   AFE_SIDETONE_DEBUG,
+				   STF_EN_SEL_MASK_SFT,
+				   4 << STF_EN_SEL_SFT);
 	}
 
 	regmap_read(afe->regmap, AFE_SIDETONE_CON1, &reg_value);
@@ -948,6 +972,10 @@ static int mtk_stf_event(struct snd_soc_dapm_widget *w,
 				   AFE_SIDETONE_GAIN,
 				   POSITIVE_GAIN_MASK_SFT,
 				   0);
+		regmap_update_bits(afe->regmap,
+				   AFE_SIDETONE_DEBUG,
+				   STF_EN_SEL_MASK_SFT,
+				   0 << STF_EN_SEL_SFT);
 		break;
 	default:
 		break;
@@ -1172,6 +1200,15 @@ static const struct snd_soc_dapm_route mtk_dai_adda_routes[] = {
 	{"ADDA_DL_CH1", "DL5_CH1", "DL5"},
 	{"ADDA_DL_CH2", "DL5_CH2", "DL5"},
 
+	{"ADDA_DL_CH1", "DL11_CH1", "DL11"},
+	{"ADDA_DL_CH2", "DL11_CH2", "DL11"},
+	{"ADDA_DL_CH1", "DL11_CH3", "DL11"},
+	{"ADDA_DL_CH2", "DL11_CH4", "DL11"},
+	{"ADDA_DL_CH1", "DL11_CH5", "DL11"},
+	{"ADDA_DL_CH2", "DL11_CH6", "DL11"},
+	{"ADDA_DL_CH1", "DL11_CH7", "DL11"},
+	{"ADDA_DL_CH2", "DL11_CH8", "DL11"},
+
 	{"ADDA_DL_CH1", "HW_SRC_3_OUT_CH1", "HW_SRC_3_Out"},
 	{"ADDA_DL_CH2", "HW_SRC_3_OUT_CH2", "HW_SRC_3_Out"},
 
@@ -1191,7 +1228,10 @@ static const struct snd_soc_dapm_route mtk_dai_adda_routes[] = {
 
 	{"ADDA_DL_CH3", "DL6_CH1", "DL6"},
 	{"ADDA_DL_CH4", "DL6_CH2", "DL6"},
-
+//#ifdef  OPLUS_ARCH_EXTENDS
+	{"ADDA_DL_CH3", "DL8_CH1", "DL8"},
+	{"ADDA_DL_CH4", "DL8_CH2", "DL8"},
+//#endif
 	{"ADDA_DL_CH3", "DL2_CH1", "DL2"},
 	{"ADDA_DL_CH4", "DL2_CH1", "DL2"},
 	{"ADDA_DL_CH4", "DL2_CH2", "DL2"},
@@ -1244,6 +1284,8 @@ static const struct snd_soc_dapm_route mtk_dai_adda_routes[] = {
 	{"AP DMIC CH34 Capture", NULL, "AP_DMIC_CH34_INPUT"},
 
 	/* sidetone filter */
+	{"STF_CH1", "ADDA_UL_CH1", "ADDA_UL_Mux"},
+	{"STF_CH2", "ADDA_UL_CH2", "ADDA_UL_Mux"},
 	{"Sidetone Filter", "Switch", "STF_CH1"},
 	{"Sidetone Filter", "Switch", "STF_CH2"},
 

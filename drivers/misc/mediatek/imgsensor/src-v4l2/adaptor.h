@@ -24,6 +24,22 @@
 
 #define to_ctx(__sd) container_of(__sd, struct adaptor_ctx, sd)
 
+#define adaptor_logd(_ctx, format, args...) do { \
+	if ((_ctx) && unlikely(*((_ctx)->sensor_debug_flag))) { \
+		dev_info((_ctx)->dev, "[%s][%s][%s] " format, \
+			(_ctx)->sd.name, \
+			(_ctx)->subdrv->name, __func__, ##args); \
+	} \
+} while (0)
+
+#define adaptor_logi(_ctx, format, args...) do { \
+	if (_ctx) { \
+		dev_info((_ctx)->dev, "[%s][%s][%s] " format, \
+			(_ctx)->sd.name, \
+			(_ctx)->subdrv->name, __func__, ##args); \
+	} \
+} while (0)
+
 struct adaptor_ctx;
 static unsigned int sensor_debug;
 
@@ -80,7 +96,6 @@ struct adaptor_ctx {
 
 	/* custom v4l2 ctrls */
 	struct v4l2_ctrl *anti_flicker;
-	struct v4l2_ctrl *frame_sync;
 	struct v4l2_ctrl *analogue_gain;
 	struct v4l2_ctrl *awb_gain;
 	struct v4l2_ctrl *shutter_gain_sync;
@@ -92,8 +107,13 @@ struct adaptor_ctx {
 	struct v4l2_ctrl *hdr_atr;
 	struct v4l2_ctrl *hdr_tri_shutter;
 	struct v4l2_ctrl *hdr_tri_gain;
-	struct v4l2_ctrl *fsync_map_id;
 	struct v4l2_ctrl *hdr_ae_ctrl;
+
+	/* custom v4l2 ctrls - frame sync - */
+	struct v4l2_ctrl *frame_sync;
+	struct v4l2_ctrl *fsync_async_master;
+	struct v4l2_ctrl *fsync_map_id;
+	struct v4l2_ctrl *fsync_listen_target;
 
 	/* hw handles */
 	struct clk *clk[CLK_MAXCNT];
@@ -138,8 +158,20 @@ struct adaptor_ctx {
 	MSDK_SENSOR_REG_INFO_STRUCT sensorReg;
 
 	unsigned int *sensor_debug_flag;
+	unsigned int sof_cnt; /* from seninf vsync notify */
+	int req_id; /* from mtk hdr ae ctrl */
 	u32 shutter_for_timeout;
 	struct wakeup_source *sensor_ws;
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*Added by rentianzhi@CamDrv, release the hw resource for Explorer AON driver, 20220124*/
+	unsigned int support_explorer_aon_fl;//1:use explorer AON driver
+	int aon_irq_gpio;
+	int pid;
+	int irq_cnt;
+	struct work_struct aon_wq;
+	struct mutex hw_mutex;
+	#endif
+
 };
 
 #endif

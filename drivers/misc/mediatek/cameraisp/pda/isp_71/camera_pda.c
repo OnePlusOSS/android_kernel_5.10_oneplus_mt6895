@@ -116,6 +116,9 @@ static const char * const clk_names[] = {
 	"cam_main_cam2mm0_gals_cg_con",
 	"cam_main_cam2mm1_gals_cg_con",
 	"cam_main_cam_cg_con",
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	"cam_main_cam_mraw_cg_con",
+#endif
 };
 #define PDA_CLK_NUM ARRAY_SIZE(clk_names)
 struct PDA_CLK_STRUCT pda_clk[PDA_CLK_NUM];

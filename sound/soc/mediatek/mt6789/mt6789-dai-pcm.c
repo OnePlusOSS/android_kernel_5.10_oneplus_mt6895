@@ -80,6 +80,21 @@ enum AUD_PCM_EN {
 };
 
 /* dai component */
+static const struct snd_kcontrol_new mtk_pcm_1_playback_ch4_mix[] = {
+	SOC_DAPM_SINGLE_AUTODISABLE("I2S0_CH1", AFE_CONN27,
+				    I_I2S0_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("I2S0_CH2", AFE_CONN27,
+				    I_I2S0_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL1_CH1", AFE_CONN27,
+				    I_DL1_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("I2S2_CH1", AFE_CONN27,
+				    I_I2S2_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("I2S2_CH2", AFE_CONN27,
+				    I_I2S2_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH1", AFE_CONN27_1,
+				    I_DL4_CH1, 1, 0),
+};
+
 static const struct snd_kcontrol_new mtk_pcm_2_playback_ch1_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH1", AFE_CONN17,
 				    I_ADDA_UL_CH1, 1, 0),
@@ -145,6 +160,9 @@ static int mtk_pcm_en_event(struct snd_soc_dapm_widget *w,
 
 static const struct snd_soc_dapm_widget mtk_dai_pcm_widgets[] = {
 	/* inter-connections */
+	SND_SOC_DAPM_MIXER("PCM_1_PB_CH4", SND_SOC_NOPM, 0, 0,
+			   mtk_pcm_1_playback_ch4_mix,
+			   ARRAY_SIZE(mtk_pcm_1_playback_ch4_mix)),
 	SND_SOC_DAPM_MIXER("PCM_2_PB_CH1", SND_SOC_NOPM, 0, 0,
 			   mtk_pcm_2_playback_ch1_mix,
 			   ARRAY_SIZE(mtk_pcm_2_playback_ch1_mix)),

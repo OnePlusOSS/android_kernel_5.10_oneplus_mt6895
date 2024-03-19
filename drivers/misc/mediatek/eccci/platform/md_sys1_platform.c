@@ -416,7 +416,7 @@ int md1_revert_sequencer_setting(struct ccci_modem *md)
 	int count = 0;
 
 	CCCI_NORMAL_LOG(md->index, TAG,
-		"[POWER OFF] %s start\n", __func__);
+		"[POWER OFF] %s start exp5\n", __func__);
 
 	if (!(md_cd_plat_val_ptr.power_flow_config & (1 << REVERT_SEQUENCER_BIT))) {
 		CCCI_BOOTUP_LOG(md->index, TAG,
@@ -458,9 +458,7 @@ int md1_revert_sequencer_setting(struct ccci_modem *md)
 	CCCI_NORMAL_LOG(md->index, TAG,
 		"[POWER OFF] wait sequencer done\n");
 
-	/* revert mux of sequencer to AOC1.0 */
 	ccci_write32(reg, 0x208, 0x5000D);
-
 	CCCI_NORMAL_LOG(md->index, TAG,
 		"[POWER OFF] %s end\n", __func__);
 

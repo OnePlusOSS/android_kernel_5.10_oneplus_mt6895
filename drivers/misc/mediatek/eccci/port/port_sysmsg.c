@@ -30,7 +30,6 @@ struct md_rf_notify_struct {
 
 #define MD_RF_NOTIFY(bit, func, name) \
 extern void func(unsigned int para0, unsigned int para1);
-
 #include "mdrf_notify_list.h"
 
 #undef MD_RF_NOTIFY

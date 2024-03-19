@@ -29,6 +29,7 @@
 #include "mcp.h"	/* mcp_get_version */
 #include "protocol.h"
 #include "user.h"
+#include "nq.h"
 
 /*
  * Get client object from file pointer
@@ -387,10 +388,17 @@ err_mmu:
 			break;
 		}
 
+        if (command.command_id == 0xF9147E18) {
+            boost_tee();
+        }
 		ret = client_gp_invoke_command(client, command.session_id,
 					       command.command_id,
 					       &command.operation,
 					       &command.ret);
+
+        if (command.command_id == 0xF9147E18) {
+            deboost_tee();
+        }
 
 		if (copy_to_user(uarg, &command, sizeof(command))) {
 			ret = -EFAULT;

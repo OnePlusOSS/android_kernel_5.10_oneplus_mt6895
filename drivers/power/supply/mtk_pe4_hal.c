@@ -557,7 +557,11 @@ int pe40_hal_get_adapter_status(struct chg_alg_device *alg,
 
 static int get_pmic_vbus(int *vchr)
 {
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	union power_supply_propval prop = { 0 };
+#else
 	union power_supply_propval prop;
+#endif
 	static struct power_supply *chg_psy;
 	int ret;
 

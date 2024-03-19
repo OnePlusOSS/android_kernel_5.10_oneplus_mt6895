@@ -16,6 +16,7 @@
 #define MTK_DRM_PROP_OVERLAP_LAYER_NUM  "OVERLAP_LAYER_NUM"
 #define MTK_DRM_PROP_NEXT_BUFF_IDX  "NEXT_BUFF_IDX"
 #define MTK_DRM_PROP_PRESENT_FENCE  "PRESENT_FENCE"
+#define MTK_DRM_CCORR_LINEAR_OFFSET 16 /* Linear:1 Nonlinear:0 */
 
 struct mml_frame_info;
 
@@ -459,6 +460,7 @@ struct DISP_DITHER_PARAM {
 #define DRM_MTK_AAL_EVENTCTL	0x33
 #define DRM_MTK_AAL_INIT_DRE30	0x34
 #define DRM_MTK_AAL_GET_SIZE	0x35
+#define DRM_MTK_AAL_SET_TRIGGER_STATE 0x5F
 
 #define DRM_MTK_HDMI_GET_DEV_INFO	0x3A
 #define DRM_MTK_HDMI_AUDIO_ENABLE	0x3B
@@ -488,6 +490,8 @@ struct DISP_DITHER_PARAM {
 
 #define DRM_MTK_AIBLD_CV_MODE 0x58
 #define DRM_MTK_GET_PANELS_INFO 0x5a
+
+#define DRM_MTK_KICK_IDLE 0x5b
 
 /* C3D */
 #define DISP_C3D_1DLUT_SIZE 32
@@ -626,6 +630,7 @@ enum DRM_REPAINT_TYPE {
 	DRM_REPAINT_FOR_SWITCH_DECOUPLE,
 	DRM_REPAINT_FOR_SWITCH_DECOUPLE_MIRROR,
 	DRM_REPAINT_FOR_IDLE,
+	DRM_REPAINT_FOR_ESD,
 	DRM_REPAINT_TYPE_NUM,
 };
 
@@ -1151,6 +1156,9 @@ struct mtk_drm_panels_info {
 #define DRM_IOCTL_MTK_SET_PQ_CAPS    DRM_IOWR(DRM_COMMAND_BASE + \
 			DRM_MTK_SET_PQ_CAPS, struct mtk_drm_pq_caps_info)
 
+#define DRM_IOCTL_MTK_KICK_IDLE    DRM_IOWR(DRM_COMMAND_BASE + \
+			DRM_MTK_KICK_IDLE, unsigned int)
+
 /* AAL IOCTL */
 #define AAL_HIST_BIN            33	/* [0..32] */
 #define AAL_DRE_POINT_NUM       29
@@ -1201,6 +1209,9 @@ struct DISP_AAL_INITREG {
 	int blk_cnt_y_end;
 	int last_tile_x_flag;
 	int last_tile_y_flag;
+	bool isdual;
+	int width;
+	int height;
 };
 
 enum rgbSeq {
@@ -1252,6 +1263,7 @@ struct DISP_AAL_HIST {
 	int srcWidth;
 	int srcHeight;
 	int pipeLineNum;
+	bool need_config;
 };
 
 #define DRM_IOCTL_MTK_AAL_INIT_REG	DRM_IOWR(DRM_COMMAND_BASE + \
@@ -1271,6 +1283,9 @@ struct DISP_AAL_HIST {
 
 #define DRM_IOCTL_MTK_AAL_GET_SIZE	DRM_IOWR(DRM_COMMAND_BASE + \
 			DRM_MTK_AAL_GET_SIZE, struct DISP_AAL_DISPLAY_SIZE)
+
+#define DRM_IOCTL_MTK_AAL_SET_TRIGGER_STATE	DRM_IOWR(DRM_COMMAND_BASE + \
+			DRM_MTK_AAL_SET_TRIGGER_STATE, unsigned int)
 
 #define DRM_IOCTL_MTK_HDMI_GET_DEV_INFO     DRM_IOWR(DRM_COMMAND_BASE + \
 		DRM_MTK_HDMI_GET_DEV_INFO, struct mtk_dispif_info)

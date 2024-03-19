@@ -29,6 +29,13 @@
 #include <linux/mfd/mt6397/core.h>
 #include "mt6368-accdet.h"
 #include "mt6368.h"
+//support mic and ground switch to fix headset detect bug
+#include "audio/fsa44xx/fsa4480-i2c.h"
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+#define HEADSET_ERR_FB_VERSION    "1.0.0"
+#endif
+
 /* grobal variable definitions */
 #define REGISTER_VAL(x)	(x - 1)
 #define HAS_CAP(_c, _x)	(((_c) & (_x)) == (_x))
@@ -61,6 +68,10 @@
 #define EINT_PLUG_OUT			(0)
 #define EINT_PLUG_IN			(1)
 #define EINT_MOISTURE_DETECTED	(2)
+
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
 
 struct mt63xx_accdet_data {
 	struct snd_soc_jack jack;
@@ -109,6 +120,10 @@ struct mt63xx_accdet_data {
 	/* when eint issued, queue work: eint_work */
 	struct work_struct eint_work;
 	struct workqueue_struct *eint_workqueue;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	struct delayed_work fb_delaywork;
+	struct workqueue_struct *fb_workqueue;
+#endif
 	u32 water_r;
 	u32 moisture_ext_r;
 	u32 moisture_int_r;
@@ -187,6 +202,11 @@ static void recover_eint_digital_setting(void);
 static void recover_eint_setting(u32 eintsts);
 static void recover_moisture_setting(u32 moistureID);
 static void send_status_event(u32 cable_type, u32 status);
+
+#ifdef OPLUS_ARCH_EXTENDS
+static bool b_mic_ground_switch = false;
+extern int fsa4480_switch_event(struct device_node *node, enum fsa_function event);
+#endif /* OPLUS_ARCH_EXTENDS */
 
 /* global function declaration */
 inline u32 accdet_read(u32 addr)
@@ -897,6 +917,14 @@ static void send_status_event(u32 cable_type, u32 status)
 			report = SND_JACK_HEADPHONE;
 		else
 			report = 0;
+#ifdef OPLUS_ARCH_EXTENDS
+//support mic and ground switch to fix headset detect bug
+		if (status) {
+			fsa4480_switch_event(NULL, 0);
+			b_mic_ground_switch = true;
+			pr_info("fsa4480_switch_event  mic and ground switch\n");
+		}
+#endif
 		snd_soc_jack_report(&accdet->jack, report,
 				SND_JACK_HEADPHONE);
 		/* when plug 4-pole out, if both AB=3 AB=0 happen,3-pole plug
@@ -1646,17 +1674,54 @@ static void dis_micbias_work_callback(struct work_struct *work)
 	 * if <20k + 4pole, disable accdet will disable accdet
 	 * plug out interrupt. The behavior will same as 3pole
 	 */
+#ifdef OPLUS_ARCH_EXTENDS
+/* add for fix headset hook key up event lose issues */
+	if (accdet->cable_type == HEADSET_MIC) {
+		/* do nothing */
+	} else if ((accdet->cable_type == HEADSET_NO_MIC) ||
+		(cur_AB == ACCDET_STATE_AB_00) ||
+		(cur_AB == ACCDET_STATE_AB_11)) {
+#else // OPLUS_ARCH_EXTENDS
 	if ((accdet->cable_type == HEADSET_NO_MIC) ||
 		(cur_AB == ACCDET_STATE_AB_00) ||
 		(cur_AB == ACCDET_STATE_AB_11)) {
+#endif // OPLUS_ARCH_EXTENDS
 		/* disable accdet_sw_en=0
 		 * disable accdet_hwmode_en=0
 		 */
 		accdet_clear_bit(ACCDET_SW_EN_ADDR,
 			ACCDET_SW_EN_SFT);
 		disable_accdet();
+#ifdef OPLUS_ARCH_EXTENDS
+//support mic and ground switch to fix headset detect bug
+		if (b_mic_ground_switch) {
+			fsa4480_switch_event(NULL, 0);
+			b_mic_ground_switch = false;
+			pr_info("fsa4480_switch_event  mic and ground switch back\n");
+		}
+#endif /* OPLUS_ARCH_EXTENDS */
 	}
 }
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+static void feedback_work_callback(struct work_struct *work)
+{
+	char fd_buf[MM_KEVENT_MAX_PAYLOAD_SIZE] = {0};
+
+	pr_notice("%s enter\n", __func__);
+
+	mini_dump_register();
+
+	scnprintf(fd_buf, sizeof(fd_buf) - 1, \
+		"payload@@ACCDET_IRQ not trigger,cable_type=%u,caps=0x%x,cur_eint=%u," \
+		"eint0=%u,eint1=%u,regs:%s", \
+		accdet->cable_type, accdet->data->caps, accdet->eint_id, \
+		accdet->eint0_state, accdet->eint1_state, accdet_log_buf);
+
+	mm_fb_audio_kevent_named(OPLUS_AUDIO_EVENTID_HEADSET_DET,
+					MM_FB_KEY_RATELIMIT_5MIN, fd_buf);
+}
+#endif /*CONFIG_OPLUS_FEATURE_MM_FEEDBACK*/
 
 static void eint_work_callback(struct work_struct *work)
 {
@@ -1673,7 +1738,21 @@ static void eint_work_callback(struct work_struct *work)
 		accdet_init();
 
 		enable_accdet(0);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+/* delay time must less than __pm_wakeup_event time 7 * HZ */
+		if (accdet->fb_workqueue) {
+			queue_delayed_work(accdet->fb_workqueue, \
+					&accdet->fb_delaywork, 6 * HZ);
+			pr_notice("%s queue_delayed_work fb_delaywork\n", __func__);
+		}
+#endif
 	} else {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		if (accdet->fb_workqueue) {
+			cancel_delayed_work_sync(&accdet->fb_delaywork);
+			pr_notice("%s cancel_delayed_work_sync fb_delaywork\n", __func__);
+		}
+#endif
 		mutex_lock(&accdet->res_lock);
 		accdet->eint_sync_flag = false;
 		accdet->thing_in_flag = false;
@@ -1898,6 +1977,13 @@ static inline void check_cable_type(void)
 static void accdet_work_callback(struct work_struct *work)
 {
 	u32 pre_cable_type = accdet->cable_type;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (accdet->fb_workqueue) {
+		cancel_delayed_work_sync(&accdet->fb_delaywork);
+		pr_notice("%s cancel_delayed_work_sync fb_delaywork\n", __func__);
+	}
+#endif
 
 	__pm_stay_awake(accdet->wake_lock);
 	check_cable_type();
@@ -2811,8 +2897,14 @@ static void accdet_init_once(void)
 		accdet_write(RG_AUDACCDETMICBIAS0PULLLOW_ADDR,
 			reg | RG_ACCDET_MODE_ANA11_MODE2);
 		/* enable analog fast discharge */
+//#ifdef OPLUS_ARCH_EXTENDS
+//disable fast discharge
 		accdet_update_bits(RG_ANALOGFDEN_ADDR,
-			RG_ANALOGFDEN_SFT, 0x3, 0x3);
+			RG_ANALOGFDEN_SFT, 0x3, 0x2);
+//#else
+//		accdet_update_bits(RG_ANALOGFDEN_ADDR,
+//			RG_ANALOGFDEN_SFT, 0x3, 0x3);
+//#endif
 	} else if (accdet_dts.mic_mode == HEADSET_MODE_6) {
 		/* DCC mode Low cost mode with internal bias,
 		 * bit8 = 1 to use internal bias
@@ -3235,6 +3327,15 @@ static int accdet_probe(struct platform_device *pdev)
 		if (ret)
 			destroy_workqueue(accdet->eint_workqueue);
 	}
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	accdet->fb_workqueue = create_singlethread_workqueue("hs_feedback");
+	INIT_DELAYED_WORK(&accdet->fb_delaywork, feedback_work_callback);
+	if (!accdet->fb_workqueue) {
+		dev_dbg(&pdev->dev, "Error: Create feedback workqueue failed\n");
+	}
+	dev_info(&pdev->dev, "%s: event_id=%u, version:%s\n", __func__, \
+			OPLUS_AUDIO_EVENTID_HEADSET_DET, HEADSET_ERR_FB_VERSION);
+#endif
 
 	ret = accdet_create_attr(&accdet_driver.driver);
 	if (ret) {

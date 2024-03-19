@@ -15,11 +15,15 @@
 #include <linux/jump_label.h>
 #include <trace/events/sched.h>
 #include <trace/events/task.h>
+#include <trace/hooks/cpufreq.h>
 #include <trace/hooks/sched.h>
 #include <sched/sched.h>
 #include "common.h"
 #include "eas_plus.h"
 #include "sched_sys_common.h"
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include "eas_trace.h"
@@ -115,6 +119,13 @@ static void sched_queue_task_hook(void *data, struct rq *rq, struct task_struct 
 		per_cpu(cpufreq_idle_cpu, cpu) = 0;
 	spin_unlock(&per_cpu(cpufreq_idle_cpu_lock, cpu));
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (type == enqueue)
+		android_rvh_enqueue_task_handler(data, rq, p, flags);
+	else
+		android_rvh_dequeue_task_handler(data, rq, p, flags);
+#endif
 }
 
 static void mtk_sched_trace_init(void)
@@ -200,6 +211,7 @@ static int __init mtk_scheduler_init(void)
 		pr_info("register android_rvh_sched_newidle_balance failed\n");
 #endif
 #endif
+	ret = register_trace_android_vh_show_max_freq(op_show_cpuinfo_max_freq, NULL);
 
 	ret = register_trace_android_vh_scheduler_tick(hook_scheduler_tick, NULL);
 	if (ret)
@@ -234,6 +246,7 @@ static void __exit mtk_scheduler_exit(void)
 {
 	mtk_sched_trace_exit();
 	unregister_trace_android_vh_scheduler_tick(hook_scheduler_tick, NULL);
+	unregister_trace_android_vh_show_max_freq(op_show_cpuinfo_max_freq, NULL);
 #if IS_ENABLED(CONFIG_MTK_SCHED_BIG_TASK_ROTATE)
 	unregister_trace_task_newtask(rotat_task_newtask, NULL);
 #endif

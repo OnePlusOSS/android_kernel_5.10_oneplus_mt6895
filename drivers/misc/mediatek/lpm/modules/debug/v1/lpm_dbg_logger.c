@@ -54,6 +54,8 @@ static struct lpm_dbg_plat_ops _lpm_dbg_plat_ops;
 void __iomem *lpm_spm_base;
 EXPORT_SYMBOL(lpm_spm_base);
 
+extern void cmdq_dump_usage(void);
+
 struct lpm_log_helper lpm_logger_help = {
 	//.wakesrc = &lpm_wake,
 	.wakesrc = NULL,
@@ -122,8 +124,11 @@ int lpm_dbg_plat_ops_register(struct lpm_dbg_plat_ops *lpm_dbg_plat_ops)
 	return 0;
 }
 EXPORT_SYMBOL(lpm_dbg_plat_ops_register);
-
-
+static void lpm_suspend_save_sleep_info_func(void)
+{
+	if (_lpm_dbg_plat_ops.lpm_save_sleep_info)
+		_lpm_dbg_plat_ops.lpm_save_sleep_info();
+}
 int lpm_issuer_func(int type, const char *prefix, void *data)
 {
 	if (!_lpm_dbg_plat_ops.lpm_get_wakeup_status)
@@ -162,12 +167,6 @@ struct notifier_block lpm_idle_save_sleep_info_nb = {
 	.notifier_call = lpm_idle_save_sleep_info_nb_func,
 };
 
-static void lpm_suspend_save_sleep_info_func(void)
-{
-	if (_lpm_dbg_plat_ops.lpm_save_sleep_info)
-		_lpm_dbg_plat_ops.lpm_save_sleep_info();
-}
-
 static struct syscore_ops lpm_suspend_save_sleep_info_syscore_ops = {
 	.resume = lpm_suspend_save_sleep_info_func,
 };
@@ -204,6 +203,11 @@ static int lpm_log_timer_func(unsigned long long dur, void *priv)
 
 	pm_get_active_wakeup_sources(wakeup_sources, MAX_SUSPEND_ABORT_LEN);
 	pr_info("[name:spm&] %s\n", wakeup_sources);
+
+	if (strstr(wakeup_sources, "cmdq_0_pm_lock") || strstr(wakeup_sources, "cmdq_1_pm_lock")) {
+		pr_info("cmdq acquire wakelock\n");
+		cmdq_dump_usage();
+	}
 
 	timer->fired = info->fired;
 	return 0;
@@ -289,7 +293,147 @@ int lpm_logger_timer_debugfs_init(void)
 				&lpm_log_tm_interval.handle);
 	return 0;
 }
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+u32 *md_share_mem;
+struct md_sleep_status before_md_sleep_status;
+struct md_sleep_status after_md_sleep_status;
+struct md_sleep_status cur_md_sleep_status;
+EXPORT_SYMBOL(before_md_sleep_status);
+EXPORT_SYMBOL(after_md_sleep_status);
+EXPORT_SYMBOL(cur_md_sleep_status);
+#define MD_GUARD_NUMBER 0x536C702E
+#define GET_RECORD_CNT1(n) ((n >> 32) & 0xFFFFFFFF)
+#define GET_RECORD_CNT2(n) (n & 0xFFFFFFFF)
+#define GET_GUARD_L(n) (n & 0xFFFFFFFF)
+#define GET_GUARD_H(n) ((n >> 32) & 0xFFFFFFFF)
+#endif
+static void get_md_sleep_time_addr(void)
+{
+	/* dump subsystem sleep info */
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+	int ret;
+	u64 of_find;
+	struct device_node *mddriver = NULL;
 
+	mddriver = of_find_compatible_node(NULL, NULL, "mediatek,mddriver");
+	if (!mddriver) {
+		pr_info("mddriver not found in DTS\n");
+		return;
+	}
+
+	ret =  of_property_read_u64(mddriver, "md_low_power_addr", &of_find);
+
+	if (ret) {
+		pr_info("address not found in DTS");
+		return;
+	}
+
+	md_share_mem = (u32 *)ioremap_wc(of_find, 0x200);
+
+	if (md_share_mem == NULL) {
+		pr_info("[name:spm&][%s:%d] - No MD share mem\n",
+			 __func__, __LINE__);
+		return;
+	}
+#endif
+}
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+void get_md_sleep_time(struct md_sleep_status *md_data)
+{
+	if (!md_data)
+		return;
+
+	/* dump subsystem sleep info */
+	if (md_share_mem ==  NULL) {
+		pr_info("MD shared memory is NULL");
+	} else {
+		memset(md_data, 0, sizeof(struct md_sleep_status));
+		memcpy(md_data, md_share_mem, sizeof(struct md_sleep_status));
+		return;
+	}
+}
+EXPORT_SYMBOL(get_md_sleep_time);
+
+int is_md_sleep_info_valid(struct md_sleep_status *md_data)
+{
+	u32 guard_l, guard_h, cnt1, cnt2;
+
+	if (!md_data)
+		return 0;
+
+	guard_l = GET_GUARD_L(md_data->guard_sleep_cnt1);
+	guard_h = GET_GUARD_H(md_data->guard_sleep_cnt2);
+	cnt1 = GET_RECORD_CNT1(md_data->guard_sleep_cnt1);
+	cnt2 = GET_RECORD_CNT2(md_data->guard_sleep_cnt2);
+
+	if ((guard_l != MD_GUARD_NUMBER) || (guard_h != MD_GUARD_NUMBER))
+		return 0;
+
+	if (cnt1 != cnt2)
+		return 0;
+
+	return 1;
+}
+EXPORT_SYMBOL(is_md_sleep_info_valid);
+
+void log_md_sleep_info(void)
+{
+
+#define LOG_BUF_SIZE	256
+	char log_buf[LOG_BUF_SIZE] = { 0 };
+	int log_size = 0;
+
+	if (!is_md_sleep_info_valid(&before_md_sleep_status)
+		|| !is_md_sleep_info_valid(&after_md_sleep_status)) {
+		pr_info("[name:spm&][SPM] MD sleep info. is not valid");
+		return;
+	}
+
+	if (GET_RECORD_CNT1(after_md_sleep_status.guard_sleep_cnt1)
+		== GET_RECORD_CNT1(before_md_sleep_status.guard_sleep_cnt1)) {
+		pr_info("[name:spm&][SPM] MD sleep info. is not updated");
+		return;
+	}
+
+	if (after_md_sleep_status.sleep_time >= before_md_sleep_status.sleep_time) {
+		pr_info("[name:spm&][SPM] md_slp_duration = %llu (32k)\n",
+			after_md_sleep_status.sleep_time - before_md_sleep_status.sleep_time);
+
+		log_size += scnprintf(log_buf + log_size,
+		LOG_BUF_SIZE - log_size, "[name:spm&][SPM] ");
+		log_size += scnprintf(log_buf + log_size,
+		LOG_BUF_SIZE - log_size, "MD/2G/3G/4G/5G_FR1 = ");
+		log_size += scnprintf(log_buf + log_size,
+		LOG_BUF_SIZE - log_size, "%d.%03d/%d.%03d/%d.%03d/%d.%03d/%d.%03d seconds",
+			(after_md_sleep_status.md_sleep_time -
+				before_md_sleep_status.md_sleep_time) / 1000000,
+			(after_md_sleep_status.md_sleep_time -
+				before_md_sleep_status.md_sleep_time) % 1000000 / 1000,
+			(after_md_sleep_status.gsm_sleep_time -
+				before_md_sleep_status.gsm_sleep_time) / 1000000,
+			(after_md_sleep_status.gsm_sleep_time -
+				before_md_sleep_status.gsm_sleep_time) % 1000000 / 1000,
+			(after_md_sleep_status.wcdma_sleep_time -
+				before_md_sleep_status.wcdma_sleep_time) / 1000000,
+			(after_md_sleep_status.wcdma_sleep_time -
+				before_md_sleep_status.wcdma_sleep_time) % 1000000 / 1000,
+			(after_md_sleep_status.lte_sleep_time -
+				before_md_sleep_status.lte_sleep_time) / 1000000,
+			(after_md_sleep_status.lte_sleep_time -
+				before_md_sleep_status.lte_sleep_time) % 1000000 / 1000,
+			(after_md_sleep_status.nr_sleep_time -
+				before_md_sleep_status.nr_sleep_time) / 1000000,
+			(after_md_sleep_status.nr_sleep_time -
+				before_md_sleep_status.nr_sleep_time) % 10000000 / 1000);
+
+		WARN_ON(strlen(log_buf) >= LOG_BUF_SIZE);
+		pr_info("[name:spm&][SPM] %s", log_buf);
+	}
+}
+EXPORT_SYMBOL(log_md_sleep_info);
+#endif
+#endif
 int lpm_logger_init(void)
 {
 	struct device_node *node = NULL;
@@ -392,14 +536,16 @@ int lpm_logger_init(void)
 	if (ret)
 		pr_info("[%s:%d] - spm_cond_init failed\n",
 			__func__, __LINE__);
-
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+	get_md_sleep_time_addr();
+#endif
 	register_syscore_ops(&lpm_suspend_save_sleep_info_syscore_ops);
 
 	return 0;
 }
 EXPORT_SYMBOL(lpm_logger_init);
 
-void __exit lpm_logger_deinit(void)
+void lpm_logger_deinit(void)
 {
 	struct device_node *node = NULL;
 	int state_cnt = 0;

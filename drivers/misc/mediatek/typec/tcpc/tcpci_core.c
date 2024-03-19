@@ -166,15 +166,24 @@ static ssize_t tcpc_show_property(struct device *dev,
 			break;
 		break;
 	case TCPC_DESC_RP_LEVEL:
-		if (tcpc->typec_local_rp_level == TYPEC_CC_RP_DFT) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*		if (tcpc->typec_local_rp_level == TYPEC_CC_RP_DFT) {*/
+		if (tcpc->typec_local_rp_level == TYPEC_RP_DFT) {
+/*#endif*/
 			ret = snprintf(buf, 256, "%s\n", "Default");
 			if (ret < 0)
 				break;
-		} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_1_5) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*		} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_1_5) {*/
+		} else if (tcpc->typec_local_rp_level == TYPEC_RP_1_5) {
+/*#endif*/
 			ret = snprintf(buf, 256, "%s\n", "1.5");
 			if (ret < 0)
 				break;
-		} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_3_0) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*		} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_3_0) {*/
+		} else if (tcpc->typec_local_rp_level == TYPEC_RP_3_0) {
+/*#endif*/
 			ret = snprintf(buf, 256, "%s\n", "3.0");
 			if (ret < 0)
 				break;
@@ -198,15 +207,24 @@ static ssize_t tcpc_show_property(struct device *dev,
 			256, "role = %s\n", role_text[tcpc->desc.role_def]);
 		if (i < 0)
 			break;
-		if (tcpc->typec_local_rp_level == TYPEC_CC_RP_DFT) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		/*if (tcpc->typec_local_rp_level == TYPEC_CC_RP_DFT) {*/
+		if (tcpc->typec_local_rp_level == TYPEC_RP_DFT) {
+/*#endif*/
 			i += snprintf(buf + i, 256, "rplvl = %s\n", "Default");
 			if (i < 0)
 				break;
-		} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_1_5) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		/*} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_1_5) {*/
+		} else if (tcpc->typec_local_rp_level == TYPEC_RP_1_5) {
+/*#endif*/
 			i += snprintf(buf + i, 256, "rplvl = %s\n", "1.5");
 			if (i < 0)
 				break;
-		} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_3_0) {
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+		/*} else if (tcpc->typec_local_rp_level == TYPEC_CC_RP_3_0) {*/
+		} else if (tcpc->typec_local_rp_level == TYPEC_RP_3_0) {
+/*#endif*/
 			i += snprintf(buf + i, 256, "rplvl = %s\n", "3.0");
 			if (i < 0)
 				break;
@@ -471,15 +489,24 @@ int tcpc_device_irq_enable(struct tcpc_device *tcpc)
 		return ret;
 	}
 
+#ifdef CONFIG_OPLUS_CHARGER_MTK6789S
+	ret = tcpc_typec_init(tcpc, tcpc->desc.role_def + 1);
+#else
 	ret = tcpc_typec_init(tcpc, tcpc->desc.role_def);
+#endif
 	tcpci_unlock_typec(tcpc);
 	if (ret < 0) {
 		pr_err("%s : tcpc typec init fail\n", __func__);
 		return ret;
 	}
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	schedule_delayed_work(
+		&tcpc->event_init_work, msecs_to_jiffies(0));
+#else
 	schedule_delayed_work(
 		&tcpc->event_init_work, msecs_to_jiffies(10*1000));
+#endif
 
 	pr_info("%s : tcpc irq enable OK!\n", __func__);
 	return 0;

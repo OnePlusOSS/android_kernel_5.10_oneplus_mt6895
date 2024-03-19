@@ -26,6 +26,15 @@
 #include "ged_hashtable.h"
 #include "ged_sysfs.h"
 
+//Use tracing_is_on() to determine whether to print 5566 processes.
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+//Use tracing_is_on() to determine whether to print 5566 processes.
+#ifdef OPLUS_ARCH_EXTENDS
+#include "../../../../../kernel/trace/trace.h"
+#endif
+
 enum {
 	/* 0x00 - 0xff reserved for internal buffer type */
 
@@ -101,6 +110,7 @@ static GED_HASHTABLE_HANDLE ghHashTable;
 
 unsigned int ged_log_trace_enable;
 unsigned int ged_log_perf_trace_enable;
+unsigned int force_fence_timeout_dump_enable;
 
 static struct kobject *gpu_debug_kobj;
 static unsigned int gpu_debug_log_enable;
@@ -1078,6 +1088,7 @@ GED_ERROR ged_log_system_init(void)
 
 	ged_log_trace_enable = 0;
 	ged_log_perf_trace_enable = 0;
+	force_fence_timeout_dump_enable = 0;
 
 	err = ged_sysfs_create_dir(NULL, "gpu_debug", &gpu_debug_kobj);
 	if (unlikely(err != GED_OK)) {
@@ -1503,7 +1514,12 @@ void ged_log_perf_trace_counter(char *name, long long count, int pid,
 	char buf[256];
 	int cx;
 
-	if (ged_log_perf_trace_enable) {
+//Use tracing_is_on() to determine whether to print 5566 processes.
+#ifdef OPLUS_ARCH_EXTENDS
+        if (tracing_is_on()) {
+#else
+        if (ged_log_perf_trace_enable) {
+#endif
 		cx = snprintf(buf, sizeof(buf), "C|%d|%s|%lld|%llu|%lu\n",
 		pid, name, count, (unsigned long long)BQID, frameID);
 		if (cx >= 0 && cx < sizeof(buf))
@@ -1527,5 +1543,18 @@ void ged_log_perf_trace_batch_counter(char *name, long long count, int pid,
 }
 EXPORT_SYMBOL(ged_log_perf_trace_batch_counter);
 
+unsigned int force_fence_timeout_dump(bool reset)
+{
+	unsigned int ret = force_fence_timeout_dump_enable;
+
+	if (reset)
+		force_fence_timeout_dump_enable = 0;
+
+	return ret;
+}
+EXPORT_SYMBOL(force_fence_timeout_dump);
+
+
 module_param(ged_log_trace_enable, uint, 0644);
 module_param(ged_log_perf_trace_enable, uint, 0644);
+module_param(force_fence_timeout_dump_enable, uint, 0644);

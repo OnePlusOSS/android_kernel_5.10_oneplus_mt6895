@@ -24,7 +24,11 @@
 #include "mtk_log.h"
 #include "mtk_dump.h"
 #include "mtk_drm_helper.h"
+//#ifdef OPLUS_BUG_STABILITY
+#include "mtk_drm_trace.h"
+// #endif OPLUS_BUG_STABILITY
 #include "platform/mtk_drm_6789.h"
+#include "mtk_drm_mmp.h"
 
 #ifdef CONFIG_LEDS_MTK_MODULE
 #define CONFIG_LEDS_BRIGHTNESS_CHANGED
@@ -57,6 +61,12 @@
 #define CCORR_CLIP(val, min, max) ((val >= max) ? \
 	max : ((val <= min) ? min : val))
 
+//#ifdef OPLUS_BUG_STABILITY
+extern unsigned int oplus_display_brightness;
+//#endif /*OPLUS_BUG_STABILITY*/
+#ifdef OPLUS_FEATURE_DISPLAY
+extern bool g_ccorr_probe_ready;
+#endif
 static unsigned int g_ccorr_8bit_switch[DISP_CCORR_TOTAL];
 static unsigned int g_ccorr_relay_value[DISP_CCORR_TOTAL];
 
@@ -153,6 +163,7 @@ static struct DRM_DISP_CCORR_COEF_T g_multiply_matrix_coef;
 static int g_disp_ccorr_without_gamma;
 static int g_disp_ccorr_temp_linear;
 
+
 static DECLARE_WAIT_QUEUE_HEAD(g_ccorr_get_irq_wq);
 //static DEFINE_SPINLOCK(g_ccorr_get_irq_lock);
 static DEFINE_SPINLOCK(g_ccorr_clock_lock);
@@ -160,9 +171,16 @@ static atomic_t g_ccorr_get_irq = ATOMIC_INIT(0);
 
 /* FOR TRANSITION */
 static DEFINE_SPINLOCK(g_pq_bl_change_lock);
+#ifdef OPLUS_SILKY_ON_START_FRAME
+static int g_old_pq_backlight = 0;
+static int g_pq_backlight = 0;
+static int g_pq_backlight_db = 0;
+static int g_pq_ccorr_event = 0;
+#else
 static int g_old_pq_backlight;
 static int g_pq_backlight;
 static int g_pq_backlight_db;
+#endif
 static atomic_t g_ccorr_is_init_valid = ATOMIC_INIT(0);
 
 static DEFINE_MUTEX(g_ccorr_global_lock);
@@ -176,6 +194,8 @@ static DEFINE_MUTEX(g_ccorr_global_lock);
 // It's a work around for no comp assigned in functions.
 static struct mtk_ddp_comp *default_comp;
 static struct mtk_ddp_comp *ccorr1_default_comp;
+static struct mtk_ddp_comp *ccorr2_default_comp;
+static struct mtk_ddp_comp *ccorr3_default_comp;
 
 static int disp_ccorr_write_coef_reg(struct mtk_ddp_comp *comp,
 	struct cmdq_pkt *handle, int lock);
@@ -192,6 +212,7 @@ struct mtk_disp_ccorr {
 	struct drm_crtc *crtc;
 	const struct mtk_disp_ccorr_data *data;
 };
+
 
 static inline struct mtk_disp_ccorr *comp_to_ccorr(struct mtk_ddp_comp *comp)
 {
@@ -320,9 +341,13 @@ static int disp_ccorr_write_coef_reg(struct mtk_ddp_comp *comp,
 	if (lock)
 		mutex_lock(&g_ccorr_global_lock);
 
-	ccorr = g_disp_ccorr_coef[id];
 	DDPINFO("%s:ccorr id:%d,aosp ccorr:%d,nonlinear:%d\n", __func__, id,
 		disp_aosp_ccorr, g_disp_ccorr_without_gamma);
+	if (id == 2)
+		id = 0;
+	if (id == 3)
+		id = 1;
+	ccorr = g_disp_ccorr_coef[id];
 	if (ccorr == NULL) {
 		DDPINFO("%s: [%d] is not initialized\n", __func__, id);
 		ret = -EFAULT;
@@ -403,7 +428,7 @@ static int disp_ccorr_write_coef_reg(struct mtk_ddp_comp *comp,
 	} else {
 		/* use CMDQ to write */
 
-		cfg_val = 0x2 | g_ccorr_relay_value[index_of_ccorr(comp->id)] |
+		cfg_val = 0x2 | g_ccorr_relay_value[id] |
 				(g_disp_ccorr_without_gamma << 2 |
 				(g_ccorr_8bit_switch[id] << 10));
 
@@ -450,6 +475,18 @@ ccorr_write_coef_unlock:
 	return ret;
 }
 
+void disp_ccorr_on_start_of_frame(void) {
+#ifdef OPLUS_SILKY_ON_START_FRAME
+	if (flag_silky_panel
+		&& (g_old_pq_backlight != g_pq_backlight || g_pq_ccorr_event == 1)) {
+		DDPINFO("disp_ccorr_on_start_of_frame %d->%d , g_pq_ccorr_event(%d)\n", g_old_pq_backlight, g_pq_backlight, g_pq_ccorr_event);
+		g_old_pq_backlight = g_pq_backlight;
+		atomic_set(&g_ccorr_get_irq, 1);
+		wake_up_interruptible(&g_ccorr_get_irq_wq);
+	}
+#endif //OPLUS_SILKY_ON_START_FRAME
+}
+
 void disp_ccorr_on_end_of_frame(struct mtk_ddp_comp *comp)
 {
 	unsigned int intsta;
@@ -482,6 +519,13 @@ void disp_ccorr_on_end_of_frame(struct mtk_ddp_comp *comp)
 static void disp_ccorr_set_interrupt(struct mtk_ddp_comp *comp,
 					int enabled)
 {
+#ifdef OPLUS_SILKY_ON_START_FRAME
+	if (flag_silky_panel) {
+		DDPINFO("%s: use mutex sof irq instead ccorr irq", __func__);
+		return;
+	}
+#endif //OPLUS_SILKY_ON_START_FRAME
+
 	if (default_comp == NULL)
 		default_comp = comp;
 
@@ -604,7 +648,6 @@ static int disp_pq_copy_backlight_to_user(int *backlight)
 	spin_lock_irqsave(&g_pq_bl_change_lock, flags);
 	g_pq_backlight_db = g_pq_backlight;
 	spin_unlock_irqrestore(&g_pq_bl_change_lock, flags);
-
 	memcpy(backlight, &g_pq_backlight_db, sizeof(int));
 
 	DDPINFO("%s: %d\n", __func__, ret);
@@ -623,12 +666,19 @@ void disp_pq_notify_backlight_changed(int bl_1024)
 
 	if (atomic_read(&g_ccorr_is_init_valid) != 1)
 		return;
-
+	/*#ifdef OPLUS_BUG_STABILITY*/
+	mtk_drm_trace_begin("disp_pq_notify_backlight_changed-%d", bl_1024);
+	/*#endif OPLUS_BUG_STABILITY*/
 	DDPINFO("%s: %d\n", __func__, bl_1024);
 
 	if (m_new_pq_persist_property[DISP_PQ_CCORR_SILKY_BRIGHTNESS]) {
-		if (default_comp != NULL &&
-			g_ccorr_relay_value[index_of_ccorr(default_comp->id)] != 1) {
+		/*#ifdef OPLUS_BUG_STABILITY*/
+		/* to keep value of backlight for FOD while screen is turning */
+		if (default_comp != NULL) {
+		/* #else */
+		/* if (default_comp != NULL &&
+			g_ccorr_relay_value[index_of_ccorr(default_comp->id)] != 1) { */
+		/*#endif OPLUS_BUG_STABILITY*/
 			disp_ccorr_set_interrupt(default_comp, 1);
 
 			if (default_comp != NULL &&
@@ -652,6 +702,9 @@ void disp_pq_notify_backlight_changed(int bl_1024)
 			DDPINFO("%s: trigger refresh when backlight ON/Off", __func__);
 		}
 	}
+	/*#ifdef OPLUS_BUG_STABILITY*/
+	mtk_drm_trace_end();
+	/*#endif OPLUS_BUG_STABILITY*/
 }
 EXPORT_SYMBOL(disp_pq_notify_backlight_changed);
 
@@ -676,6 +729,17 @@ static int disp_ccorr_set_coef(
 	} else {
 		memcpy(ccorr, user_color_corr,
 			sizeof(struct DRM_DISP_CCORR_COEF_T));
+		if (ccorr->hw_id == DRM_DISP_CCORR1) {
+			g_disp_ccorr_without_gamma = CCORR_INVERSE_GAMMA;
+		} else if (disp_ccorr_linear & 0x01) {
+			g_disp_ccorr_without_gamma = CCORR_INVERSE_GAMMA;
+		} else {
+			g_disp_ccorr_without_gamma = CCORR_BYASS_GAMMA;
+			g_prim_ccorr_pq_nonlinear = true;
+		}
+
+		DDPINFO("%s: ccorr id:%d, nonlinear:%d\n", __func__,
+			id, g_disp_ccorr_without_gamma);
 
 		if (id < DISP_CCORR_TOTAL) {
 			mutex_lock(&g_ccorr_global_lock);
@@ -758,7 +822,7 @@ static int mtk_disp_ccorr_set_interrupt(struct mtk_ddp_comp *comp, void *data)
 }
 
 int disp_ccorr_set_color_matrix(struct mtk_ddp_comp *comp,
-	struct cmdq_pkt *handle, int32_t matrix[16], int32_t hint, bool fte_flag)
+	struct cmdq_pkt *handle, int32_t matrix[16], int32_t hint, bool fte_flag, bool linear)
 {
 	int ret = 0;
 	int i, j;
@@ -809,6 +873,11 @@ int disp_ccorr_set_color_matrix(struct mtk_ddp_comp *comp,
 			}
 		}
 	}
+
+	if (linear)
+		ccorr_without_gamma = 0;
+	else
+		ccorr_without_gamma = 1;
 
 	// hint: 0: identity matrix; 1: arbitraty matrix
 	// fte_flag: true: gpu overlay && hwc not identity matrix
@@ -951,6 +1020,32 @@ int disp_ccorr_set_RGB_Gain(struct mtk_ddp_comp *comp,
 	return ret;
 }
 
+static bool is_doze_active(void)
+{
+	struct drm_crtc *crtc;
+	struct mtk_drm_crtc *mtk_crtc;
+	struct mtk_crtc_state *mtk_state;
+
+	if (!default_comp)
+		return false;
+	crtc = &default_comp->mtk_crtc->base;
+	mtk_crtc = to_mtk_crtc(crtc);
+
+	DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
+	mtk_state = to_mtk_crtc_state(crtc->state);
+	if(!mtk_state){
+		DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+		return false;
+	}
+
+	if (mtk_state->prop_val[CRTC_PROP_DOZE_ACTIVE]){
+		DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+		return true;
+	}
+	DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
+	return false;
+}
+
 int mtk_drm_ioctl_set_ccorr(struct drm_device *dev, void *data,
 		struct drm_file *file_priv)
 {
@@ -960,17 +1055,23 @@ int mtk_drm_ioctl_set_ccorr(struct drm_device *dev, void *data,
 	struct DRM_DISP_CCORR_COEF_T *ccorr_config = data;
 	int ret;
 
+	if (is_doze_active()
+		&& m_new_pq_persist_property[DISP_PQ_CCORR_SILKY_BRIGHTNESS]
+		&& (ccorr_config->silky_bright_flag) == 1
+		&& ccorr_config->FinalBacklight != 0) {
+		DDPINFO("%s, in aod state\n", __func__);
+		oplus_display_brightness = ccorr_config->FinalBacklight;
+		mtk_leds_brightness_set("lcd-backlight", ccorr_config->FinalBacklight);
+		return 0;
+	}
 	if (ccorr_config->hw_id == DRM_DISP_CCORR1) {
 		comp = private->ddp_comp[DDP_COMPONENT_CCORR1];
-		g_disp_ccorr_without_gamma = CCORR_INVERSE_GAMMA;
-	} else if (disp_ccorr_linear&0x01) {
-		g_disp_ccorr_without_gamma = CCORR_INVERSE_GAMMA;
-	} else {
-		g_disp_ccorr_without_gamma = CCORR_BYASS_GAMMA;
-		g_prim_ccorr_pq_nonlinear = true;
 	}
 
 	if (m_new_pq_persist_property[DISP_PQ_CCORR_SILKY_BRIGHTNESS]) {
+		/*#ifdef OPLUS_BUG_STABILITY*/
+		mtk_drm_trace_begin("mtk_drm_ioctl_set_ccorr-%d", ccorr_config->FinalBacklight);
+		/*#endif OPLUS_BUG_STABILITY*/
 
 		ret = mtk_crtc_user_cmd(crtc, comp, SET_CCORR, data);
 
@@ -979,17 +1080,42 @@ int mtk_drm_ioctl_set_ccorr(struct drm_device *dev, void *data,
 			DDPINFO("brightness = %d, silky_bright_flag = %d",
 				ccorr_config->FinalBacklight,
 				ccorr_config->silky_bright_flag);
+//#ifdef OPLUS_BUG_STABILITY
+			oplus_display_brightness = ccorr_config->FinalBacklight;
+//#endif /*OPLUS_BUG_STABILITY*/
 			mtk_leds_brightness_set("lcd-backlight",
 				ccorr_config->FinalBacklight);
 		}
 
 		mtk_crtc_check_trigger(comp->mtk_crtc, false, true);
-
+		/*#ifdef OPLUS_BUG_STABILITY*/
+		mtk_drm_trace_end();
+		/*#endif OPLUS_BUG_STABILITY*/
 		return ret;
 	} else {
 		return mtk_crtc_user_cmd(crtc, comp, SET_CCORR, data);
 	}
 }
+
+/*#ifdef OPLUS_FEATURE_DISPLAY*/
+static bool is_led_need_ccorr(unsigned int connector_id)
+{
+       unsigned int crtc0_connector_id = 0;
+       struct mtk_ddp_comp *output_comp = NULL;
+
+       if (default_comp == NULL || default_comp->mtk_crtc == NULL) {
+               DDPPR_ERR("%s: null pointer!\n", __func__);
+               return false;
+       }
+       output_comp = mtk_ddp_comp_request_output(default_comp->mtk_crtc);
+       if (output_comp == NULL) {
+               DDPPR_ERR("%s: output_comp is null!\n", __func__);
+               return false;
+       }
+       mtk_ddp_comp_io_cmd(output_comp, NULL, GET_CRTC0_CONNECTOR_ID, &crtc0_connector_id);
+       return (connector_id == crtc0_connector_id);
+}
+/*#endif*/
 
 #ifdef CONFIG_LEDS_BRIGHTNESS_CHANGED
 int led_brightness_changed_event_to_pq(struct notifier_block *nb, unsigned long event,
@@ -1002,6 +1128,15 @@ int led_brightness_changed_event_to_pq(struct notifier_block *nb, unsigned long 
 
 	switch (event) {
 	case LED_BRIGHTNESS_CHANGED:
+		/*#ifdef OPLUS_FEATURE_DISPLAY*/
+		if (!is_led_need_ccorr(led_conf->connector_id)) {
+				DDPINFO ("connector id %d no need aal\n", led_conf->connector_id);
+				if (!strcmp("lcd-backlight1", led_conf->cdev.name)) {
+					led_conf->aal_enable = 0;
+				}
+				break;
+		}
+		/*#endif*/
 		trans_level = led_conf->cdev.brightness;
 
 		disp_pq_notify_backlight_changed(trans_level);
@@ -1031,12 +1166,26 @@ int mtk_drm_ioctl_ccorr_eventctl(struct drm_device *dev, void *data,
 	int ret = 0;
 	/* TODO: dual pipe */
 	int *enabled = data;
-
-	if (enabled || g_old_pq_backlight != g_pq_backlight)
+	//#ifdef OPLUS_SILKY_ON_START_FRAME
+	if (!enabled) {
+		DDPPR_ERR("%s: nullptr!\n", __func__);
+		return -1;
+	}
+	if ((*enabled == 1) || g_old_pq_backlight != g_pq_backlight)
 		mtk_crtc_check_trigger(comp->mtk_crtc, false, true);
-
 	//mtk_crtc_user_cmd(crtc, comp, EVENTCTL, data);
 	DDPINFO("ccorr_eventctl, enabled = %d\n", *enabled);
+	//#endif //OPLUS_SILKY_ON_START_FRAMEY
+
+#ifdef OPLUS_SILKY_ON_START_FRAME
+	if (flag_silky_panel) {
+		if (enabled) {
+			DDPINFO("to flush PQ ccorr-delayed FIFO(%d)\n", *enabled);
+			g_pq_ccorr_event = *enabled ;
+		}
+		return ret;
+	}
+#endif //OPLUS_SILKY_ON_START_FRAMEY
 
 	if ((!atomic_read(&g_irq_backlight_change)) || (*enabled == 1))
 		disp_ccorr_set_interrupt(comp, *enabled);
@@ -1048,6 +1197,13 @@ int mtk_drm_ioctl_ccorr_get_irq(struct drm_device *dev, void *data,
 		struct drm_file *file_priv)
 {
 	int ret = 0;
+	/* #ifdef OPLUS_BUG_STABILITY */
+	struct mtk_drm_private *private;
+	struct drm_crtc *crtc = 0;
+	int *pData = (int *) data;
+	struct mtk_drm_crtc *mtk_crtc = 0;
+	struct mtk_panel_ext *ext = 0;
+	/* #endif OPLUS_BUG_STABILITY*/
 
 	atomic_set(&g_ccorr_is_init_valid, 1);
 
@@ -1057,6 +1213,26 @@ int mtk_drm_ioctl_ccorr_get_irq(struct drm_device *dev, void *data,
 		DDPPR_ERR("%s: failed", __func__);
 		ret = -EFAULT;
 	}
+    /* #ifdef OPLUS_BUG_STABILITY */
+	if (dev && dev->dev_private){
+		private = dev->dev_private;
+		crtc = private->crtc[0];
+	}
+	if (flag_silky_panel & FRAME_SYNC_DELAY_60HZ_120HZ) {
+		if (g_cur_fps == 60)
+			*pData |= (1 << 16);
+		else if (g_cur_fps == 120)
+			*pData |= (2 << 16);
+	}
+	if (crtc) {
+		mtk_crtc = to_mtk_crtc(crtc);
+		ext = mtk_crtc->panel_ext;
+	}
+	// to mark HF-PWM is on
+	if (ext && ext->params && ext->params->f_high_pwm_en) {
+		*pData += (10 << 16);
+	}
+	/* #endif OPLUS_BUG_STABILITY*/
 
 	return ret;
 }
@@ -1199,7 +1375,7 @@ static void mtk_ccorr_bypass(struct mtk_ddp_comp *comp, int bypass,
 {
 	DDPINFO("%s\n", __func__);
 	cmdq_pkt_write(handle, comp->cmdq_base,
-		       comp->regs_pa + DISP_REG_CCORR_CFG, bypass, 0x1);
+			comp->regs_pa + DISP_REG_CCORR_CFG, bypass, 0x1);
 	g_ccorr_relay_value[index_of_ccorr(comp->id)] = bypass;
 }
 
@@ -1312,10 +1488,14 @@ static void ddp_ccorr_restore(struct mtk_ddp_comp *comp)
 {
 	unsigned int index = index_of_ccorr(comp->id);
 
-	writel(g_ccorr_backup[index].REG_CCORR_CFG,
-			comp->regs + DISP_REG_CCORR_CFG);
 	writel(g_ccorr_backup[index].REG_CCORR_INTEN,
 			comp->regs + DISP_REG_CCORR_INTEN);
+	if (index == 2)
+		index = 0;
+	if (index == 3)
+		index = 1;
+	writel(g_ccorr_backup[index].REG_CCORR_CFG,
+			comp->regs + DISP_REG_CCORR_CFG);
 }
 
 static void mtk_ccorr_prepare(struct mtk_ddp_comp *comp)
@@ -1421,6 +1601,9 @@ void mtk_ccorr_dump(struct mtk_ddp_comp *comp)
 	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
 	mtk_cust_dump_reg(baddr, 0x0, 0x20, 0x30, -1);
 	mtk_cust_dump_reg(baddr, 0x24, 0x28, -1, -1);
+	mtk_cust_dump_reg(baddr, 0x80, 0x84, 0x88, -1);  //CCORR_COEF
+	mtk_cust_dump_reg(baddr, 0x8C, 0x90, -1, -1);  //CCORR_COEF
+	mtk_cust_dump_reg(baddr, 0x100, 0x104, 0x108, -1);  //COLOR_OFFSET
 }
 
 static int  mtk_update_ccorr_base(void)
@@ -1520,9 +1703,12 @@ static int mtk_disp_ccorr_probe(struct platform_device *pdev)
 
 	if (!default_comp && comp_id == DDP_COMPONENT_CCORR0)
 		default_comp = &priv->ddp_comp;
-	if (!ccorr1_default_comp &&
-		comp_id == DDP_COMPONENT_CCORR1)
+	if (!ccorr1_default_comp && comp_id == DDP_COMPONENT_CCORR1)
 		ccorr1_default_comp = &priv->ddp_comp;
+	if (!ccorr2_default_comp && comp_id == DDP_COMPONENT_CCORR2)
+		ccorr2_default_comp = &priv->ddp_comp;
+	if (!ccorr3_default_comp && comp_id == DDP_COMPONENT_CCORR3)
+		ccorr3_default_comp = &priv->ddp_comp;
 
 	ret = mtk_ddp_comp_init(dev, dev->of_node, &priv->ddp_comp, comp_id,
 				&mtk_disp_ccorr_funcs);
@@ -1550,6 +1736,9 @@ static int mtk_disp_ccorr_probe(struct platform_device *pdev)
 #ifdef CONFIG_LEDS_BRIGHTNESS_CHANGED
 	if (comp_id == DDP_COMPONENT_CCORR0)
 		mtk_leds_register_notifier(&leds_init_notifier);
+#endif
+#ifdef OPLUS_FEATURE_DISPLAY
+	g_ccorr_probe_ready = true;
 #endif
 	DDPINFO("%s-\n", __func__);
 
@@ -1687,4 +1876,64 @@ void disp_ccorr_set_bypass(struct drm_crtc *crtc, int bypass)
 	ret = mtk_crtc_user_cmd(crtc, default_comp, BYPASS_CCORR, &bypass);
 
 	DDPINFO("%s : ret = %d", __func__, ret);
+}
+
+void mtk_ccorr_regdump(void)
+{
+	void __iomem *baddr = default_comp->regs;
+	bool isDualPQ = default_comp->mtk_crtc->is_dual_pipe;
+	int k;
+
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(default_comp), default_comp->regs_pa);
+	DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp));
+	for (k = 0; k <= 0x110; k += 16) {
+		DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+			readl(baddr + k),
+			readl(baddr + k + 0x4),
+			readl(baddr + k + 0x8),
+			readl(baddr + k + 0xc));
+	}
+	DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp));
+	if (disp_ccorr_number == 2 && ccorr1_default_comp) {
+		baddr = ccorr1_default_comp->regs;
+		DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(ccorr1_default_comp),
+				ccorr1_default_comp->regs_pa);
+		DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(ccorr1_default_comp));
+		for (k = 0; k < 0x110; k += 16) {
+			DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+				readl(baddr + k),
+				readl(baddr + k + 0x4),
+				readl(baddr + k + 0x8),
+				readl(baddr + k + 0xc));
+		}
+		DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(ccorr1_default_comp));
+	}
+	if (isDualPQ && disp_ccorr_number == 2 && ccorr2_default_comp) {
+		baddr = ccorr2_default_comp->regs;
+		DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(ccorr2_default_comp),
+				ccorr2_default_comp->regs_pa);
+		DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(ccorr2_default_comp));
+		for (k = 0; k < 0x110; k += 16) {
+			DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+				readl(baddr + k),
+				readl(baddr + k + 0x4),
+				readl(baddr + k + 0x8),
+				readl(baddr + k + 0xc));
+		}
+		DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(ccorr2_default_comp));
+	}
+	if (isDualPQ && disp_ccorr_number == 2 && ccorr3_default_comp) {
+		baddr = ccorr3_default_comp->regs;
+		DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(ccorr3_default_comp),
+				ccorr3_default_comp->regs_pa);
+		DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(ccorr3_default_comp));
+		for (k = 0; k < 0x110; k += 16) {
+			DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+				readl(baddr + k),
+				readl(baddr + k + 0x4),
+				readl(baddr + k + 0x8),
+				readl(baddr + k + 0xc));
+		}
+		DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(ccorr3_default_comp));
+	}
 }

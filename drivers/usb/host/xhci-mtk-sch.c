@@ -298,6 +298,9 @@ static void setup_sch_info(struct xhci_ep_ctx *ep_ctx,
 	u32 max_esit_payload;
 	u32 *bwb_table = sch_ep->bw_budget_table;
 	int i;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	u32 remainder;
+#endif
 
 	ep_type = CTX_TO_EP_TYPE(le32_to_cpu(ep_ctx->ep_info2));
 	maxpkt = MAX_PACKET_DECODED(le32_to_cpu(ep_ctx->ep_info2));
@@ -368,13 +371,21 @@ static void setup_sch_info(struct xhci_ep_ctx *ep_ctx,
 
 			sch_ep->repeat = !!(sch_ep->num_budget_microframes > 1);
 			sch_ep->bw_cost_per_microframe = maxpkt * sch_ep->pkts;
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+			remainder = sch_ep->bw_cost_per_microframe;
+			remainder *= sch_ep->num_budget_microframes;
+			remainder -= (maxpkt * esit_pkts);
+#endif
 			for (i = 0; i < sch_ep->num_budget_microframes - 1; i++)
 				bwb_table[i] = sch_ep->bw_cost_per_microframe;
 
 			/* last one <= bw_cost_per_microframe */
+#ifndef OPLUS_FEATURE_CHG_BASIC
 			bwb_table[i] = maxpkt * esit_pkts
 				       - i * sch_ep->bw_cost_per_microframe;
+#else
+			bwb_table[i] = remainder;
+#endif
 		}
 	} else if (is_fs_or_ls(sch_ep->speed)) {
 		sch_ep->pkts = 1; /* at most one packet for each microframe */
@@ -384,7 +395,11 @@ static void setup_sch_info(struct xhci_ep_ctx *ep_ctx,
 		 * check TT for INT_OUT_EP, ISOC/INT_IN_EP type
 		 */
 		sch_ep->cs_count = DIV_ROUND_UP(maxpkt, FS_PAYLOAD_MAX);
+#ifndef OPLUS_FEATURE_CHG_BASIC
 		sch_ep->num_budget_microframes = sch_ep->cs_count;
+#else
+		sch_ep->num_budget_microframes = sch_ep->cs_count + 2;
+#endif
 		sch_ep->bw_cost_per_microframe =
 			(maxpkt < FS_PAYLOAD_MAX) ? maxpkt : FS_PAYLOAD_MAX;
 
@@ -404,7 +419,11 @@ static void setup_sch_info(struct xhci_ep_ctx *ep_ctx,
 			 * elements as @bw_cost_per_microframe, but only first
 			 * @num_budget_microframes elements will be used later
 			 */
+#ifndef OPLUS_FEATURE_CHG_BASIC
 			for (i = 2; i < TT_MICROFRAMES_MAX; i++)
+#else
+			for (i = 2; i < sch_ep->num_budget_microframes; i++)
+#endif
 				bwb_table[i] =	sch_ep->bw_cost_per_microframe;
 		}
 	}
@@ -448,6 +467,23 @@ static void update_bus_bw(struct mu3h_sch_bw_info *sch_bw,
 		}
 	}
 }
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static bool sch_offset_used(struct xhci_hcd_mtk *mtk,
+	u32 offset)
+{
+	struct mu3h_sch_ep_info *sch_ep;
+	bool used = false;
+
+	list_for_each_entry(sch_ep, &mtk->bw_ep_chk_list, endpoint) {
+		if (sch_ep->offset == offset) {
+			used = true;
+			break;
+		}
+	}
+	return used;
+}
+#endif
 
 static int check_fs_bus_bw(struct mu3h_sch_ep_info *sch_ep, int offset)
 {
@@ -576,14 +612,22 @@ static int load_ep_bw(struct mu3h_sch_bw_info *sch_bw,
 	return 0;
 }
 
+#ifndef OPLUS_FEATURE_CHG_BASIC
 static int check_sch_bw(struct mu3h_sch_ep_info *sch_ep)
+#else
+static int check_sch_bw(struct xhci_hcd_mtk *mtk, struct mu3h_sch_ep_info *sch_ep)
+#endif
 {
 	struct mu3h_sch_bw_info *sch_bw = sch_ep->bw_info;
 	const u32 bw_boundary = get_bw_boundary(sch_ep->speed);
 	u32 offset;
 	u32 worst_bw;
 	u32 min_bw = ~0;
+#ifndef OPLUS_FEATURE_CHG_BASIC
 	int min_index = -1;
+#else
+	int min_index = 0;
+#endif
 	int ret = 0;
 
 	/*
@@ -602,6 +646,12 @@ static int check_sch_bw(struct mu3h_sch_ep_info *sch_ep)
 		if (min_bw > worst_bw) {
 			min_bw = worst_bw;
 			min_index = offset;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		} else if (min_bw == worst_bw) {
+			if (sch_offset_used(mtk, min_index) &&
+					!sch_offset_used(mtk, offset))
+				min_index = offset;
+#endif
 		}
 
 		/* use first-fit for LS/FS */
@@ -733,10 +783,18 @@ static void drop_ep_quirk(struct usb_hcd *hcd, struct usb_device *udev,
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 	struct mu3h_sch_ep_info *sch_ep;
 	struct hlist_node *hn;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct xhci_ep_ctx *ep_ctx;
+	unsigned int ep_index;
+#endif
 
 	if (!need_bw_sch(udev, ep))
 		return;
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	ep_index = xhci_get_endpoint_index(&ep->desc);
+	ep_ctx = xhci_get_ep_ctx(xhci, xhci->devs[udev->slot_id]->in_ctx, ep_index);
+#endif
 	xhci_dbg(xhci, "%s %s\n", __func__, decode_ep(ep, udev->speed));
 
 	hash_for_each_possible_safe(mtk->sch_ep_hash, sch_ep,
@@ -746,6 +804,11 @@ static void drop_ep_quirk(struct usb_hcd *hcd, struct usb_device *udev,
 			break;
 		}
 	}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	ep_ctx->reserved[0] = 0;
+	ep_ctx->reserved[1] = 0;
+#endif
 }
 
 int xhci_mtk_check_bandwidth(struct usb_hcd *hcd, struct usb_device *udev)
@@ -763,7 +826,11 @@ int xhci_mtk_check_bandwidth(struct usb_hcd *hcd, struct usb_device *udev)
 		struct usb_host_endpoint *ep = sch_ep->ep;
 		unsigned int ep_index = xhci_get_endpoint_index(&ep->desc);
 
+#ifndef OPLUS_FEATURE_CHG_BASIC
 		ret = check_sch_bw(sch_ep);
+#else
+		ret = check_sch_bw(mtk, sch_ep);
+#endif
 		if (ret) {
 			xhci_err(xhci, "Not enough bandwidth! (%s)\n",
 				 sch_error_string(-ret));

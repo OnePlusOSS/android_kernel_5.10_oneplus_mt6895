@@ -130,7 +130,11 @@
 #define CAMSV_2_WDMA_PORT		0x3FF3F
 #define RAW_WDMA_PORT			0x1E001
 #define RAW_RDMA_PORT			0x1FFE
-#define RAW_RAWIR2_PORT			0x20
+
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define RAW_RAWIR2_PORT         0x20
+#endif
+
 #define YUV_WDMA_PORT			0x7F
 #define YUV_RDMA_PORT			0x0
 
@@ -365,6 +369,8 @@
 #define WCNT_BIT_MASK				0xFF00
 #define CNT_BIT_MASK				0xFF0000
 #define TG_FULLSEL_BIT_MASK			0x8000
+#define FBC_RESET_BIT				BIT(8)
+
 /* ORIDMA */
 /* CAMSYS_RAW 0x1a03 */
 #define REG_IMGO_R1_BASE       0x4880

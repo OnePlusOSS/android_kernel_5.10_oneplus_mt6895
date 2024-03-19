@@ -30,8 +30,20 @@ unsigned int fs_alg_write_shutter(unsigned int idx);
 
 
 /* Dump & Debug function */
-void fs_alg_dump_fs_inst_data(unsigned int idx);
+void fs_alg_get_cur_frec_data(unsigned int idx,
+	unsigned int *p_fl_lc, unsigned int *p_shut_lc);
+
+void fs_alg_get_fs_inst_ts_data(unsigned int idx,
+	unsigned int *p_tg, unsigned int ts_arr[],
+	unsigned int *p_last_vts, unsigned int *p_time_after_sof,
+	unsigned int *p_cur_tick, unsigned int *p_vsyncs);
+
+void fs_alg_dump_fs_inst_data(const unsigned int idx);
 void fs_alg_dump_all_fs_inst_data(void);
+
+
+void fs_alg_get_fl_rec_st_info(const unsigned int idx,
+	unsigned int *p_target_min_fl_us, unsigned int *p_out_fl_us);
 
 
 /*******************************************************************************
@@ -44,7 +56,9 @@ void fs_alg_set_anti_flicker(unsigned int idx, unsigned int flag);
 void fs_alg_set_extend_framelength(unsigned int idx,
 	unsigned int ext_fl_lc, unsigned int ext_fl_us);
 
-void fs_alg_seamless_switch(unsigned int idx);
+void fs_alg_seamless_switch(const unsigned int idx,
+	struct fs_seamless_st *p_seamless_info,
+	const struct fs_sa_cfg *p_sa_cfg);
 
 void fs_alg_update_tg(unsigned int idx, unsigned int tg);
 
@@ -57,6 +71,13 @@ void fs_alg_set_streaming_st_data(
 
 void fs_alg_set_perframe_st_data(
 	unsigned int idx, struct fs_perframe_st *pData);
+
+void fs_alg_set_preset_perframe_streaming_st_data(const unsigned int idx,
+	struct fs_streaming_st *p_stream_data,
+	struct fs_perframe_st *p_pf_ctrl_data);
+
+void fs_alg_set_debug_info_sof_cnt(const unsigned int idx,
+	const unsigned int sof_cnt);
 
 void fs_alg_reset_vsync_data(const unsigned int idx);
 
@@ -92,18 +113,17 @@ unsigned int fs_alg_solve_frame_length(
  * return: (0/1) for (no error/some error happened)
  *
  * input:
- *     idx: standalone instance idx
- *     m_idx: master instance idx
- *     valid_sync_bits: all valid for doing frame-sync instance idxs
- *     sa_method: by default and only is adaptive standalone
+ *     struct fs_sa_cfg
+ *         idx: standalone instance idx
+ *         m_idx: master instance idx
+ *         valid_sync_bits: all valid for doing frame-sync instance idxs
+ *         sa_method: 0 => adaptive switch master; 1 => fix master
  *
  * output:
  *     *fl_lc: pointer for output frame length
  */
 unsigned int fs_alg_solve_frame_length_sa(
-	unsigned int idx, int m_idx,
-	int valid_sync_bits, int sa_method,
-	unsigned int *fl_lc);
+	const struct fs_sa_cfg *p_sa_cfg, unsigned int *fl_lc);
 #endif // SUPPORT_FS_NEW_METHOD
 
 

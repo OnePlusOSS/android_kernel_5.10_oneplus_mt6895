@@ -1221,21 +1221,12 @@ struct dm_keyslot_manager {
 	struct mapped_device *md;
 };
 
-struct dm_keyslot_evict_args {
-	const struct blk_crypto_key *key;
-	int err;
-};
-
 static int dm_keyslot_evict_callback(struct dm_target *ti, struct dm_dev *dev,
 				     sector_t start, sector_t len, void *data)
 {
-	struct dm_keyslot_evict_args *args = data;
-	int err;
+	const struct blk_crypto_key *key = data;
 
-	err = blk_crypto_evict_key(bdev_get_queue(dev->bdev), args->key);
-	if (!args->err)
-		args->err = err;
-	/* Always try to evict the key from all devices. */
+	blk_crypto_evict_key(bdev_get_queue(dev->bdev), key);
 	return 0;
 }
 
@@ -1250,7 +1241,6 @@ static int dm_keyslot_evict(struct blk_keyslot_manager *ksm,
 						       struct dm_keyslot_manager,
 						       ksm);
 	struct mapped_device *md = dksm->md;
-	struct dm_keyslot_evict_args args = { key };
 	struct dm_table *t;
 	int srcu_idx;
 	int i;
@@ -1263,10 +1253,11 @@ static int dm_keyslot_evict(struct blk_keyslot_manager *ksm,
 		ti = dm_table_get_target(t, i);
 		if (!ti->type->iterate_devices)
 			continue;
-		ti->type->iterate_devices(ti, dm_keyslot_evict_callback, &args);
+		ti->type->iterate_devices(ti, dm_keyslot_evict_callback,
+					  (void *)key);
 	}
 	dm_put_live_table(md, srcu_idx);
-	return args.err;
+	return 0;
 }
 
 struct dm_derive_raw_secret_args {
@@ -2046,6 +2037,32 @@ static bool dm_table_supports_discards(struct dm_table *t)
 	return true;
 }
 
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+static int device_device_fastdiscard_capable(struct dm_target *ti,
+					   struct dm_dev *dev, sector_t start,
+					   sector_t len, void *data)
+{
+	struct request_queue *q = bdev_get_queue(dev->bdev);
+	return q && blk_queue_reserve_device(q);
+}
+
+static bool dm_table_supports_fastdiscard(struct dm_table *t)
+{
+	struct dm_target *ti;
+	unsigned int i;
+
+	for (i = 0; i < dm_table_get_num_targets(t); i++) {
+		ti = dm_table_get_target(t, i);
+
+		if (ti->type->iterate_devices &&
+		    ti->type->iterate_devices(ti, device_device_fastdiscard_capable, NULL))
+			return true;
+	}
+
+	return false;
+}
+#endif
+
 static int device_not_secure_erase_capable(struct dm_target *ti,
 					   struct dm_dev *dev, sector_t start,
 					   sector_t len, void *data)
@@ -2074,6 +2091,45 @@ static bool dm_table_supports_secure_erase(struct dm_table *t)
 	return true;
 }
 
+#ifdef CONFIG_DEVICE_XCOPY
+static int device_device_copy_capable(struct dm_target *ti,
+					   struct dm_dev *dev, sector_t start,
+					   sector_t len, void *data)
+{
+	struct para_limit *limits = (struct para_limit *)data;
+	struct request_queue *q = bdev_get_queue(dev->bdev);
+	struct para_limit *oem_limit = (struct para_limit *)q->limits.android_kabi_reserved1;
+
+	if (oem_limit && blk_queue_reserve_device(q) && blk_queue_device_copy(q)) {
+		limits->max_copy_blks = oem_limit->max_copy_blks;
+		limits->min_copy_blks = oem_limit->min_copy_blks;
+		limits->max_copy_entr = oem_limit->max_copy_entr;
+	}/* else
+		DMINFO("%s,oem_limit:0x%x,phison device:%d,device copy:%d",
+			__func__, oem_limit, blk_queue_reserve_device(q),
+			blk_queue_device_copy(q));
+*/
+	return q && blk_queue_reserve_device(q) && blk_queue_device_copy(q);
+}
+
+static bool dm_table_supports_device_copy(struct dm_table *t,
+	struct para_limit *limits)
+{
+	struct dm_target *ti;
+	unsigned int i;
+
+	for (i = 0; i < dm_table_get_num_targets(t); i++) {
+		ti = dm_table_get_target(t, i);
+
+		if (ti->type->iterate_devices &&
+		    ti->type->iterate_devices(ti, device_device_copy_capable, limits))
+			return true;
+	}
+
+	return false;
+}
+#endif
+
 static int device_requires_stable_pages(struct dm_target *ti,
 					struct dm_dev *dev, sector_t start,
 					sector_t len, void *data)
@@ -2088,6 +2144,10 @@ void dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 {
 	bool wc = false, fua = false;
 	int page_size = PAGE_SIZE;
+#ifdef CONFIG_DEVICE_XCOPY
+	struct para_limit *oem_limit =
+		(struct para_limit *)kzalloc(sizeof(struct para_limit), GFP_KERNEL | __GFP_NOFAIL);
+#endif
 
 	/*
 	 * Copy table's limits to the DM device's request_queue
@@ -2166,6 +2226,20 @@ void dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 	    dm_table_any_dev_attr(t, device_is_not_random, NULL))
 		blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, q);
 
+#ifdef CONFIG_DEVICE_XCOPY
+	/* set xcopy queue limit */
+	if (oem_limit && dm_table_supports_device_copy(t, oem_limit)) {
+		q->limits.android_kabi_reserved1 = (u64)oem_limit;
+		blk_queue_flag_set(QUEUE_FLAG_RESERVE, q);
+		blk_queue_flag_set(QUEUE_FLAG_DEVICE_COPY, q);
+	}
+#endif
+
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	if(dm_table_supports_fastdiscard(t)) {
+		blk_queue_flag_set(QUEUE_FLAG_RESERVE, q);
+	}
+#endif
 	/*
 	 * For a zoned target, the number of zones should be updated for the
 	 * correct value to be exposed in sysfs queue/nr_zones. For a BIO based

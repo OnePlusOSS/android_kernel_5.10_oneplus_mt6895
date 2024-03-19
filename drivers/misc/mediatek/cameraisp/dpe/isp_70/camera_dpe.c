@@ -5620,7 +5620,9 @@ unsigned int dpe_fop_poll(struct file *file, poll_table *wait)
 				DPE_INT_ST, DPE_PROCESS_ID_DPE,
 				pUserInfo->Pid);
 	p = pUserInfo->Pid % IRQ_USER_NUM_MAX;
-	LOG_INF("buf_rdy = %d\n", buf_rdy);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	LOG_INF("ooobuf_rdy = %d\n", buf_rdy);
+#endif
 	if (buf_rdy) {
 		spin_lock_irqsave
 		(&(DPEInfo.SpinLockIrq[DPE_IRQ_TYPE_INT_DVP_ST]), flags);

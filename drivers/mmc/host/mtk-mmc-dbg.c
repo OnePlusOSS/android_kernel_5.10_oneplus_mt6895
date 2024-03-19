@@ -483,7 +483,7 @@ void msdc_dump_info(char **buff, unsigned long *size, struct seq_file *m,
 		return;
 
 	msdc_dump_register(buff, size, m, host);
-
+#if 0
 	if (!buff)
 		mdelay(10);
 
@@ -497,7 +497,7 @@ void msdc_dump_info(char **buff, unsigned long *size, struct seq_file *m,
 
 	if (!buff)
 		mdelay(10);
-
+#endif
 	msdc_dump_dbg_register(buff, size, m, host);
 }
 EXPORT_SYMBOL(msdc_dump_info);

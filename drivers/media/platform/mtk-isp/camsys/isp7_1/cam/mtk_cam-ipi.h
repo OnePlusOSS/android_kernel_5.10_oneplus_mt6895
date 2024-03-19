@@ -13,7 +13,11 @@
 #include "mtk_cam-defs.h"
 
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 #define MTK_CAM_MAX_RUNNING_JOBS (3)
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+#define MTK_CAM_MAX_RUNNING_JOBS (4)
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 #define CAM_MAX_PLANENUM (3)
 #define CAM_MAX_SUBSAMPLE (32)
 

@@ -120,7 +120,7 @@ static unsigned int do_2a_gain_s5k3m5sx(struct EEPROM_DRV_FD_DATA *pdata,
 	long long CalGain = 0, FacGain = 0;
 	unsigned char AWBAFConfig = 0xf;
 
-	unsigned short AFInf = 0, AFMacro = 0;
+	unsigned short AFInf, AFMacro, AFMid;
 	int tempMax = 0;
 	int CalR = 1, CalGr = 1, CalGb = 1, CalG = 1, CalB = 1;
 	int FacR = 1, FacGr = 1, FacGb = 1, FacG = 1, FacB = 1;
@@ -496,13 +496,26 @@ static unsigned int do_2a_gain_s5k3m5sx(struct EEPROM_DRV_FD_DATA *pdata,
 			show_cmd_error_log(pCamCalData->Command);
 		}
 
+		read_data_size = read_data(pdata, pCamCalData->sensorID, pCamCalData->deviceID,
+				0x96, 2, (unsigned char *)&AFMid);
+		if (read_data_size > 0)
+			err = CAM_CAL_ERR_NO_ERR;
+		else {
+			pCamCalData->Single2A.S2aBitEn = CAM_CAL_NONE_BITEN;
+			error_log("Read Failed\n");
+			show_cmd_error_log(pCamCalData->Command);
+		}
+
 		pCamCalData->Single2A.S2aAf[0] = AFInf;
 		pCamCalData->Single2A.S2aAf[1] = AFMacro;
+		pCamCalData->Single2A.S2aAf[2] = AFMid;
+
 
 		////Only AF Gathering <////
 		debug_log("======================AF CAM_CAL==================\n");
 		debug_log("[AFInf] = %d\n", AFInf);
 		debug_log("[AFMacro] = %d\n", AFMacro);
+		debug_log("[AFMid] = %d\n", AFMid);
 		debug_log("======================AF CAM_CAL==================\n");
 	}
 	return err;

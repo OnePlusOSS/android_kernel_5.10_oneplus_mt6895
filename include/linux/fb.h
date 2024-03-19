@@ -135,6 +135,9 @@ struct fb_cursor_user {
 
 /*      A display blank is requested       */
 #define FB_EVENT_BLANK                  0x09
+//#ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT
+#define FB_EARLY_EVENT_BLANK		0x10
+//#endif
 
 struct fb_event {
 	struct fb_info *info;

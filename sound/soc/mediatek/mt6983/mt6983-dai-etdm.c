@@ -250,11 +250,11 @@ static int etdm_out_sgen_get(struct snd_kcontrol *kcontrol,
 
 	if (!strcmp(kcontrol->id.name, "ETDM_OUT1_SGEN")) {
 		reg = ETDM_0_3_COWORK_CON3;
-		mask = ETDM_OUT1_USE_SGEN_MASK;
+		mask = ETDM_OUT1_USE_SGEN_MASK_SFT;
 		shift = ETDM_OUT1_USE_SGEN_SFT;
 	} else if (!strcmp(kcontrol->id.name, "ETDM_OUT0_SGEN")) {
 		reg = ETDM_0_3_COWORK_CON3;
-		mask = ETDM_OUT1_USE_SGEN_MASK;
+		mask = ETDM_OUT1_USE_SGEN_MASK_SFT;
 		shift = ETDM_OUT1_USE_SGEN_SFT;
 	}
 
@@ -300,6 +300,8 @@ static SOC_ENUM_SINGLE_EXT_DECL(etdm_out_sgen_map_enum,
 				etdm_out_sgen_map);
 
 /* lpbk */
+static unsigned int is_etdm_lpbk_test;
+
 static const int etdm_lpbk_idx[] = {
 	0x0, 0xa,
 };
@@ -316,11 +318,11 @@ static int etdm_lpbk_get(struct snd_kcontrol *kcontrol,
 
 	if (!strcmp(kcontrol->id.name, "ETDM_LPBK_0")) {
 		reg = ETDM_0_3_COWORK_CON1;
-		mask = ETDM_IN1_SDATA0_SEL_MASK;
+		mask = ETDM_IN1_SDATA0_SEL_MASK_SFT;
 		shift = ETDM_IN1_SDATA0_SEL_SFT;
 	} else if (!strcmp(kcontrol->id.name, "ETDM_LPBK_1")) {
 		reg = ETDM_0_3_COWORK_CON1;
-		mask = ETDM_IN1_SDATA1_15_SEL_MASK;
+		mask = ETDM_IN1_SDATA1_15_SEL_MASK_SFT;
 		shift = ETDM_IN1_SDATA1_15_SEL_SFT;
 	}
 
@@ -330,6 +332,14 @@ static int etdm_lpbk_get(struct snd_kcontrol *kcontrol,
 	value &= mask;
 	value >>= shift;
 	ucontrol->value.enumerated.item[0] = value;
+	if (value == 0xa)
+		ucontrol->value.enumerated.item[0] = 1;
+	else
+		ucontrol->value.enumerated.item[0] = 0;
+
+	dev_info(afe->dev, "etdm lpbk setting : %d (flag = %d)\n",
+			 __func__, ucontrol->value.enumerated.item[0], is_etdm_lpbk_test);
+
 	return 0;
 }
 
@@ -343,6 +353,9 @@ static int etdm_lpbk_put(struct snd_kcontrol *kcontrol,
 	unsigned int val = 0;
 	unsigned int mask = 0;
 
+	if (value >= ARRAY_SIZE(etdm_lpbk_idx))
+		return -EINVAL;
+
 	if (!strcmp(kcontrol->id.name, "ETDM_LPBK_0")) {
 		reg = ETDM_0_3_COWORK_CON1;
 		mask = ETDM_IN1_SDATA0_SEL_MASK_SFT;
@@ -352,6 +365,8 @@ static int etdm_lpbk_put(struct snd_kcontrol *kcontrol,
 		mask = ETDM_IN1_SDATA1_15_SEL_MASK_SFT;
 		val = etdm_lpbk_idx[value] << ETDM_IN1_SDATA1_15_SEL_SFT;
 	}
+
+	is_etdm_lpbk_test = val;
 
 	if (reg)
 		regmap_update_bits(afe->regmap, reg, mask, val);
@@ -370,24 +385,36 @@ static const struct snd_kcontrol_new mtk_etdm_playback_ch1_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH1", AFE_CONN62,  I_ADDA_UL_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN62,  I_PCM_2_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL2_CH1", AFE_CONN62,  I_DL2_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL1_CH1", AFE_CONN62,  I_DL1_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL12_CH1", AFE_CONN62,  I_DL12_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL5_CH1", AFE_CONN62_1,  I_DL5_CH1, 1, 0),
 };
 static const struct snd_kcontrol_new mtk_etdm_playback_ch2_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH2", AFE_CONN63_2,  I_DL11_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH1", AFE_CONN63,  I_ADDA_UL_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN63,  I_PCM_2_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL2_CH2", AFE_CONN63,  I_DL2_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL1_CH2", AFE_CONN63,  I_DL1_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL12_CH2", AFE_CONN63,  I_DL12_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL5_CH2", AFE_CONN63_1,  I_DL5_CH2, 1, 0),
 };
 static const struct snd_kcontrol_new mtk_etdm_playback_ch3_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH3", AFE_CONN64_2,  I_DL11_CH3, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH1", AFE_CONN62,  I_ADDA_UL_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN64,  I_PCM_2_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL2_CH1", AFE_CONN64,  I_DL2_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL1_CH1", AFE_CONN64,  I_DL1_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL12_CH1", AFE_CONN64,  I_DL12_CH1, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL5_CH1", AFE_CONN64_1,  I_DL5_CH1, 1, 0),
 };
 static const struct snd_kcontrol_new mtk_etdm_playback_ch4_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH4", AFE_CONN65_2,  I_DL11_CH4, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH2", AFE_CONN63,  I_ADDA_UL_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("PCM_2_CAP_CH1", AFE_CONN65,  I_PCM_2_CAP_CH1, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("DL2_CH2", AFE_CONN65,  I_DL2_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL1_CH2", AFE_CONN65,  I_DL1_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL12_CH2", AFE_CONN65,  I_DL12_CH2, 1, 0),
+	SOC_DAPM_SINGLE_AUTODISABLE("DL5_CH2", AFE_CONN65_1,  I_DL5_CH2, 1, 0),
 };
 static const struct snd_kcontrol_new mtk_etdm_playback_ch5_mix[] = {
 	SOC_DAPM_SINGLE_AUTODISABLE("DL11_CH5", AFE_CONN66_2,  I_DL11_CH5, 1, 0),
@@ -693,8 +720,13 @@ static const struct snd_soc_dapm_widget mtk_dai_etdm_widgets[] = {
 	SND_SOC_DAPM_CLOCK_SUPPLY("aud_tdm_clk"),
 
 	/* i2s en*/
-	SND_SOC_DAPM_SUPPLY_S("ETDM_EN", SUPPLY_SEQ_ETDM_EN,
+	SND_SOC_DAPM_SUPPLY_S("ETDM_OUT_EN", SUPPLY_SEQ_ETDM_EN,
 				  ETDM_OUT1_CON0, REG_ETDM_OUT_EN_SFT, 0,
+				  mtk_etdm_en_event,
+				  SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+
+	SND_SOC_DAPM_SUPPLY_S("ETDM_IN_EN", SUPPLY_SEQ_ETDM_EN,
+				  ETDM_IN1_CON0, REG_ETDM_IN_EN_SFT, 0,
 				  mtk_etdm_en_event,
 				  SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 
@@ -721,6 +753,21 @@ static const struct snd_soc_dapm_route mtk_dai_etdm_routes[] = {
 	{"ETDM_OUT_CH3", "DL2_CH1", "DL2"},
 	{"ETDM_OUT_CH4", "DL2_CH2", "DL2"},
 
+	{"ETDM_OUT_CH1", "DL1_CH1", "DL1"},
+	{"ETDM_OUT_CH2", "DL1_CH2", "DL1"},
+	{"ETDM_OUT_CH3", "DL1_CH1", "DL1"},
+	{"ETDM_OUT_CH4", "DL1_CH2", "DL1"},
+
+	{"ETDM_OUT_CH1", "DL12_CH1", "DL12"},
+	{"ETDM_OUT_CH2", "DL12_CH2", "DL12"},
+	{"ETDM_OUT_CH3", "DL12_CH1", "DL12"},
+	{"ETDM_OUT_CH4", "DL12_CH2", "DL12"},
+
+	{"ETDM_OUT_CH1", "DL5_CH1", "DL5"},
+	{"ETDM_OUT_CH2", "DL5_CH2", "DL5"},
+	{"ETDM_OUT_CH3", "DL5_CH1", "DL5"},
+	{"ETDM_OUT_CH4", "DL5_CH2", "DL5"},
+
 	{"ETDM Playback", NULL, "ETDM_OUT_CH1"},
 	{"ETDM Playback", NULL, "ETDM_OUT_CH2"},
 	{"ETDM Playback", NULL, "ETDM_OUT_CH3"},
@@ -734,11 +781,12 @@ static const struct snd_soc_dapm_route mtk_dai_etdm_routes[] = {
 	{"ETDM Capture", NULL, "ETDM_INPUT"},
 
 	{"ETDM Playback", NULL, "aud_tdm_clk"},
-	{"ETDM Playback", NULL, "ETDM_EN"},
+	{"ETDM Playback", NULL, "ETDM_OUT_EN"},
 	{"ETDM Playback", NULL, APLL1_W_NAME, mtk_afe_etdm_apll_connect},
 	{"ETDM Playback", NULL, APLL2_W_NAME, mtk_afe_etdm_apll_connect},
 
 	{"ETDM Capture", NULL, "aud_tdm_clk"},
+	{"ETDM Capture", NULL, "ETDM_IN_EN"},
 	{"ETDM Capture", NULL, APLL1_W_NAME, mtk_afe_etdm_apll_connect},
 	{"ETDM Capture", NULL, APLL2_W_NAME, mtk_afe_etdm_apll_connect},
 
@@ -774,8 +822,8 @@ static int mtk_dai_etdm_hw_params(struct snd_pcm_substream *substream,
 	unsigned int channels = params_channels(params);
 	snd_pcm_format_t format = params_format(params);
 
-	dev_info(afe->dev, "%s(), id %d, stream %d, rate %d channels %d format %d\n",
-		 __func__, etdm_id, substream->stream, rate, channels, format);
+	dev_info(afe->dev, "%s(), %s(%d), stream %d, rate %d channels %d format %d\n",
+		 __func__, dai->name, etdm_id, substream->stream, rate, channels, format);
 
 	etdm_priv->etdm_rate = rate;
 
@@ -783,6 +831,7 @@ static int mtk_dai_etdm_hw_params(struct snd_pcm_substream *substream,
 	if ((channels % 2) != 0)
 		dev_info(afe->dev, "%s(), channels(%d) not even\n", __func__, channels);
 
+	if (etdm_id == MT6983_DAI_ETDMIN) {
 	/* ---etdm in --- */
 	regmap_update_bits(afe->regmap, ETDM_IN1_CON1,
 			   REG_INITIAL_COUNT_MASK_SFT,
@@ -790,7 +839,7 @@ static int mtk_dai_etdm_hw_params(struct snd_pcm_substream *substream,
 	/* 3: pad top 5: no pad top */
 	regmap_update_bits(afe->regmap, ETDM_IN1_CON1,
 			   REG_INITIAL_POINT_MASK_SFT,
-			   0x3 << REG_INITIAL_POINT_SFT);
+			   0x4 << REG_INITIAL_POINT_SFT);
 	regmap_update_bits(afe->regmap, ETDM_IN1_CON1,
 			   REG_LRCK_RESET_MASK_SFT,
 			   0x1 << REG_LRCK_RESET_SFT);
@@ -844,7 +893,7 @@ static int mtk_dai_etdm_hw_params(struct snd_pcm_substream *substream,
 	regmap_update_bits(afe->regmap, ETDM_IN1_CON0,
 			   REG_WORD_LENGTH_MASK_SFT,
 			   get_etdm_wlen(format) << REG_WORD_LENGTH_SFT);
-
+	} else {
 	/* ---etdm out --- */
 	regmap_update_bits(afe->regmap, ETDM_OUT1_CON1,
 			   REG_INITIAL_COUNT_MASK_SFT,
@@ -880,33 +929,38 @@ static int mtk_dai_etdm_hw_params(struct snd_pcm_substream *substream,
 	regmap_update_bits(afe->regmap, ETDM_OUT1_CON0,
 			   REG_WORD_LENGTH_MASK_SFT,
 			   get_etdm_wlen(format) << REG_WORD_LENGTH_SFT);
+	}
 
-	/* ---etdm cowork --- */
-	regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON0,
-			   ETDM_OUT0_SLAVE_SEL_MASK_SFT,
-			   ETDM_SLAVE_SEL_ETDMIN0_MASTER
-			   << ETDM_OUT0_SLAVE_SEL_SFT);
-	regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON0,
-			   ETDM_OUT1_SLAVE_SEL_MASK_SFT,
-			   ETDM_SLAVE_SEL_ETDMIN1_MASTER
-			   << ETDM_OUT1_SLAVE_SEL_SFT);
-	regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON0,
-			   ETDM_IN0_SLAVE_SEL_MASK_SFT,
-			   ETDM_SLAVE_SEL_ETDMOUT0_MASTER
-			   << ETDM_IN0_SLAVE_SEL_SFT);
-	regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON1,
-			   ETDM_IN1_SLAVE_SEL_MASK_SFT,
-			   ETDM_SLAVE_SEL_ETDMOUT1_MASTER
-			   << ETDM_IN1_SLAVE_SEL_SFT);
-
-	/* INTERCONN mux */
-	regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON1,
-			   ETDM_IN0_INTERCONN_MUX_SEL_MASK_SFT,
-			   0x0 << ETDM_IN0_INTERCONN_MUX_SEL_SFT);//24
-	regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON1,
-			   ETDM_OUT0_INTERCONN_MUX_SEL_MASK_SFT,
-			   0x1 << ETDM_OUT0_INTERCONN_MUX_SEL_SFT);//25
-
+	if (etdm_id == MT6983_DAI_ETDMIN) {
+		/* ---etdm cowork --- */
+		regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON0,
+				   ETDM_IN0_SLAVE_SEL_MASK_SFT,
+				   ETDM_SLAVE_SEL_ETDMOUT0_MASTER
+				   << ETDM_IN0_SLAVE_SEL_SFT);
+		regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON1,
+				   ETDM_IN1_SLAVE_SEL_MASK_SFT,
+				   ETDM_SLAVE_SEL_ETDMOUT1_MASTER
+				   << ETDM_IN1_SLAVE_SEL_SFT);
+	} else {
+		regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON0,
+				   ETDM_OUT0_SLAVE_SEL_MASK_SFT,
+				   ETDM_SLAVE_SEL_ETDMIN0_MASTER
+				   << ETDM_OUT0_SLAVE_SEL_SFT);
+		regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON0,
+				   ETDM_OUT1_SLAVE_SEL_MASK_SFT,
+				   ETDM_SLAVE_SEL_ETDMIN1_MASTER
+				   << ETDM_OUT1_SLAVE_SEL_SFT);
+	}
+	if (etdm_id == MT6983_DAI_ETDMIN) {
+		/* INTERCONN mux */
+		regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON1,
+				   ETDM_IN0_INTERCONN_MUX_SEL_MASK_SFT,
+				   0x0 << ETDM_IN0_INTERCONN_MUX_SEL_SFT);//24
+	} else {
+		regmap_update_bits(afe->regmap, ETDM_0_3_COWORK_CON1,
+				   ETDM_OUT0_INTERCONN_MUX_SEL_MASK_SFT,
+				   0x1 << ETDM_OUT0_INTERCONN_MUX_SEL_SFT);//25
+	}
 	return 0;
 }
 
@@ -915,36 +969,34 @@ static int mtk_dai_etdm_trigger(struct snd_pcm_substream *substream,
 {
 	struct mtk_base_afe *afe = snd_soc_dai_get_drvdata(dai);
 
-	dev_info(afe->dev, "%s(), cmd %d\n", __func__, cmd);
+	dev_info(afe->dev, "%s(), %s(%d): cmd %d\n", __func__, dai->name, dai->id, cmd);
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
-		/* enable Out control */
-		regmap_update_bits(afe->regmap, AFE_DAC_CON0,
-			AFE_ON_MASK_SFT, 0x1 << AFE_ON_SFT);
-
-		/* enable etdm in/out */
-		regmap_update_bits(afe->regmap, ETDM_IN1_CON0,
-				   REG_ETDM_IN_EN_MASK_SFT,
-				   0x1 << REG_ETDM_IN_EN_SFT);
-		regmap_update_bits(afe->regmap, ETDM_OUT1_CON0,
-				   REG_ETDM_OUT_EN_MASK_SFT,
-				   0x1 << REG_ETDM_OUT_EN_SFT);
+		/* enable etdm in/out
+		if (dai->id == MT6983_DAI_ETDMIN) {
+			regmap_update_bits(afe->regmap, ETDM_IN1_CON0,
+					   REG_ETDM_IN_EN_MASK_SFT,
+					   0x1 << REG_ETDM_IN_EN_SFT);
+		} else {
+			regmap_update_bits(afe->regmap, ETDM_OUT1_CON0,
+					   REG_ETDM_OUT_EN_MASK_SFT,
+					   0x1 << REG_ETDM_OUT_EN_SFT);
+		}*/
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
-		/* disable etdm in/out */
-		regmap_update_bits(afe->regmap, ETDM_IN1_CON0,
-				   REG_ETDM_IN_EN_MASK_SFT,
-				   0x0 << REG_ETDM_IN_EN_SFT);
-		regmap_update_bits(afe->regmap, ETDM_OUT1_CON0,
-				   REG_ETDM_OUT_EN_MASK_SFT,
-				   0x0 << REG_ETDM_OUT_EN_SFT);
-
-		/* disable Out control */
-		regmap_update_bits(afe->regmap, AFE_DAC_CON0,
-				   AFE_ON_MASK_SFT,
-				   0x0 << AFE_ON_SFT);
+		/* disable etdm in/out
+		if (dai->id == MT6983_DAI_ETDMIN) {
+			regmap_update_bits(afe->regmap, ETDM_IN1_CON0,
+					   REG_ETDM_IN_EN_MASK_SFT,
+					   0x0 << REG_ETDM_IN_EN_SFT);
+		} else {
+			regmap_update_bits(afe->regmap, ETDM_OUT1_CON0,
+					   REG_ETDM_OUT_EN_MASK_SFT,
+					   0x0 << REG_ETDM_OUT_EN_SFT);
+		}*/
 		break;
 	default:
 		return -EINVAL;

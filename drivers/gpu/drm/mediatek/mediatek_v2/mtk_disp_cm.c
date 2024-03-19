@@ -185,7 +185,7 @@ static void mtk_cm_config(struct mtk_ddp_comp *comp,
 	DDPINFO("%s,\n", __func__);
 	if (!comp->mtk_crtc || !comp->mtk_crtc->panel_ext)
 		return;
-	DDPMSG("mtk_cm_config111\n");
+//	DDPMSG("mtk_cm_config111\n");
 	cm_params = &comp->mtk_crtc->panel_ext->params->cm_params;
 	cm_tune_params = comp->mtk_crtc->panel_cm_params;
 

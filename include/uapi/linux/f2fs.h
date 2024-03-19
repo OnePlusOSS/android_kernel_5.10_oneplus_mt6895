@@ -42,6 +42,43 @@
 						struct f2fs_comp_option)
 #define F2FS_IOC_DECOMPRESS_FILE	_IO(F2FS_IOCTL_MAGIC, 23)
 #define F2FS_IOC_COMPRESS_FILE		_IO(F2FS_IOCTL_MAGIC, 24)
+#define F2FS_IOC_GET_EXTRA_ATTR		_IOR(F2FS_IOCTL_MAGIC, 26,	\
+						struct f2fs_extra_attr)
+#define F2FS_IOC_SET_EXTRA_ATTR		_IOW(F2FS_IOCTL_MAGIC, 27,	\
+						struct f2fs_extra_attr)
+
+#define F2FS_APPBOOST_IOC_BASE (50)
+enum {
+	APPBOOST_PRELOAD = F2FS_APPBOOST_IOC_BASE,
+	APPBOOST_START_MERGE,
+	APPBOOST_END_MERGE,
+	APPBOOST_ABORT_PRELOAD,
+};
+#define F2FS_IOC_PRELOAD_FILE		_IOW(F2FS_IOCTL_MAGIC,		\
+						APPBOOST_PRELOAD, __u32)
+#define F2FS_IOC_START_MERGE_FILE	_IOW(F2FS_IOCTL_MAGIC,		\
+						APPBOOST_START_MERGE, struct merge_file_user)
+#define F2FS_IOC_END_MERGE_FILE		_IO(F2FS_IOCTL_MAGIC, APPBOOST_END_MERGE)
+#define F2FS_IOC_ABORT_PRELOAD_FILE	_IO(F2FS_IOCTL_MAGIC, APPBOOST_ABORT_PRELOAD)
+
+#define F2FS_DEDUP_IOC_BASE	(100)
+#define F2FS_IOC_DEDUP_CREATE		_IOW(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 0, struct f2fs_dedup_src)
+#define F2FS_IOC_DEDUP_FILE		_IOW(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 1, struct f2fs_dedup_dst)
+#define F2FS_IOC_DEDUP_REVOKE		_IOW(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 2, struct f2fs_dedup_revoke)
+#define F2FS_IOC_DEDUP_GET_FILE_INFO	_IOR(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 3, struct f2fs_dedup_file_info)
+#define F2FS_IOC_DEDUP_GET_SYS_INFO	_IOR(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 4, struct f2fs_dedup_sys_info)
+
+#define F2FS_IOC_CLONE_FILE		_IOW(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 5, struct f2fs_clone_info)
+#define F2FS_IOC_MODIFY_CHECK	_IOWR(F2FS_IOCTL_MAGIC,	\
+					F2FS_DEDUP_IOC_BASE + 6, struct f2fs_modify_check_info)
+#define F2FS_IOC_DEDUP_PERM_CHECK \
+			_IO(F2FS_IOCTL_MAGIC, F2FS_DEDUP_IOC_BASE + 7)
 
 /*
  * should be same as XFS_IOC_GOINGDOWN.
@@ -94,5 +131,85 @@ struct f2fs_comp_option {
 	__u8 algorithm;
 	__u8 log_cluster_size;
 };
+
+struct merge_file_user {
+	unsigned ino;
+	unsigned extent_count;
+	unsigned int i_generation;
+	unsigned int REV;
+	__u64 mtime;
+	__u8 __user *extents;
+};
+
+struct f2fs_comp_option_v2 {
+	__u8 algorithm;
+	__u8 log_cluster_size;
+	__u8 level;
+	__u8 flag;
+};
+
+enum {
+	F2FS_EXTRA_ATTR_TOTAL_SIZE,		/* ro, size of extra attr area */
+	F2FS_EXTRA_ATTR_ISIZE,			/* ro, i_extra_isize */
+	F2FS_EXTRA_ATTR_INLINE_XATTR_SIZE,	/* rw, i_inline_xattr_size */
+	F2FS_EXTRA_ATTR_PROJID,			/* ro, i_projid */
+	F2FS_EXTRA_ATTR_INODE_CHKSUM,		/* ro, i_inode_chksum */
+	F2FS_EXTRA_ATTR_CRTIME,			/* ro, i_crtime, i_crtime_nsec */
+	F2FS_EXTRA_ATTR_COMPR_BLOCKS,		/* ro, i_compr_blocks */
+	F2FS_EXTRA_ATTR_COMPR_OPTION,		/* rw, i_compress_algorithm,
+						 *     i_log_cluster_size,
+						 *     i_compress_flag
+						 */
+	F2FS_EXTRA_ATTR_MAX,
+};
+
+struct f2fs_extra_attr {
+	__u8 field;		/* F2FS_EXTRA_ATTR_* */
+	__u8 rsvd1;
+	__u16 attr_size;	/* size of @attr */
+	__u32 rsvd2;
+	__u64 attr;		/* attr value or pointer */
+};
+
+/* F2FS_IOC_DEDUP_CREATE */
+struct f2fs_dedup_src {
+	int inner_fd;
+};
+
+/* F2FS_IOC_DEDUP_FILE */
+struct f2fs_dedup_dst {
+	int base_fd;
+	int tmp_fd;
+};
+
+/* F2FS_IOC_DEDUP_REVOKE */
+struct f2fs_dedup_revoke {
+	int revoke_fd;
+};
+
+/* F2FS_IOC_DEDUP_GET_FILE_INFO */
+struct f2fs_dedup_file_info {
+	short is_deduped;
+	short is_layered;
+	int group;
+};
+
+/* F2FS_IOC_DEDUP_GET_SYS_INFO */
+struct f2fs_dedup_sys_info {
+	__u64 file_count;
+	__u64 file_space;		/* MB */
+};
+
+struct f2fs_clone_info {
+	int src_fd;
+	int flags;	/* meta/data index */
+};
+
+struct f2fs_modify_check_info {
+	int flag;	/* data/meta */
+	int mode;	/* set/get/clear */
+};
+
+#define F2FS_KBYTE_SHIFT	10
 
 #endif /* _UAPI_LINUX_F2FS_H */

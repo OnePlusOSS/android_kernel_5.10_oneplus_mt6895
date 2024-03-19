@@ -22,6 +22,14 @@
 #include "cmdq-sec-iwc-common.h"
 #endif
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define OPLUS_FEATURE_CAMERA_COMMON
+#endif
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define APU_MDLA_TRIGGER_MAILBOX (0x190e1600)
+#endif // OPLUS_FEATURE_CAMERA_COMMON
+
 #define WPE_BWLOG_HW_COMB (IMGSYS_ENG_WPE_TNR | IMGSYS_ENG_DIP)
 #define WPE_BWLOG_HW_COMB_ninA (IMGSYS_ENG_WPE_EIS | IMGSYS_ENG_PQDIP_A)
 #define WPE_BWLOG_HW_COMB_ninB (IMGSYS_ENG_WPE_EIS | IMGSYS_ENG_PQDIP_B)
@@ -68,7 +76,7 @@ void imgsys_cmdq_init(struct mtk_imgsys_dev *imgsys_dev, const int nr_imgsys_dev
 	if (nr_imgsys_dev == 1) {
 		imgsys_cmdq_wq = alloc_ordered_workqueue("%s",
 				__WQ_LEGACY | WQ_MEM_RECLAIM |
-				WQ_FREEZABLE,
+				WQ_FREEZABLE | WQ_HIGHPRI,
 				"imgsys_cmdq_cb_wq");
 		if (!imgsys_cmdq_wq)
 			pr_info("%s: Create workquque IMGSYS-CMDQ fail!\n",
@@ -1068,8 +1076,14 @@ int imgsys_cmdq_parser(struct swfrm_info_t *frm_info, struct cmdq_pkt *pkt,
 					__func__);
 			break;
 		case IMGSYS_CMD_WRITE:
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			if ((cmd->u.address != APU_MDLA_TRIGGER_MAILBOX) &&
+				((cmd->u.address < IMGSYS_REG_START) ||
+				(cmd->u.address > IMGSYS_REG_END))) {
+#else
 			if ((cmd->u.address < IMGSYS_REG_START) ||
 				(cmd->u.address > IMGSYS_REG_END)) {
+#endif // OPLUS_FEATURE_CAMERA_COMMON
 				pr_info(
 					"%s: [ERROR] WRITE with addr(0x%08lx) value(0x%08x) mask(0x%08x)\n",
 					__func__, cmd->u.address, cmd->u.value, cmd->u.mask);

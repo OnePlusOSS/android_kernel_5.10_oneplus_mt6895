@@ -104,10 +104,17 @@ static int trigger_cnt_disabled;
 static int enabled;
 static int inited;
 static struct class *usb_boost_class;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static struct wakeup_source *usb_boost_ws;
+static int cpu_freq_dft_para[_ATTR_PARA_RW_MAXID] = {1, 10, 300, 0};
+static int cpu_core_dft_para[_ATTR_PARA_RW_MAXID] = {1, 10, 300, 0};
+static int dram_vcore_dft_para[_ATTR_PARA_RW_MAXID] = {1, 10, 300, 0};
+#else
 static struct wakeup_source *usb_boost_ws;
 static int cpu_freq_dft_para[_ATTR_PARA_RW_MAXID] = {1, 3, 300, 0};
 static int cpu_core_dft_para[_ATTR_PARA_RW_MAXID] = {1, 3, 300, 0};
 static int dram_vcore_dft_para[_ATTR_PARA_RW_MAXID] = {1, 3, 300, 0};
+#endif
 static void __usb_boost_empty(void) { return; }
 static void __usb_boost_cnt(void) { trigger_cnt_disabled++; return; }
 static void __usb_boost_id_empty(int id) { return; }
@@ -346,6 +353,12 @@ static void boost_work(struct work_struct *work_struct)
 	__boost_act(id, ACT_RELEASE);
 	boost_inst[id].request_func = __request_it;
 	ptr_inst->is_running = false;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (usb_boost_ws->active) {
+		__pm_relax(usb_boost_ws);
+		USB_BOOST_NOTICE("%s release wakelock\n", __func__);
+	}
+#endif
 	USB_BOOST_NOTICE("id:%d, end of work\n", id);
 	/* dump_info(id); */
 }
@@ -831,10 +844,20 @@ void xhci_urb_giveback_dbg(void *unused, struct urb *urb)
 {
 	switch (usb_endpoint_type(&urb->ep->desc)) {
 	case USB_ENDPOINT_XFER_BULK:
+#ifndef OPLUS_FEATURE_CHG_BASIC
 		if (urb->actual_length >= 8192) {
 			__pm_wakeup_event(usb_boost_ws, 10000);
 			usb_boost();
 		}
+#else
+		if (urb->actual_length >= 8192) {
+			if (!usb_boost_ws->active) {
+				__pm_stay_awake(usb_boost_ws);
+				USB_BOOST_NOTICE("%s keep wakelock\n", __func__);
+			}
+			usb_boost();
+		}
+#endif
 		break;
 	case USB_ENDPOINT_XFER_ISOC:
 		update_time_audio();
@@ -877,6 +900,11 @@ int usb_boost_init(void)
 	audio_boost_inst.request_func = __request_empty;
 	/* wakelock */
 	usb_boost_ws = wakeup_source_register(NULL, "usb_boost");
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/* wakelock */
+	usb_boost_ws = wakeup_source_register(NULL, "usb_boost");
+#endif
 
 	create_sys_fs();
 	default_setting();

@@ -34,6 +34,8 @@
 #include <linux/atomic.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
+#include <linux/mm.h>
+#include <linux/suspend.h>
 
 #ifndef CCCI_KMODULE_ENABLE
 #include "ccci_core.h"
@@ -2086,6 +2088,7 @@ static int dpmaif_wait_resume_done(void)
 			CCCI_NORMAL_LOG(-1, TAG,
 				"[%s] warning: suspend_flag = 1; (cnt: %d)",
 				__func__, cnt);
+			pm_system_wakeup();
 			return -1;
 		}
 	}
@@ -4006,8 +4009,11 @@ static int dpmaif_init_cap(struct device *dev)
 		dpmaif_ctrl->dpmaif_reset_pd_base);
 
 	if (of_property_read_u32(dev->of_node, "dl_bat_entry_size",
-					&dpmaif_ctrl->dl_bat_entry_size))
+					&dpmaif_ctrl->dl_bat_entry_size)){
 		dpmaif_ctrl->dl_bat_entry_size = 16384;
+		if(totalram_pages() < (6 * (SZ_1G >> PAGE_SHIFT)))
+			dpmaif_ctrl->dl_bat_entry_size = 8192;
+	}
 
 	CCCI_INIT_LOG(-1, TAG,
 		"[%s] dl_bat_entry_size: %u\n",

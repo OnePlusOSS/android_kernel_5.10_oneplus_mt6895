@@ -356,7 +356,9 @@ static void do_host_work(struct work_struct *data)
 	int usb_clk_state = NO_CHANGE;
 	struct mt_usb_work *work =
 		container_of(data, struct mt_usb_work, dwork.work);
-	/* struct mt_usb_glue *glue = mtk_musb->glue; */
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct mt_usb_glue *glue = mtk_musb->glue;
+#endif
 
 	/*
 	 * kernel_init_done should be set in
@@ -446,6 +448,12 @@ static void do_host_work(struct work_struct *data)
 				MUSB_DEVCTL, (devctl | MUSB_DEVCTL_SESSION));
 
 		/* phy_set_mode(glue->phy, PHY_MODE_USB_HOST); */
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if ((glue->phy) && (glue->phy->ops) && (glue->phy->ops->set_mode))
+		{
+			glue->phy->ops->set_mode(glue->phy, PHY_MODE_USB_HOST, 0);
+		}
+#endif
 		set_usb_phy_mode(PHY_MODE_USB_HOST);
 
 		musb_start(mtk_musb);

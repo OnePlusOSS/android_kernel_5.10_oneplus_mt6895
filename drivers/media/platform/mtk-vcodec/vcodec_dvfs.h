@@ -72,7 +72,7 @@ struct dvfs_params {
 struct vcodec_inst *get_inst(struct mtk_vcodec_ctx *ctx);
 bool need_update(struct mtk_vcodec_ctx *ctx);
 bool remove_update(struct mtk_vcodec_ctx *ctx);
-u32 match_avail_freq(struct mtk_vcodec_dev *dev, int codec_type, u32 freq);
+u32 match_avail_freq(struct mtk_vcodec_dev *dev, int codec_type, u64 freq);
 void update_freq(struct mtk_vcodec_dev *dev, int codec_type);
 
 #endif

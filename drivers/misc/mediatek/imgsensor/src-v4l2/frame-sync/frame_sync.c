@@ -14,9 +14,10 @@
 #include "frame_sync_algo.h"
 #include "frame_monitor.h"
 
+#include "hw_sensor_sync_algo.h"
+
 #if !defined(FS_UT)
 #include "frame_sync_console.h"
-#include "hw_sensor_sync_algo.h"
 #endif // FS_UT
 
 
@@ -30,31 +31,30 @@
 /******************************************************************************/
 
 
-/******************************************************************************/
-// Mutex Lock
-/******************************************************************************/
-#ifndef ALL_USING_ATOMIC
-#ifdef FS_UT
-#include <pthread.h>
-static pthread_mutex_t gRegisterLocker = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t gBitLocker = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t gStatusLocker = PTHREAD_MUTEX_INITIALIZER;
-#else
-#include <linux/mutex.h>
-static DEFINE_MUTEX(gRegisterLocker);
-static DEFINE_MUTEX(gBitLocker);
-static DEFINE_MUTEX(gStatusLocker);
-#endif // FS_UT
-#endif // ALL_USING_ATOMIC
-/******************************************************************************/
-
-
 
 
 
 /******************************************************************************/
 // Frame Sync Mgr Structure (private structure)
 /******************************************************************************/
+
+//------------------------ fs preset perframe st -----------------------------//
+struct fs_preset_perframe_st {
+	unsigned int is_valid;
+	unsigned int is_streaming;
+	struct fs_perframe_st preset_pf_ctrl;
+};
+//----------------------------------------------------------------------------//
+
+
+//----------------------- fs seamless perframe st ----------------------------//
+struct fs_seamless_ctrl_st {
+	FS_Atomic_T wait_for_processing;
+	unsigned int seamless_sof_cnt;
+	struct fs_seamless_st seamless_info;
+};
+//----------------------------------------------------------------------------//
+
 
 //---------------------------- frame recorder --------------------------------//
 struct FrameRecord {
@@ -79,12 +79,7 @@ struct SensorInfo {
 };
 
 struct SensorTable {
-#ifndef ALL_USING_ATOMIC
-	unsigned int reg_cnt;
-#else
 	FS_Atomic_T reg_cnt;
-#endif // ALL_USING_ATOMIC
-
 	struct SensorInfo sensors[SENSOR_MAX_NUM];
 };
 //----------------------------------------------------------------------------//
@@ -105,39 +100,31 @@ struct FrameSyncMgr {
 	struct SensorTable reg_table;
 
 	/* Frame Sync Status information */
-#ifndef ALL_USING_ATOMIC
-	enum FS_STATUS fs_status;
-#else
+	unsigned int user_counter;  // also fs_init() cnt
+
 	FS_Atomic_T fs_status;
-#endif // ALL_USING_ATOMIC
-
-	unsigned int user_counter;              // also fs_init() cnt
-
-#ifndef ALL_USING_ATOMIC
-	unsigned int streaming_bits;            // can do set / unset
-	unsigned int enSync_bits;               // can do set / unset
-
-	unsigned int validSync_bits;            // for checking PF status
-	unsigned int pf_ctrl_bits;              // for checking PF status
-	unsigned int last_pf_ctrl_bits;         // for checking PF status
-
-
-#ifdef USING_CCU
-	unsigned int power_on_ccu_bits;         // for checking CCU pw ON/OFF
-#endif // USING_CCU
-
-
-	/* ctrl needed by FS have been setup */
-	unsigned int setup_complete_bits;
-	unsigned int last_setup_complete_bits;
-#else // ALL_USING_ATOMIC
-
 	FS_Atomic_T streaming_bits;
 	FS_Atomic_T enSync_bits;
-
 	FS_Atomic_T validSync_bits;
 	FS_Atomic_T pf_ctrl_bits;
-	FS_Atomic_T last_pf_ctrl_bits;
+	FS_Atomic_T setup_complete_bits;
+	FS_Atomic_T seamless_bits;  // notify which sensor is doing seamless switch
+
+	unsigned int last_pf_ctrl_bits;
+	unsigned int last_setup_complete_bits;
+	unsigned int trigger_ctrl_bits;
+
+	/* For support HW sync */
+	unsigned int hw_sync_group_id[SENSOR_MAX_NUM];
+	FS_Atomic_T hw_sync_bits;
+	FS_Atomic_T hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_MAX];
+	FS_Atomic_T hw_sync_non_valid_group_bits;
+	FS_Atomic_T setup_complete_hw_group_bits[FS_HW_SYNC_GROUP_ID_MAX];
+	/* --- fs act cnt (for ctrl pair trigger) --- */
+	unsigned int act_cnt[FS_HW_SYNC_GROUP_ID_MAX];
+
+	/* For keeping things before register/streaming on */
+	FS_Atomic_T set_sync_sidx_table[SENSOR_MAX_NUM];
 
 
 #ifdef USING_CCU
@@ -145,22 +132,24 @@ struct FrameSyncMgr {
 #endif // USING_CCU
 
 
-	FS_Atomic_T setup_complete_bits;
-	FS_Atomic_T last_setup_complete_bits;
-#endif // ALL_USING_ATOMIC
-
-
 	/* for different fps sync sensor sync together */
 	/* e.g. fps: (60 vs 30) */
 	/* => frame_cell_size: 2 */
 	/* => frame_tag: 0, 1, 0, 1, 0, ... */
-	enum FS_FEATURE_MODE ft_mode[SENSOR_MAX_NUM];
+	enum FS_HDR_FT_MODE hdr_ft_mode[SENSOR_MAX_NUM];
 	unsigned int frame_cell_size[SENSOR_MAX_NUM];
 	unsigned int frame_tag[SENSOR_MAX_NUM];
 
 
 	/* keep for supporting trigger by ext vsync */
 	struct fs_perframe_st pf_ctrl[SENSOR_MAX_NUM];
+
+
+	/* for set ae ctrl before streaming on */
+	struct fs_preset_perframe_st preset_ctrl[SENSOR_MAX_NUM];
+
+	/* for seamless switch */
+	struct fs_seamless_ctrl_st seamless_ctrl[SENSOR_MAX_NUM];
 
 
 	/* Frame Settings Recorder */
@@ -171,17 +160,20 @@ struct FrameSyncMgr {
 	struct callback_st cb_data[SENSOR_MAX_NUM];
 
 
-	/* fs act cnt (for ctrl pair trigger) */
-	unsigned int act_cnt;
-
-
 #ifdef SUPPORT_FS_NEW_METHOD
 	unsigned int user_set_sa:1;             // user config using SA
+	FS_Atomic_T user_async_master_sidx;     // user config async master sidx
+
 	FS_Atomic_T using_sa_ver;               // flag - using standalone ver
 	FS_Atomic_T sa_bits;                    // for needing standalone ver
 	FS_Atomic_T sa_method;                  // 0:adaptive switch
 	FS_Atomic_T master_idx;                 // SA master idx
+	FS_Atomic_T async_mode_bits;            // SA async mode bits
+	FS_Atomic_T async_master_idx;           // SA async mode m_idx
 #endif // SUPPORT_FS_NEW_METHOD
+
+
+	unsigned int sof_cnt_arr[SENSOR_MAX_NUM];   // debug, from p1 sof cnt
 };
 static struct FrameSyncMgr fs_mgr;
 //----------------------------------------------------------------------------//
@@ -206,35 +198,7 @@ static unsigned int fl_table_idxs[SENSOR_MAX_NUM] = {0, 1, 2, 3, 4};
 /******************************************************************************/
 // Operate & Basic & utility function
 /******************************************************************************/
-#ifndef ALL_USING_ATOMIC
-static inline void change_fs_status(enum FS_STATUS status)
-{
-	FS_MUTEX_LOCK(&gStatusLocker);
-
-	fs_mgr.fs_status = status;
-
-	FS_MUTEX_UNLOCK(&gStatusLocker);
-}
-
-
-static inline enum FS_STATUS get_fs_status(void)
-{
-	enum FS_STATUS status;
-
-
-	FS_MUTEX_LOCK(&gStatusLocker);
-
-	status = fs_mgr.fs_status;
-
-	FS_MUTEX_UNLOCK(&gStatusLocker);
-
-
-	return status;
-}
-
-
-#else // ifndef ALL_USING_ATOMIC
-static inline void change_fs_status(enum FS_STATUS status)
+static inline void change_fs_status(const enum FS_STATUS status)
 {
 	FS_ATOMIC_SET((int)status, &fs_mgr.fs_status);
 }
@@ -246,106 +210,53 @@ static inline void change_fs_status(enum FS_STATUS status)
  *         when reading atomic value with
  *         the value is out of valid range.
  */
-static inline enum FS_STATUS get_fs_status(void)
+static enum FS_STATUS get_fs_status(void)
 {
 	enum FS_STATUS status;
 	int val = FS_ATOMIC_READ(&fs_mgr.fs_status);
 
-
-	/* check value valid for enum */
-	if (val >= FS_NONE && val < FS_STATUS_UNKNOWN)
-		status = (enum FS_STATUS)val;
-	else {
-		LOG_INF("ERROR: get status val:%d, treat as FS_STATUS_UNKNOWN\n",
+	/* check if value valid for enum */
+	if (unlikely(!(val >= FS_NONE && val < FS_STATUS_UNKNOWN))) {
+		LOG_INF(
+			"ERROR: get status val:%d, treat as FS_STATUS_UNKNOWN\n",
 			val);
 
-		status = FS_STATUS_UNKNOWN;
+		return FS_STATUS_UNKNOWN;
 	}
+
+	status = (enum FS_STATUS)val;
 
 	return status;
 }
-#endif // ALL_USING_ATOMIC
 
 
 /*
  * return: (0/1) for (non-valid/valid)
  */
-static inline unsigned int check_idx_valid(unsigned int sensor_idx)
+static inline unsigned int check_idx_valid(const unsigned int sensor_idx)
 {
-	return (sensor_idx < SENSOR_MAX_NUM) ? 1 : 0;
+	return (likely(sensor_idx < SENSOR_MAX_NUM)) ? 1 : 0;
 }
 
 
-#ifndef ALL_USING_ATOMIC
-static inline unsigned int check_bit(unsigned int idx, unsigned int val)
-{
-	unsigned int ret = check_idx_valid(idx);
-
-
-	FS_MUTEX_LOCK(&gBitLocker);
-
-	if (ret == 1)
-		val = ((val >> idx) & 0x01);
-
-	FS_MUTEX_UNLOCK(&gBitLocker);
-
-
-	return (ret == 1) ? val : 0xFFFFFFFF;
-}
-
-
-static unsigned int write_bit(
-	unsigned int idx, unsigned int en, unsigned int (*val))
-{
-	unsigned int ret = check_idx_valid(idx);
-
-
-	FS_MUTEX_LOCK(&gBitLocker);
-
-	if (ret == 1) {
-		if (en > 0)
-			(*val |= (0x01 << idx));
-		else
-			(*val &= ~(0x01 << idx));
-	}
-
-	FS_MUTEX_UNLOCK(&gBitLocker);
-
-
-	// TODO : if sensor idx is wrong, do error handle?
-	return ret;
-}
-
-
-static inline void clear_all_bit(unsigned int (*val))
-{
-	FS_MUTEX_LOCK(&gBitLocker);
-
-	*val = 0;
-
-	FS_MUTEX_UNLOCK(&gBitLocker);
-}
-#endif // ALL_USING_ATOMIC
-
-
-#if defined(SUPPORT_FS_NEW_METHOD) || defined(ALL_USING_ATOMIC)
+#if defined(SUPPORT_FS_NEW_METHOD)
 /*
  * return: (0/1) or 0xFFFFFFFF
  *     0xFFFFFFFF: when check_idx_valid() return error
  */
-static inline unsigned int check_bit_atomic(
-	unsigned int idx, FS_Atomic_T *p_fs_atomic_val)
+static unsigned int check_bit_atomic(const unsigned int idx,
+	const FS_Atomic_T *p_fs_atomic_val)
 {
 	unsigned int ret = check_idx_valid(idx);
 	unsigned int result = 0;
 
+	if (unlikely(ret == 0))
+		return 0xFFFFFFFF;
 
-	if (ret == 1) {
-		result = FS_ATOMIC_READ(p_fs_atomic_val);
-		result = ((result >> idx) & 1UL);
-	}
+	result = FS_ATOMIC_READ(p_fs_atomic_val);
+	result = ((result >> idx) & 1UL);
 
-	return (ret == 1) ? (result) : 0xFFFFFFFF;
+	return result;
 }
 
 
@@ -353,27 +264,37 @@ static inline unsigned int check_bit_atomic(
  * return: 1 or 0xFFFFFFFF
  *     0xFFFFFFFF: when check_idx_valid() return error
  */
-static inline unsigned int write_bit_atomic(
-	unsigned int idx, unsigned int en, FS_Atomic_T *p_fs_atomic_val)
+static unsigned int write_bit_atomic(const unsigned int idx,
+	const unsigned int en, FS_Atomic_T *p_fs_atomic_val)
 {
 	unsigned int ret = check_idx_valid(idx);
 
+	if (unlikely(ret == 0))
+		return 0xFFFFFFFF;
 
-	if (ret == 1) {
-		/* en > 0 => set ; en == 0 => clear */
-		if (en > 0)
-			FS_ATOMIC_FETCH_OR((1UL << idx), p_fs_atomic_val);
-		else
-			FS_ATOMIC_FETCH_AND((~(1UL << idx)), p_fs_atomic_val);
-	}
+	/* en > 0 => set ; en == 0 => clear */
+	if (en > 0)
+		FS_ATOMIC_FETCH_OR((1UL << idx), p_fs_atomic_val);
+	else
+		FS_ATOMIC_FETCH_AND((~(1UL << idx)), p_fs_atomic_val);
 
-	return (ret == 1) ? (ret) : 0xFFFFFFFF;
+	return ret;
 }
 
 
 static inline void clear_all_bit_atomic(FS_Atomic_T *p_fs_atomic_val)
 {
 	FS_ATOMIC_SET(0, p_fs_atomic_val);
+}
+
+
+static inline unsigned int fs_user_sa_config(void)
+{
+#ifdef FORCE_USING_SA_MODE
+	return 1;
+#else
+	return fs_mgr.user_set_sa;
+#endif // FORCE_USING_SA_MODE
 }
 #endif // SUPPORT_FS_NEW_METHOD
 /******************************************************************************/
@@ -385,19 +306,119 @@ static inline void clear_all_bit_atomic(FS_Atomic_T *p_fs_atomic_val)
 /******************************************************************************/
 // Dump & Debug function
 /******************************************************************************/
-static inline void fs_dump_pf_info(struct fs_perframe_st *pf_info)
+static void fs_dump_status(const int idx, const int flag, const char *caller,
+	const char *msg)
 {
-	LOG_INF(
-		"ID:%#x(sidx:%u), mim_fl_lc:%u, shutter_lc:%u, margin_lc:%u, flicker(%u), lineTime(ns):%u(%u/%u)\n",
-		pf_info->sensor_id,
-		pf_info->sensor_idx,
-		pf_info->min_fl_lc,
-		pf_info->shutter_lc,
-		pf_info->margin_lc,
-		pf_info->flicker_en,
-		pf_info->lineTimeInNs,
-		pf_info->linelength,
-		pf_info->pclk);
+	const enum FS_STATUS status = get_fs_status();
+	const unsigned int cnt =
+		FS_POPCOUNT(FS_ATOMIC_READ(&fs_mgr.validSync_bits));
+	char *log_buf = NULL;
+	int ret = 0;
+
+	log_buf = FS_CALLOC(LOG_BUF_STR_LEN, sizeof(char));
+	if (unlikely(log_buf == NULL)) {
+		LOG_MUST(
+			"[%s]: ERROR: [%u] flag:%u, log_buf allocate memory failed\n",
+			caller, idx, flag);
+		return;
+	}
+
+	log_buf[0] = '\0';
+	ret = snprintf(log_buf + strlen(log_buf),
+		LOG_BUF_STR_LEN - strlen(log_buf),
+		"[%s:%d/%d %s]: stat:%u, ready:%u, stream:%d, enSync:%d(%d/%d/%d/%d/%d/%d), valid:%d, hw_sync:%d(%d)(%d/%d/%d/%d/%d/%d), trigger:%u, pf_ctrl:%d(%u), complete:%d(%u)(hw:%d/%d/%d/%d/%d/%d), act(%u/%u/%u/%u/%u/%u), hdr_ft_mode(%u/%u/%u/%u/%u/%u), seamless:%#x, SA(%d/%d/%d, %d, async(%d, m_sidx:%d(%d)))",
+		caller, idx, flag, msg,
+		status,
+		cnt,
+		FS_ATOMIC_READ(&fs_mgr.streaming_bits),
+		FS_ATOMIC_READ(&fs_mgr.enSync_bits),
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[0]),
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[1]),
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[2]),
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[3]),
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[4]),
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[5]),
+		FS_ATOMIC_READ(&fs_mgr.validSync_bits),
+		FS_ATOMIC_READ(&fs_mgr.hw_sync_bits),
+		FS_ATOMIC_READ(&fs_mgr.hw_sync_non_valid_group_bits),
+		FS_ATOMIC_READ(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_0]),
+		FS_ATOMIC_READ(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_1]),
+		FS_ATOMIC_READ(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_2]),
+		FS_ATOMIC_READ(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_3]),
+		FS_ATOMIC_READ(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_4]),
+		FS_ATOMIC_READ(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_5]),
+		fs_mgr.trigger_ctrl_bits,
+		FS_ATOMIC_READ(&fs_mgr.pf_ctrl_bits),
+		fs_mgr.last_pf_ctrl_bits,
+		FS_ATOMIC_READ(&fs_mgr.setup_complete_bits),
+		fs_mgr.last_setup_complete_bits,
+		FS_ATOMIC_READ(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_0]),
+		FS_ATOMIC_READ(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_1]),
+		FS_ATOMIC_READ(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_2]),
+		FS_ATOMIC_READ(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_3]),
+		FS_ATOMIC_READ(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_4]),
+		FS_ATOMIC_READ(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_5]),
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_0],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_1],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_2],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_3],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_4],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_5],
+		fs_mgr.hdr_ft_mode[0],
+		fs_mgr.hdr_ft_mode[1],
+		fs_mgr.hdr_ft_mode[2],
+		fs_mgr.hdr_ft_mode[3],
+		fs_mgr.hdr_ft_mode[4],
+		fs_mgr.hdr_ft_mode[5],
+		FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+		FS_ATOMIC_READ(&fs_mgr.using_sa_ver),
+		fs_user_sa_config(),
+		FS_ATOMIC_READ(&fs_mgr.sa_bits),
+		FS_ATOMIC_READ(&fs_mgr.master_idx),
+		FS_ATOMIC_READ(&fs_mgr.async_mode_bits),
+		FS_ATOMIC_READ(&fs_mgr.user_async_master_sidx),
+		FS_ATOMIC_READ(&fs_mgr.async_master_idx));
+
+	if (unlikely(ret < 0))
+		LOG_MUST("ERROR: LOG encoding error, ret:%d\n", ret);
+
+
+#if defined(USING_CCU)
+	ret = snprintf(log_buf + strlen(log_buf),
+		LOG_BUF_STR_LEN - strlen(log_buf),
+		", pw_ccu:%d(cnt:%d)",
+		FS_ATOMIC_READ(&fs_mgr.power_on_ccu_bits),
+		frm_get_ccu_pwn_cnt());
+
+	if (unlikely(ret < 0)) {
+		LOG_MUST(
+			"ERROR: LOG encoding error (add USING_CCU part), ret:%d\n",
+			ret);
+	}
+#endif // USING_CCU
+
+
+	LOG_MUST("%s\n", log_buf);
+
+	FS_FREE(log_buf);
 }
 /******************************************************************************/
 
@@ -411,23 +432,23 @@ static inline void fs_dump_pf_info(struct fs_perframe_st *pf_info)
 // PS: The method register "BY_SENSOR_IDX" is't been tested in this SW flow.
 /******************************************************************************/
 static inline unsigned int compare_sensor_id(
-	unsigned int id1, unsigned int id2)
+	const unsigned int id1, const unsigned int id2)
 {
 	return (id1 == id2 && id1 != 0) ? 1 : 0;
 }
 
 
 static inline unsigned int compare_sensor_idx(
-	unsigned int idx1, unsigned int idx2)
+	const unsigned int idx1, const unsigned int idx2)
 {
 	return (idx1 == idx2) ? 1 : 0;
 }
 
 
-static inline unsigned int check_sensor_info(
-	struct SensorInfo (*info1),
-	struct SensorInfo (*info2),
-	enum CHECK_SENSOR_INFO_METHOD method)
+static unsigned int check_sensor_info(
+	const struct SensorInfo (*info1),
+	const struct SensorInfo (*info2),
+	const enum CHECK_SENSOR_INFO_METHOD method)
 {
 	switch (method) {
 	case BY_SENSOR_ID:
@@ -442,19 +463,15 @@ static inline unsigned int check_sensor_info(
 }
 
 
-static inline void fs_get_reg_sensor_info(
-	unsigned int idx, struct SensorInfo *pInfo)
+static inline unsigned int fs_get_reg_sensor_id(const unsigned int idx)
 {
-	struct SensorTable (*pSensorTable) = &fs_mgr.reg_table;
+	return fs_mgr.reg_table.sensors[idx].sensor_id;
+}
 
-	if (pInfo && check_idx_valid(idx)) {
-		pInfo->sensor_id = pSensorTable->sensors[idx].sensor_id;
-		pInfo->sensor_idx = pSensorTable->sensors[idx].sensor_idx;
-	} else {
-		LOG_INF(
-			"ERROR: pInfo %p or/and idx:%u is/are not valid\n",
-			pInfo, idx);
-	}
+
+static inline unsigned int fs_get_reg_sensor_idx(const unsigned int idx)
+{
+	return fs_mgr.reg_table.sensors[idx].sensor_idx;
 }
 
 
@@ -464,23 +481,14 @@ static inline void fs_get_reg_sensor_info(
  *     0xffffffff: not found this sensor ID in "SensorTable".
  */
 static unsigned int fs_search_reg_sensors(
-	struct SensorInfo (*sensor_info),
-	enum CHECK_SENSOR_INFO_METHOD method)
+	const struct SensorInfo (*sensor_info),
+	const enum CHECK_SENSOR_INFO_METHOD method)
 {
 	unsigned int i = 0;
-
-#ifndef ALL_USING_ATOMIC
-	struct SensorTable (*pSensorTable) = &fs_mgr.reg_table;
-	unsigned int (*pRegCnt) = &pSensorTable->reg_cnt;
-
-	for (i = 0; i < (*pRegCnt); ++i) {
-#else
 	int reg_cnt = FS_ATOMIC_READ(&fs_mgr.reg_table.reg_cnt);
 
 	for (i = 0; i < reg_cnt; ++i) {
-#endif // ALL_USING_ATOMIC
-		struct SensorInfo (*pInfo) = &fs_mgr.reg_table.sensors[i];
-
+		const struct SensorInfo *pInfo = &fs_mgr.reg_table.sensors[i];
 
 		if (check_sensor_info(pInfo, sensor_info, method))
 			return i;
@@ -497,44 +505,11 @@ static unsigned int fs_search_reg_sensors(
  *
  * !!! You have check the return idx before using it. !!!
  */
-#ifndef ALL_USING_ATOMIC
-static unsigned int fs_push_sensor(struct SensorInfo (*sensor_info))
-{
-	unsigned int *pRegCnt = NULL;
-	struct SensorTable (*pSensorTable) = &fs_mgr.reg_table;
-
-
-	FS_MUTEX_LOCK(&gRegisterLocker);
-
-
-	pRegCnt = &pSensorTable->reg_cnt;
-
-	/* check if reach maximum capacity */
-	if (*pRegCnt < SENSOR_MAX_NUM)
-		pSensorTable->sensors[(*pRegCnt)++] = *sensor_info;
-	else
-		goto error_sensor_max_count;
-
-
-	FS_MUTEX_UNLOCK(&gRegisterLocker);
-
-
-	return (*pRegCnt - 1);
-
-
-error_sensor_max_count:
-
-	FS_MUTEX_UNLOCK(&gRegisterLocker);
-
-	return 0xffffffff;
-}
-#else // ifndef ALL_USING_ATOMIC
-static inline unsigned int fs_push_sensor(struct SensorInfo (*sensor_info))
+static unsigned int fs_push_sensor(const struct SensorInfo (*sensor_info))
 {
 	struct SensorTable (*pSensorTable) = &fs_mgr.reg_table;
 	FS_Atomic_T *p_fs_atomic_val = &fs_mgr.reg_table.reg_cnt;
 	int cnt_now = 0, cnt_new = 0;
-
 
 	do {
 		cnt_now = FS_ATOMIC_READ(p_fs_atomic_val);
@@ -550,13 +525,11 @@ static inline unsigned int fs_push_sensor(struct SensorInfo (*sensor_info))
 	} while (atomic_cmpxchg(p_fs_atomic_val, cnt_now, cnt_new) != cnt_now);
 #endif // FS_UT
 
-
 	/* => cnt_now is correct and avalible */
 	pSensorTable->sensors[(unsigned int)cnt_now] = *sensor_info;
 
 	return cnt_now;
 }
-#endif // ALL_USING_ATOMIC
 
 
 /*
@@ -567,19 +540,16 @@ static inline unsigned int fs_push_sensor(struct SensorInfo (*sensor_info))
  *
  * !!! You have better to check the return idx before using it. !!!
  */
-static unsigned int fs_register_sensor(
-	struct SensorInfo (*sensor_info),
-	enum CHECK_SENSOR_INFO_METHOD method)
+static unsigned int fs_register_sensor(const struct SensorInfo (*sensor_info),
+	const enum CHECK_SENSOR_INFO_METHOD method)
 {
 	unsigned int idx = 0;
-	struct SensorInfo info = {0}; // for log using
 
 	/* 1. check error sensor id */
-	if (method == BY_SENSOR_ID && sensor_info->sensor_id == 0) {
+	if (unlikely(method == BY_SENSOR_ID && sensor_info->sensor_id == 0)) {
 		LOG_PR_WARN("ERROR: sensor ID is %#x\n", sensor_info->sensor_id);
 		return 0xffffffff;
 	}
-
 
 	/* 2. search registered sensors */
 	idx = fs_search_reg_sensors(sensor_info, method);
@@ -589,7 +559,7 @@ static unsigned int fs_register_sensor(
 		/*          1. register successfully; */
 		/*          2. can't register */
 		idx = fs_push_sensor(sensor_info);
-		if (check_idx_valid(idx) == 0) {
+		if (unlikely(check_idx_valid(idx) == 0)) {
 			LOG_PR_WARN("ERROR: Reach max sensor capacity\n");
 			return idx;
 		}
@@ -605,17 +575,13 @@ static unsigned int fs_register_sensor(
 
 	} else {
 		/* 2-2. this sensor has been registered, do nothing */
-		/* log print info */
-		fs_get_reg_sensor_info(idx, &info);
-
 #if !defined(REDUCE_FS_DRV_LOG)
 		LOG_INF("ID:%#x(sidx:%u), idx:%u, method:%s, already registered\n",
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			idx,
 			REG_INFO);
 #endif // REDUCE_FS_DRV_LOG
-
 
 		if (method == BY_SENSOR_IDX) {
 			if (fs_mgr.reg_table.sensors[idx].sensor_id !=
@@ -632,7 +598,6 @@ static unsigned int fs_register_sensor(
 					sensor_info->sensor_id;
 			}
 		}
-
 	}
 
 	return idx;
@@ -647,11 +612,10 @@ static unsigned int fs_register_sensor(
  * input:
  *     ident: sensor ID / sensor idx
  */
-static inline unsigned int fs_get_reg_sensor_pos(unsigned int ident)
+static unsigned int fs_get_reg_sensor_pos(const unsigned int ident)
 {
-	unsigned int idx = 0;
 	struct SensorInfo info = {0};
-
+	unsigned int idx = 0;
 
 	switch (REGISTER_METHOD) {
 	case BY_SENSOR_ID:
@@ -667,10 +631,32 @@ static inline unsigned int fs_get_reg_sensor_pos(unsigned int ident)
 		break;
 	}
 
-
 	idx = fs_search_reg_sensors(&info, REGISTER_METHOD);
 
 	return idx;
+}
+
+
+static inline unsigned int fs_get_reg_sensor_ident(
+	const unsigned int sid, const unsigned int sidx)
+{
+	unsigned int ident = 0;
+
+	switch (REGISTER_METHOD) {
+	case BY_SENSOR_ID:
+		ident = sid;
+		break;
+
+	case BY_SENSOR_IDX:
+		ident = sidx;
+		break;
+
+	default:
+		ident = sidx;
+		break;
+	}
+
+	return ident;
 }
 /******************************************************************************/
 
@@ -681,7 +667,7 @@ static inline unsigned int fs_get_reg_sensor_pos(unsigned int ident)
 /******************************************************************************/
 // call back struct data operation
 /******************************************************************************/
-static inline void fs_reset_cb_data(unsigned int idx)
+static inline void fs_reset_cb_data(const unsigned int idx)
 {
 	fs_mgr.cb_data[idx].func_ptr = NULL;
 	fs_mgr.cb_data[idx].p_ctx = NULL;
@@ -689,8 +675,8 @@ static inline void fs_reset_cb_data(unsigned int idx)
 }
 
 
-static inline void fs_init_cb_data(
-	unsigned int idx, void *p_ctx, callback_set_framelength func_ptr)
+static inline void fs_init_cb_data(const unsigned int idx,
+	void *p_ctx, const callback_set_framelength func_ptr)
 {
 	fs_mgr.cb_data[idx].func_ptr = func_ptr;
 	fs_mgr.cb_data[idx].p_ctx = p_ctx;
@@ -698,7 +684,8 @@ static inline void fs_init_cb_data(
 }
 
 
-static inline void fs_set_cb_cmd_id(unsigned int idx, unsigned int cmd_id)
+static inline void fs_set_cb_cmd_id(const unsigned int idx,
+	const unsigned int cmd_id)
 {
 	fs_mgr.cb_data[idx].cmd_id = cmd_id;
 }
@@ -713,22 +700,25 @@ static inline void fs_set_cb_cmd_id(unsigned int idx, unsigned int cmd_id)
 /******************************************************************************/
 // Frame Recorder function
 /******************************************************************************/
-static inline void frec_dump_recorder(unsigned int idx)
+static inline unsigned int frec_chk_depthIdx_valid(const unsigned int depthIdx)
+{
+	return (likely(depthIdx < RECORDER_DEPTH)) ? 1 : 0;
+}
+
+
+static void frec_dump_recorder(const unsigned int idx, const char *caller)
 {
 	struct FrameRecorder (*pFrameRecord) = &fs_mgr.frm_recorder[idx];
-	struct SensorInfo info = {0};
 
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-
-	LOG_INF(
-		"[%u] ID:%#x(sidx:%u) recs:(at %u) (0:%u/%u), (1:%u/%u), (2:%u/%u), (3:%u/%u) (fl_lc/shut_lc)\n",
+	LOG_MUST(
+		"[%s]: [%u] ID:%#x(sidx:%u), recs:(ref at:%u) (0:%u/%u), (1:%u/%u), (2:%u/%u), (3:%u/%u) (fl_lc/shut_lc), init:%u, depthIdx:%u\n",
+		caller,
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 
 		/* ring back */
-		(pFrameRecord->depthIdx + (RECORDER_DEPTH-1)) % (RECORDER_DEPTH),
+		(pFrameRecord->depthIdx + (RECORDER_DEPTH-1)) % RECORDER_DEPTH,
 
 		pFrameRecord->frame_recs[0].framelength_lc,
 		pFrameRecord->frame_recs[0].shutter_lc,
@@ -737,21 +727,17 @@ static inline void frec_dump_recorder(unsigned int idx)
 		pFrameRecord->frame_recs[2].framelength_lc,
 		pFrameRecord->frame_recs[2].shutter_lc,
 		pFrameRecord->frame_recs[3].framelength_lc,
-		pFrameRecord->frame_recs[3].shutter_lc);
+		pFrameRecord->frame_recs[3].shutter_lc,
+		pFrameRecord->init,
+		pFrameRecord->depthIdx);
 }
 
 
-static inline void frec_reset_recorder(unsigned int idx)
+static void frec_reset_recorder(const unsigned int idx)
 {
 	unsigned int i = 0;
-
 	struct FrameRecord clear_st = {0};
 	struct FrameRecorder (*pFrameRecord) = &fs_mgr.frm_recorder[idx];
-
-#ifndef REDUCE_FS_DRV_LOG
-	struct SensorInfo info = {0}; // for log using
-#endif // REDUCE_FS_DRV_LOG
-
 
 	/* all FrameRecorder member variables set to 0 */
 	pFrameRecord->init = 0;
@@ -760,19 +746,9 @@ static inline void frec_reset_recorder(unsigned int idx)
 	for (i = 0; i < RECORDER_DEPTH; ++i)
 		pFrameRecord->frame_recs[i] = clear_st;
 
-
-#ifndef REDUCE_FS_DRV_LOG
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-	LOG_INF("[%u] ID:%#x(sidx:%u) init:%u, depthIdx:%u, recs[]:%u/%u\n",
-		idx,
-		info.sensor_id,
-		info.sensor_idx,
-		pFrameRecord->init,
-		pFrameRecord->depthIdx,
-		pFrameRecord->frame_recs[0].framelength_lc,
-		pFrameRecord->frame_recs[0].shutter_lc);
-#endif // REDUCE_FS_DRV_LOG
+#if defined(TRACE_FS_FREC_LOG)
+	frec_dump_recorder(idx, __func__);
+#endif
 }
 
 
@@ -787,15 +763,12 @@ static inline void frec_reset_recorder(unsigned int idx)
  *     fs algo will use these information to predict current and
  *     next framelength when calculating vsync diff.
  */
-static void frec_notify_setting_frame_record_st_data(unsigned int idx)
+static void frec_notify_setting_frame_record_st_data(const unsigned int idx)
 {
-	unsigned int i = 0;
-
-	struct FrameRecorder (*pFrameRecord) = &fs_mgr.frm_recorder[idx];
-	unsigned int depthIdx = pFrameRecord->depthIdx;
-
 	struct frame_record_st recs[RECORDER_DEPTH];
-
+	struct FrameRecorder *pFrameRecord = &fs_mgr.frm_recorder[idx];
+	unsigned int depthIdx = pFrameRecord->depthIdx;
+	unsigned int i = 0;
 
 	/* 1. prepare frame settings in the recorder */
 	/*    => 0:newest, 1:second, 2:third */
@@ -812,9 +785,42 @@ static void frec_notify_setting_frame_record_st_data(unsigned int idx)
 			&pFrameRecord->frame_recs[depthIdx].shutter_lc;
 	}
 
-
 	/* 2. call fs alg set frame record data */
 	fs_alg_set_frame_record_st_data(idx, recs);
+}
+
+
+static void frec_push_def_shutter_fl_lc(const unsigned int idx,
+	const unsigned int shutter_lc, const unsigned int fl_lc)
+{
+	struct FrameRecorder *pFrameRecord = &fs_mgr.frm_recorder[idx];
+	unsigned int i = 0;
+
+	/* case handling */
+	if (unlikely(pFrameRecord->init)) {
+		LOG_MUST(
+			"NOTICE: [%u] frec was initialized:%u, auto return [get %u/%u (fl_lc/shut_lc)]\n",
+			idx,
+			pFrameRecord->init,
+			fl_lc, shutter_lc);
+
+		frec_dump_recorder(idx, __func__);
+		return;
+	}
+
+	/* init all frec value to default shutter and framelength */
+	pFrameRecord->init = 1;
+	for (i = 0; i < RECORDER_DEPTH; ++i) {
+		pFrameRecord->frame_recs[i].shutter_lc = shutter_lc;
+		pFrameRecord->frame_recs[i].framelength_lc = fl_lc;
+	}
+
+#if defined(TRACE_FS_FREC_LOG)
+	frec_dump_recorder(idx, __func__);
+#endif
+
+	/* set the results to fs algo and frame monitor */
+	frec_notify_setting_frame_record_st_data(idx);
 }
 
 
@@ -827,22 +833,14 @@ static void frec_notify_setting_frame_record_st_data(unsigned int idx)
  *     shutter_lc: shutter lc you want to update to frec (> 0 will update)
  *     fl_lc: frame length lc you want to update to frec (> 0 will update)
  */
-static void frec_update_shutter_fl_lc(unsigned int idx,
-	unsigned int shutter_lc, unsigned int fl_lc)
+static void frec_update_shutter_fl_lc(const unsigned int idx,
+	const unsigned int shutter_lc, const unsigned int fl_lc)
 {
-	struct SensorInfo info = {0}; // for log using
-	struct FrameRecorder (*pFrameRecord) = &fs_mgr.frm_recorder[idx];
-
+	struct FrameRecorder *pFrameRecord = &fs_mgr.frm_recorder[idx];
 	unsigned int curr_depth = pFrameRecord->depthIdx;
-
-
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-
 
 	/* ring back to point to current data records */
 	curr_depth = ((curr_depth + (RECORDER_DEPTH-1)) % (RECORDER_DEPTH));
-
 
 	/* set / update shutter/framelength lc */
 	if (shutter_lc > 0)
@@ -851,110 +849,65 @@ static void frec_update_shutter_fl_lc(unsigned int idx,
 	if (fl_lc > 0)
 		pFrameRecord->frame_recs[curr_depth].framelength_lc = fl_lc;
 
-	if ((shutter_lc == 0) && (fl_lc == 0)) {
+	if (unlikely((shutter_lc == 0) && (fl_lc == 0))) {
 		LOG_MUST(
 			"WARNING: [%u] ID:%#x(sidx:%u) get: %u/%u => recs[*%u] = *%u/%u (fl_lc/shut_lc), don't update frec data\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			fl_lc,
 			shutter_lc,
 			curr_depth,
 			pFrameRecord->frame_recs[curr_depth].framelength_lc,
 			pFrameRecord->frame_recs[curr_depth].shutter_lc);
+
+		frec_dump_recorder(idx, __func__);
 	}
 
-
-#ifndef REDUCE_FS_DRV_LOG
-	LOG_INF(
-		"[%u] ID:%#x(sidx:%u) get: %u/%u => recs[*%u] = *%u/%u (fl_lc/shut_lc)\n",
+#if defined(TRACE_FS_FREC_LOG)
+	LOG_MUST(
+		"[%u] ID:%#x(sidx:%u) get:(%u/%u) => curr at recs[%u]=(%u/%u) [recs:(at %u) (0:%u/%u), (1:%u/%u), (2:%u/%u), (3:%u/%u)] (fl_lc/shut_lc)\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		fl_lc,
 		shutter_lc,
 		curr_depth,
 		pFrameRecord->frame_recs[curr_depth].framelength_lc,
-		pFrameRecord->frame_recs[curr_depth].shutter_lc);
-#endif // REDUCE_FS_DRV_LOG
-
-
-#ifndef REDUCE_FS_DRV_LOG
-	frec_dump_recorder(idx);
-#endif //REDUCE_FS_DRV_LOG
-
+		pFrameRecord->frame_recs[curr_depth].shutter_lc,
+		(pFrameRecord->depthIdx + (RECORDER_DEPTH-1)) % (RECORDER_DEPTH),
+		pFrameRecord->frame_recs[0].framelength_lc,
+		pFrameRecord->frame_recs[0].shutter_lc,
+		pFrameRecord->frame_recs[1].framelength_lc,
+		pFrameRecord->frame_recs[1].shutter_lc,
+		pFrameRecord->frame_recs[2].framelength_lc,
+		pFrameRecord->frame_recs[2].shutter_lc,
+		pFrameRecord->frame_recs[3].framelength_lc,
+		pFrameRecord->frame_recs[3].shutter_lc);
+#endif
 
 	/* set the results to fs algo and frame monitor */
 	frec_notify_setting_frame_record_st_data(idx);
 }
 
 
-static inline void frec_push_def_shutter_fl_lc(
-	unsigned int idx, unsigned int shutter_lc, unsigned int fl_lc)
+static void frec_push_shutter_fl_lc(const unsigned int idx,
+	const unsigned int shutter_lc, const unsigned int fl_lc)
 {
-#ifndef REDUCE_FS_DRV_LOG
-	struct SensorInfo info = {0}; // for log using
-#endif // REDUCE_FS_DRV_LOG
+	struct FrameRecorder *pFrameRecord = &fs_mgr.frm_recorder[idx];
+	unsigned int *pDepthIdx = &pFrameRecord->depthIdx;
 
-
-	unsigned int i = 0;
-
-	struct FrameRecorder (*pFrameRecord) = &fs_mgr.frm_recorder[idx];
-
+#if defined(TRACE_FS_FREC_LOG)
+	unsigned int bufDepthIdx = *pDepthIdx;
+#endif
 
 	/* case handling */
-	if (pFrameRecord->init) {
+	if (unlikely(!frec_chk_depthIdx_valid(*pDepthIdx))) {
 		LOG_MUST(
-			"NOTICE: [%u] frec was initialized:%u, auto return [get %u/%u (fl_lc/shut_lc)]\n",
-			idx,
-			pFrameRecord->init,
-			fl_lc, shutter_lc);
-
-		frec_dump_recorder(idx);
+			"ERROR: detect invalid frec depthIdx:%u (RECORDER_DEPTH:%u), return\n",
+			*pDepthIdx, RECORDER_DEPTH);
 		return;
 	}
-	pFrameRecord->init = 1;
-
-
-	/* init all frec value to default shutter and framelength */
-	for (i = 0; i < RECORDER_DEPTH; ++i) {
-		pFrameRecord->frame_recs[i].shutter_lc = shutter_lc;
-		pFrameRecord->frame_recs[i].framelength_lc = fl_lc;
-	}
-
-
-#ifndef REDUCE_FS_DRV_LOG
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-	LOG_INF("[%u] ID:%#x(sidx:%u) frame recorder initialized:%u, with def(exp:%u/fl:%u)\n",
-		idx,
-		info.sensor_id,
-		info.sensor_idx,
-		pFrameRecord->init,
-		shutter_lc,
-		fl_lc);
-
-	frec_dump_recorder(idx);
-#endif // REDUCE_FS_DRV_LOG
-
-
-	/* set the results to fs algo and frame monitor */
-	frec_notify_setting_frame_record_st_data(idx);
-}
-
-
-static inline void frec_push_shutter_fl_lc(
-	unsigned int idx, unsigned int shutter_lc, unsigned int fl_lc)
-{
-	struct FrameRecorder (*pFrameRecord) = &fs_mgr.frm_recorder[idx];
-	unsigned int (*pDepthIdx) = &pFrameRecord->depthIdx;
-
-
-#ifndef REDUCE_FS_DRV_LOG
-	struct SensorInfo info = {0}; // for log using
-	unsigned int bufDepthIdx = (*pDepthIdx);	// for log using
-#endif // REDUCE_FS_DRV_LOG
-
 
 	/* push shutter_lc and framelength_lc if are not equal to 0 */
 	if (shutter_lc > 0)
@@ -965,54 +918,47 @@ static inline void frec_push_shutter_fl_lc(
 	/* depth idx ring forward */
 	(*pDepthIdx) = (((*pDepthIdx) + 1) % RECORDER_DEPTH);
 
-
-#ifndef REDUCE_FS_DRV_LOG
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-	LOG_INF(
-		"[%u] ID:%#x(sidx:%u) get fl_lc:%u/shut_lc:%u => recs[%u] = %u/%u (fl_lc/shut_lc), depthIdx update to %u\n",
+#if defined(TRACE_FS_FREC_LOG)
+	LOG_MUST(
+		"[%u] ID:%#x(sidx:%u) get:(%u/%u) => curr at recs[%u]=(%u/%u), depthIdx update to %u [recs:(at %u) (0:%u/%u), (1:%u/%u), (2:%u/%u), (3:%u/%u)] (fl_lc/shut_lc)\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		fl_lc, shutter_lc,
 		bufDepthIdx,
 		pFrameRecord->frame_recs[bufDepthIdx].framelength_lc,
 		pFrameRecord->frame_recs[bufDepthIdx].shutter_lc,
-		(*pDepthIdx));
-#endif // REDUCE_FS_DRV_LOG
-
+		(*pDepthIdx),
+		(pFrameRecord->depthIdx + (RECORDER_DEPTH-1)) % (RECORDER_DEPTH),
+		pFrameRecord->frame_recs[0].framelength_lc,
+		pFrameRecord->frame_recs[0].shutter_lc,
+		pFrameRecord->frame_recs[1].framelength_lc,
+		pFrameRecord->frame_recs[1].shutter_lc,
+		pFrameRecord->frame_recs[2].framelength_lc,
+		pFrameRecord->frame_recs[2].shutter_lc,
+		pFrameRecord->frame_recs[3].framelength_lc,
+		pFrameRecord->frame_recs[3].shutter_lc);
+#endif
 
 	/* set the results to fs algo and frame monitor */
 	frec_notify_setting_frame_record_st_data(idx);
 }
 
 
-static inline void frec_push_record(
-	unsigned int idx, unsigned int shutter_lc, unsigned int framelength_lc)
+static void frec_push_record(const unsigned int idx,
+	const unsigned int shutter_lc, const unsigned int framelength_lc)
 {
-	if (fs_mgr.frm_recorder[idx].init == 0) {
-		struct SensorInfo info = {0};
-
+	/* unexpected case handling */
+	if (unlikely(fs_mgr.frm_recorder[idx].init == 0)) {
 		// TODO : add error handle ?
-
-		/* log print info */
-		fs_get_reg_sensor_info(idx, &info);
-
 		LOG_INF(
-			"[%u] ID:%#x(sidx:%u) push shutter, fl before initialized recorder\n",
+			"NOTICE: [%u] ID:%#x(sidx:%u) push shutter, fl before initialized recorder\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx);
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx));
 	}
 
-
 	frec_push_shutter_fl_lc(idx, shutter_lc, framelength_lc);
-
-
-#ifndef REDUCE_FS_DRV_LOG
-	/* log */
-	frec_dump_recorder(idx);
-#endif // REDUCE_FS_DRV_LOG
 }
 
 
@@ -1026,20 +972,87 @@ static inline void frec_push_record(
  *       setup frame monitor frame measurement,
  *       dump fs algo info, ..., etc
  */
-static void frec_notify_vsync(unsigned int idx)
+static void frec_notify_vsync(const unsigned int idx)
 {
 	/* push previous frame settings into frame recorder */
 	frec_push_record(idx,
 		fs_mgr.pf_ctrl[idx].shutter_lc,
 		fs_mgr.pf_ctrl[idx].out_fl_lc);
-
-
-#if !defined(REDUCE_FS_DRV_LOG)
-	/* log */
-	frec_dump_recorder(idx);
-#endif // REDUCE_FS_DRV_LOG
 }
 #endif // QUERY_CCU_TS_AT_SOF
+/******************************************************************************/
+
+
+
+
+
+/******************************************************************************/
+// preset perframe structure functions
+/******************************************************************************/
+static void fs_reset_preset_perframe_data(const unsigned int sidx)
+{
+	struct fs_perframe_st clear_st = {0};
+
+	/* unexpected case */
+	if (unlikely(check_idx_valid(sidx) == 0)) {
+		LOG_MUST(
+			"ERROR: get invalid sidx:%u, return\n",
+			sidx);
+		return;
+	}
+
+	/* reset/clear data */
+	fs_mgr.preset_ctrl[sidx].is_valid = 0;
+	fs_mgr.preset_ctrl[sidx].is_streaming = 0;
+	fs_mgr.preset_ctrl[sidx].preset_pf_ctrl = clear_st;
+}
+
+
+static void fs_set_preset_perframe_data(const unsigned int sidx,
+	const struct fs_perframe_st *p_pf_ctrl)
+{
+	/* unexpected case */
+	if (unlikely(check_idx_valid(sidx) == 0)) {
+		LOG_MUST(
+			"ERROR: get invalid sidx:%u, return\n",
+			sidx);
+		return;
+	}
+
+	/* only copy pf_ctrl data when sensor is streaming OFF */
+	if (fs_mgr.preset_ctrl[sidx].is_streaming)
+		return;
+
+	/* keep preset pf_ctrl data */
+	fs_mgr.preset_ctrl[sidx].is_valid = 1;
+	fs_mgr.preset_ctrl[sidx].preset_pf_ctrl = *p_pf_ctrl;
+}
+
+
+static unsigned int fs_get_preset_perframe_data(const unsigned int sidx,
+	struct fs_perframe_st *p_pf_ctrl)
+{
+	unsigned int ret = 0;
+
+	/* unexpected case */
+	if (unlikely(check_idx_valid(sidx) == 0)) {
+		LOG_MUST(
+			"ERROR: get invalid sidx:%u, return\n",
+			sidx);
+		return 0;
+	}
+
+	/* notify streaming ON */
+	fs_mgr.preset_ctrl[sidx].is_streaming = 1;
+
+	if (fs_mgr.preset_ctrl[sidx].is_valid) {
+		/* copy preset pf_ctrl data */
+		*p_pf_ctrl = fs_mgr.preset_ctrl[sidx].preset_pf_ctrl;
+		ret = 1;
+	}
+
+	return ret;
+}
 /******************************************************************************/
 
 
@@ -1050,31 +1063,48 @@ static void frec_notify_vsync(unsigned int idx)
 // Frame Sync Mgr function
 /******************************************************************************/
 #ifdef SUPPORT_FS_NEW_METHOD
-static inline void fs_init_members(void)
+static void fs_init_members(void)
 {
-#ifdef ALL_USING_ATOMIC
+	unsigned int i = 0;
+
 	FS_ATOMIC_INIT(0, &fs_mgr.reg_table.reg_cnt);
 	FS_ATOMIC_INIT(0, &fs_mgr.fs_status);
 	FS_ATOMIC_INIT(0, &fs_mgr.streaming_bits);
 	FS_ATOMIC_INIT(0, &fs_mgr.enSync_bits);
 	FS_ATOMIC_INIT(0, &fs_mgr.validSync_bits);
 	FS_ATOMIC_INIT(0, &fs_mgr.pf_ctrl_bits);
-	FS_ATOMIC_INIT(0, &fs_mgr.last_pf_ctrl_bits);
+	FS_ATOMIC_INIT(0, &fs_mgr.setup_complete_bits);
+	FS_ATOMIC_INIT(0, &fs_mgr.seamless_bits);
+
+	FS_ATOMIC_INIT(0, &fs_mgr.hw_sync_bits);
+	for (i = 0; i < FS_HW_SYNC_GROUP_ID_MAX; ++i) {
+		FS_ATOMIC_INIT(0, &fs_mgr.hw_sync_group_bits[i]);
+		FS_ATOMIC_INIT(0, &fs_mgr.setup_complete_hw_group_bits[i]);
+	}
+	FS_ATOMIC_INIT(0, &fs_mgr.hw_sync_non_valid_group_bits);
+
+	for (i = 0; i < SENSOR_MAX_NUM; ++i) {
+		FS_ATOMIC_INIT(0, &fs_mgr.set_sync_sidx_table[i]);
+
+		FS_ATOMIC_INIT(0, &fs_mgr.seamless_ctrl[i].wait_for_processing);
+	}
+
 #if defined(USING_CCU)
 	FS_ATOMIC_INIT(0, &fs_mgr.power_on_ccu_bits);
 #endif // USING_CCU
-	FS_ATOMIC_INIT(0, &fs_mgr.setup_complete_bits);
-	FS_ATOMIC_INIT(0, &fs_mgr.last_setup_complete_bits);
-#endif // ALL_USING_ATOMIC
+
 	FS_ATOMIC_INIT(0, &fs_mgr.using_sa_ver);
 	FS_ATOMIC_INIT(0, &fs_mgr.sa_bits);
 	FS_ATOMIC_INIT(0, &fs_mgr.sa_method);
 	FS_ATOMIC_INIT(MASTER_IDX_NONE, &fs_mgr.master_idx);
+	FS_ATOMIC_INIT(0, &fs_mgr.async_mode_bits);
+	FS_ATOMIC_INIT(MASTER_IDX_NONE, &fs_mgr.user_async_master_sidx);
+	FS_ATOMIC_INIT(MASTER_IDX_NONE, &fs_mgr.async_master_idx);
 }
 #endif // SUPPORT_FS_NEW_METHOD
 
 
-static inline void fs_init(void)
+static void fs_init(void)
 {
 	enum FS_STATUS status = get_fs_status();
 
@@ -1096,113 +1126,166 @@ static inline void fs_init(void)
 
 
 #ifdef SUPPORT_FS_NEW_METHOD
-void fs_sa_set_sa_method(enum FS_SA_METHOD method)
-{
-	FS_ATOMIC_SET((int)method, &fs_mgr.sa_method);
-}
-
-
 /*
  * Support user/custom setting for using FrameSync StandAlone(SA) mode
  */
-void fs_set_using_sa_mode(unsigned int en)
+void fs_set_using_sa_mode(const unsigned int en)
 {
 	fs_mgr.user_set_sa = (en > 0) ? 1 : 0;
 }
 
 
-static inline unsigned int fs_user_sa_config(void)
+unsigned int fs_is_hw_sync(const unsigned int ident)
 {
-#ifdef FORCE_USING_SA_MODE
-	return 1;
-#else
-	return fs_mgr.user_set_sa;
-#endif // FORCE_USING_SA_MODE
+	unsigned int idx = 0, result = 0;
+
+	idx = fs_get_reg_sensor_pos(ident);
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"WARNING: [%u] %s is not register, ident:%u, return\n",
+			idx, REG_INFO, ident);
+		return 0;
+	}
+
+	result = FS_CHECK_BIT(idx, &fs_mgr.hw_sync_bits);
+
+#if !defined(REDUCE_FS_DRV_LOG)
+	LOG_INF("%u [%u] ID:%#x(sidx:%u)   [hw_sync_bits:%d]\n",
+		result,
+		idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		FS_READ_BITS(&fs_mgr.hw_sync_bits));
+#endif // REDUCE_FS_DRV_LOG
+
+	return result;
+}
+
+
+static void fs_set_hw_sync_info(
+	const unsigned int idx,
+	const unsigned int flag,
+	const unsigned int hw_sync_mode,
+	const unsigned int hw_sync_group_id)
+{
+	/* means no using HW solution */
+	/* hw sync mode equal to 0 (means using SW solution) */
+	/* will be retruned at the start of this function, */
+	/* so exclude that case should all using hw sync solution */
+	if (hw_sync_mode == 0)
+		return;
+
+	/* error handling */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"ERROR: [idx:%u] is not valid (MIN:0/MAX:%u), return\n",
+			idx, SENSOR_MAX_NUM);
+		return;
+	}
+
+
+	/* set(stream ON)/clear(stream OFF) hw sync bits */
+	if (flag)
+		FS_WRITE_BIT(idx, 1, &fs_mgr.hw_sync_bits);
+	else
+		FS_WRITE_BIT(idx, 0, &fs_mgr.hw_sync_bits);
+
+
+	/* set hw sync group bits */
+	fs_mgr.hw_sync_group_id[idx] = hw_sync_group_id;
+	if (hw_sync_group_id >= FS_HW_SYNC_GROUP_ID_MAX) {
+		/* error handling (de-reference non-valid address) */
+		if (flag) {
+			FS_WRITE_BIT(idx, 1,
+				&fs_mgr.hw_sync_non_valid_group_bits);
+		} else {
+			FS_WRITE_BIT(idx, 0,
+				&fs_mgr.hw_sync_non_valid_group_bits);
+		}
+
+		LOG_MUST(
+			"ERROR: [%u] ID:%#x(sidx:%u) Non-valid value of hw_sync_group_id:%d (MIN:%d/MAX:%d), no apply(curr:%u), non_valid_group_bits:%d  [en:%u]\n",
+			idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
+			hw_sync_group_id,
+			FS_HW_SYNC_GROUP_ID_MIN,
+			FS_HW_SYNC_GROUP_ID_MAX,
+			fs_mgr.hw_sync_group_id[idx],
+			FS_READ_BITS(&fs_mgr.hw_sync_non_valid_group_bits),
+			flag);
+
+		return;
+	}
+
+
+	if (flag) {
+		FS_WRITE_BIT(idx, 1,
+			&fs_mgr.hw_sync_group_bits[hw_sync_group_id]);
+	} else {
+		FS_WRITE_BIT(idx, 0,
+			&fs_mgr.hw_sync_group_bits[hw_sync_group_id]);
+	}
+
+	/* clear/reset ctrls setup complete hw group bit */
+	FS_WRITE_BIT(idx, 0,
+		&fs_mgr.setup_complete_hw_group_bits[hw_sync_group_id]);
+
+	/* clear/reset frame-sync act cnt */
+	fs_mgr.act_cnt[hw_sync_group_id] = 0;
+
+
+	LOG_MUST(
+		"[%u] ID:%#x(sidx:%u) en:%u, hw_sync(mode:%u(N:0/M:1/S:2), group_id:%u) [hw_sync(bits:%u, group_bits(%d/%d/%d/%d/%d/%d), setup_complete(%d/%d/%d/%d/%d/%d), act_cnt(%u/%u/%u/%u/%u/%u)), non_valid_group_bits:%d]\n",
+		idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		flag,
+		hw_sync_mode,
+		fs_mgr.hw_sync_group_id[idx],
+		FS_READ_BITS(&fs_mgr.hw_sync_bits),
+		FS_READ_BITS(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_0]),
+		FS_READ_BITS(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_1]),
+		FS_READ_BITS(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_2]),
+		FS_READ_BITS(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_3]),
+		FS_READ_BITS(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_4]),
+		FS_READ_BITS(
+			&fs_mgr.hw_sync_group_bits[FS_HW_SYNC_GROUP_ID_5]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_0]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_1]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_2]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_3]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_4]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_5]),
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_0],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_1],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_2],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_3],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_4],
+		fs_mgr.act_cnt[FS_HW_SYNC_GROUP_ID_5],
+		FS_READ_BITS(&fs_mgr.hw_sync_non_valid_group_bits));
 }
 #endif // SUPPORT_FS_NEW_METHOD
 
 
-#ifndef ALL_USING_ATOMIC
-static unsigned int fs_update_status(unsigned int idx, unsigned int flag)
-{
-	unsigned int cnt = 0;
-	enum FS_STATUS status = 0;
-
-
-	FS_MUTEX_LOCK(&gBitLocker);
-
-
-	/* update validSync_bits value */
-	fs_mgr.validSync_bits =
-		fs_mgr.streaming_bits &
-		fs_mgr.enSync_bits;
-
-
-	/* change status or not by counting the number of valid sync sensors */
-	cnt = FS_POPCOUNT(fs_mgr.validSync_bits);
-
-
-	if (cnt > 1 && cnt <= SENSOR_MAX_NUM)
-		change_fs_status(FS_WAIT_FOR_SYNCFRAME_START);
-	else
-		change_fs_status(FS_INITIALIZED);
-
-	status = get_fs_status();
-
-
-	FS_MUTEX_UNLOCK(&gBitLocker);
-
-
-#ifndef USING_CCU
-	LOG_INF(
-		"stat:%u, ready:%u, streaming:%u, enSync:%u, validSync:%u, pf_ctrl:%u, setup_complete:%u, ft_mode:%u [idx:%u, en:%u]\n",
-		status,
-		cnt,
-		fs_mgr.streaming_bits,
-		fs_mgr.enSync_bits,
-		fs_mgr.validSync_bits,
-		fs_mgr.pf_ctrl_bits,
-		fs_mgr.setup_complete_bits,
-		fs_mgr.ft_mode[idx],
-		idx,
-		flag);
-#else
-	LOG_INF(
-		"stat:%u, ready:%u, streaming:%u, enSync:%u, validSync:%u, pf_ctrl:%u, setup_complete:%u, ft_mode:%u, pw_ccu:%u(cnt:%u) [idx:%u, en:%u]\n",
-		status,
-		cnt,
-		fs_mgr.streaming_bits,
-		fs_mgr.enSync_bits,
-		fs_mgr.validSync_bits,
-		fs_mgr.pf_ctrl_bits,
-		fs_mgr.setup_complete_bits,
-		fs_mgr.ft_mode[idx],
-		fs_mgr.power_on_ccu_bits,
-		frm_get_ccu_pwn_cnt(),
-		idx,
-		flag);
-#endif // USING_CCU
-
-
-	return cnt;
-}
-
-
-static inline void fs_set_status_bits(
-	unsigned int idx, unsigned int flag, unsigned int (*bits))
-{
-	if (flag > 0)
-		write_bit(idx, 1, bits);
-	else
-		write_bit(idx, 0, bits);
-
-	//unsigned int validSyncCnt = fs_update_status(sensor_idx, flag);
-	fs_update_status(idx, flag);
-}
-
-
-#else // ifndef ALL_USING_ATOMIC
-static inline int fs_update_valid_sync_bit(void)
+static int fs_update_valid_sync_bit(void)
 {
 	int streaming = 0, en_sync = 0;
 
@@ -1215,16 +1298,14 @@ static inline int fs_update_valid_sync_bit(void)
 }
 
 
-static void fs_update_status(unsigned int idx, unsigned int flag)
+static void fs_update_status(const unsigned int idx,
+	const unsigned int flag, const char *caller)
 {
 	unsigned int cnt = 0;
 	int valid_sync = 0;
-	enum FS_STATUS status = 0;
-
 
 	/* update validSync_bits value */
 	valid_sync = fs_update_valid_sync_bit();
-
 
 	/* change status or not by counting the number of valid sync sensors */
 	cnt = FS_POPCOUNT(valid_sync);
@@ -1234,64 +1315,18 @@ static void fs_update_status(unsigned int idx, unsigned int flag)
 	else
 		change_fs_status(FS_INITIALIZED);
 
-	status = get_fs_status();
-
-
-	/* only 'on' stage print the log */
-	// if (!flag)
-	//	return;
-
-#ifndef USING_CCU
-	LOG_INF(
-		"stat:%u, ready:%u, streaming:%d, enSync:%d, validSync:%d, pf_ctrl:%d, setup_complete:%d, ft_mode:%u, SA(%u/%u/%u) [idx:%u, en:%u]\n",
-		status,
-		cnt,
-		FS_ATOMIC_READ(&fs_mgr.streaming_bits),
-		FS_ATOMIC_READ(&fs_mgr.enSync_bits),
-		FS_ATOMIC_READ(&fs_mgr.validSync_bits),
-		FS_ATOMIC_READ(&fs_mgr.pf_ctrl_bits),
-		FS_ATOMIC_READ(&fs_mgr.setup_complete_bits),
-		fs_mgr.ft_mode[idx],
-		FS_ATOMIC_READ(&fs_mgr.using_sa_ver),
-		fs_user_sa_config(),
-		FS_ATOMIC_READ(&fs_mgr.sa_bits),
-		idx,
-		flag);
-#else
-	LOG_MUST(
-		"stat:%u, ready:%u, streaming:%d, enSync:%d, validSync:%d, pf_ctrl:%d, setup_complete:%d, ft_mode:%u, SA(%u/%u/%u), pw_ccu:%d(cnt:%u) [idx:%u, en:%u]\n",
-		status,
-		cnt,
-		FS_ATOMIC_READ(&fs_mgr.streaming_bits),
-		FS_ATOMIC_READ(&fs_mgr.enSync_bits),
-		FS_ATOMIC_READ(&fs_mgr.validSync_bits),
-		FS_ATOMIC_READ(&fs_mgr.pf_ctrl_bits),
-		FS_ATOMIC_READ(&fs_mgr.setup_complete_bits),
-		fs_mgr.ft_mode[idx],
-		FS_ATOMIC_READ(&fs_mgr.using_sa_ver),
-		fs_user_sa_config(),
-		FS_ATOMIC_READ(&fs_mgr.sa_bits),
-		FS_ATOMIC_READ(&fs_mgr.power_on_ccu_bits),
-		frm_get_ccu_pwn_cnt(),
-		idx,
-		flag);
-#endif // USING_CCU
+	fs_dump_status(idx, flag, caller, "");
 }
 
 
-static inline void fs_set_status_bits(
-	unsigned int idx, unsigned int flag, FS_Atomic_T *bits)
+static inline void fs_set_status_bits(const unsigned int idx,
+	const unsigned int flag, FS_Atomic_T *bits)
 {
-	// TODO: add a lock to keep atomic op consistency.
 	if (flag > 0)
 		write_bit_atomic(idx, 1, bits);
 	else
 		write_bit_atomic(idx, 0, bits);
-
-	// fs_update_status(idx, flag);
-	// TODO: add a unlock to keep atomic op consistency.
 }
-#endif // ALL_USING_ATOMIC
 
 
 static inline void fs_set_stream(unsigned int idx, unsigned int flag)
@@ -1305,7 +1340,7 @@ static inline void fs_reset_ft_mode_data(unsigned int idx, unsigned int flag)
 	if (flag > 0)
 		return;
 
-	fs_mgr.ft_mode[idx] = 0;
+	fs_mgr.hdr_ft_mode[idx] = 0;
 	fs_mgr.frame_cell_size[idx] = 0;
 	fs_mgr.frame_tag[idx] = 0;
 }
@@ -1325,26 +1360,141 @@ static void fs_reset_perframe_stage_data(
 }
 
 
+/*---------------------------------------------------------------------------*/
+// seamless switch functions
+/*---------------------------------------------------------------------------*/
+static unsigned int fs_chk_seamless_switch_status(const unsigned int idx)
+{
+	return FS_CHECK_BIT(idx, &fs_mgr.seamless_bits);
+}
+
+
+static void fs_clr_seamless_switch_info(const unsigned int idx)
+{
+	/* error handling (unexpected case) */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, return\n",
+			idx, REG_INFO);
+		return;
+	}
+
+	fs_set_status_bits(idx, 0, &fs_mgr.seamless_bits);
+
+	memset(&fs_mgr.seamless_ctrl[idx], 0, sizeof(fs_mgr.seamless_ctrl[idx]));
+
+	LOG_MUST(
+		"[%u] ID:%#x(sidx:%u), seamless:%#x, seamless_sof_cnt:%u (cleared), SA(m_idx:%d)\n",
+		idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+		fs_mgr.seamless_ctrl->seamless_sof_cnt,
+		FS_ATOMIC_READ(&fs_mgr.master_idx));
+}
+
+
+static void fs_set_seamless_switch_info(const unsigned int idx,
+	struct fs_seamless_st *p_seamless_info,
+	const unsigned int seamless_sof_cnt)
+{
+	/* error handling (unexpected case) */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, return\n",
+			idx, REG_INFO);
+		return;
+	}
+
+	if (unlikely(p_seamless_info == NULL)) {
+		LOG_MUST(
+			"ERROR: [%u] ID:%#x(sidx:%u), get p_seamless_info:%p, return\n",
+			idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
+			p_seamless_info);
+		return;
+	}
+
+	fs_set_status_bits(idx, 1, &fs_mgr.seamless_bits);
+
+	/* !!! setup fs_seamless_ctrl_st data !!! */
+	/* keep seamless switch ctrl information */
+	/* keep here & check for clear data when exit seamless frame */
+	FS_ATOMIC_SET(1, &fs_mgr.seamless_ctrl[idx].wait_for_processing);
+	fs_mgr.seamless_ctrl[idx].seamless_sof_cnt = seamless_sof_cnt;
+	fs_mgr.seamless_ctrl[idx].seamless_info = *p_seamless_info;
+
+	/* change SA alg master to this sensor */
+	/* before keepping seamless ctrl */
+	fs_sa_request_switch_master(idx);
+
+	LOG_INF(
+		"[%u] ID:%#x(sidx:%u), seamless:%#x, seamless_sof_cnt:%u, wait_for_processing:%d, SA(m_idx:%d), orig_readout_time_us:%u\n",
+		idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+		fs_mgr.seamless_ctrl[idx].seamless_sof_cnt,
+		FS_ATOMIC_READ(&fs_mgr.seamless_ctrl[idx].wait_for_processing),
+		FS_ATOMIC_READ(&fs_mgr.master_idx),
+		fs_mgr.seamless_ctrl[idx].seamless_info.orig_readout_time_us);
+}
+
+
+static void fs_do_seamless_switch_proc(const unsigned int idx,
+	const struct fs_sa_cfg *p_sa_cfg)
+{
+	struct fs_seamless_st *p_seamless_info = NULL;
+	struct fs_perframe_st *p_seamless_ctrl = NULL;
+
+	/* error handling (unexpected case) */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, return\n",
+			idx, REG_INFO);
+		return;
+	}
+
+	if (unlikely(p_sa_cfg == NULL)) {
+		LOG_MUST(
+			"ERROR: [%u] ID:%#x(sidx:%u), get p_sa_cfg:%p, return\n",
+			idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
+			p_sa_cfg);
+		return;
+	}
+
+	/* read back/get seamless ctrl that keep last time */
+	/* and prevent any issue overwriting last pf ctrl exp and fl */
+	p_seamless_info = &fs_mgr.seamless_ctrl[idx].seamless_info;
+	p_seamless_ctrl = &fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl;
+
+	frec_reset_recorder(idx);
+	frec_push_def_shutter_fl_lc(idx,
+		p_seamless_ctrl->shutter_lc, p_seamless_ctrl->out_fl_lc);
+	// frec_dump_recorder(idx, __func__);
+
+	fs_alg_seamless_switch(idx, p_seamless_info, p_sa_cfg);
+}
+/*---------------------------------------------------------------------------*/
+
+
 #ifdef SUPPORT_FS_NEW_METHOD
 static inline void fs_check_sync_need_sa_mode(
-	unsigned int idx, enum FS_FEATURE_MODE flag)
+	unsigned int idx, enum FS_HDR_FT_MODE flag)
 {
-#if !defined(REDUCE_FS_DRV_LOG)
-	struct SensorInfo info = {0}; // for log using
-#endif // REDUCE_FS_DRV_LOG
-
-
-	/* NOT FS_FT_MODE_NORMAL => using SA mode */
-	if (flag != FS_FT_MODE_NORMAL) {
+	/* NOT FS_HDR_FT_MODE_NORMAL => using SA mode */
+	if (flag != FS_HDR_FT_MODE_NORMAL) {
 		write_bit_atomic(idx, 1, &fs_mgr.sa_bits);
 
 #if !defined(REDUCE_FS_DRV_LOG)
-		fs_get_reg_sensor_info(idx, &info);
 		LOG_INF(
-			"[%u] ID:%#x(sidx:%u), ft_mode:%u(need SA mode, except 0 for normal)   [sa_bits:%d]\n",
+			"[%u] ID:%#x(sidx:%u), hdr_ft_mode:%u(need SA mode, except 0 for normal)   [sa_bits:%d]\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			flag,
 			FS_ATOMIC_READ(&fs_mgr.sa_bits));
 #endif // REDUCE_FS_DRV_LOG
@@ -1352,7 +1502,7 @@ static inline void fs_check_sync_need_sa_mode(
 }
 
 
-static inline void fs_decision_maker(unsigned int idx)
+static void fs_decision_maker(unsigned int idx)
 {
 	int sa_bits_now = 0;
 	int need_sa_ver = 0;
@@ -1360,7 +1510,7 @@ static inline void fs_decision_maker(unsigned int idx)
 
 
 	/* 1. check sync tag of the sensor need use SA mode or not */
-	fs_check_sync_need_sa_mode(idx, fs_mgr.ft_mode[idx]);
+	fs_check_sync_need_sa_mode(idx, fs_mgr.hdr_ft_mode[idx]);
 
 
 	/* 2. check all sensor for using SA mode or not */
@@ -1391,20 +1541,32 @@ static inline void fs_decision_maker(unsigned int idx)
 
 #if !defined(FORCE_USING_SA_MODE) || !defined(REDUCE_FS_DRV_LOG)
 	LOG_MUST(
-		"using_sa:%d (user_sa_en:%u), ft_mode:%u, sa_bits:%d [idx:%u]\n",
+		"using_sa:%d (user_sa_en:%u), hdr_ft_mode:%u, sa_bits:%d [idx:%u]\n",
 		FS_ATOMIC_READ(&fs_mgr.using_sa_ver),
 		user_sa_en,
-		fs_mgr.ft_mode[idx],
+		fs_mgr.hdr_ft_mode[idx],
 		FS_ATOMIC_READ(&fs_mgr.sa_bits),
 		idx);
 #endif
 }
 
 
-static inline void fs_sa_try_reset_master_idx(unsigned int idx)
+/*
+ * if the input, idx, un-set FrameSync set sync, and is SA master idx,
+ * => true: reset SA master idx to MASTER_IDX_NONE
+ * => false: do nothing.
+ */
+static void fs_sa_try_reset_master_idx(const unsigned int idx,
+	const unsigned int flag)
 {
-	int master_idx = 0;
+	int master_idx = MASTER_IDX_NONE;
 
+
+	/* The sensor status is already set sync => do nothing */
+	if (flag > 0)
+		return;
+
+	/* check situation for needing reset SA master idx */
 	do {
 		master_idx = FS_ATOMIC_READ(&fs_mgr.master_idx);
 
@@ -1412,25 +1574,130 @@ static inline void fs_sa_try_reset_master_idx(unsigned int idx)
 	} while (!atomic_compare_exchange_weak(&fs_mgr.master_idx,
 			&master_idx,
 			((idx == master_idx)
-			? MASTER_IDX_NONE : master_idx)));
+				? MASTER_IDX_NONE : master_idx)));
 #else
 	} while (atomic_cmpxchg(&fs_mgr.master_idx,
 			master_idx,
 			((idx == master_idx)
-			? MASTER_IDX_NONE : master_idx))
+				? MASTER_IDX_NONE : master_idx))
 		!= master_idx);
 #endif // FS_UT
+}
+
+
+/*
+ * This function will change async_master_idx value immediately!
+ * Only call this function when you confirmed that
+ *     this instance idx of sensor is valid for doing frame-sync!
+ */
+static void fs_sa_update_async_master_idx(const unsigned int idx,
+	const unsigned int flag)
+{
+	const unsigned int sidx = fs_get_reg_sensor_idx(idx);
+	const int async_m_idx = FS_ATOMIC_READ(&fs_mgr.async_master_idx);
+	int user_async_m_sidx = FS_ATOMIC_READ(&fs_mgr.user_async_master_sidx);
+
+#if !defined(FS_UT)
+	int ret = fs_con_chk_usr_async_m_sidx();
+
+	/* user cmd overwrite set sync flag */
+	if (unlikely(ret != MASTER_IDX_NONE)) {
+		user_async_m_sidx = ret;
+		LOG_MUST(
+			"NOTICE: [%u] ID:%#x(sidx:%u), USER set async master sidx:%u => user_async_m_sidx:%d\n",
+			idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
+			ret,
+			user_async_m_sidx);
+	}
+#endif // FS_UT
+
+	/* case handling */
+	/* --- check user input value is valid or not */
+	if (unlikely((user_async_m_sidx != MASTER_IDX_NONE)
+		&& (user_async_m_sidx < 0
+			|| user_async_m_sidx >= SENSOR_MAX_NUM))) {
+		LOG_MUST(
+			"[%u] ERROR: ID:%#x(sidx:%u), invalid user_async_master_sidx:%d value, return\n",
+			idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
+			user_async_m_sidx);
+		return;
+	}
+
+	if (flag > 0) {
+		if (sidx != user_async_m_sidx)
+			return;
+
+		/* set to this instance idx for using */
+		FS_ATOMIC_SET(idx, &fs_mgr.async_master_idx);
+	} else {
+		if (idx != async_m_idx)
+			return;
+
+		FS_ATOMIC_SET(MASTER_IDX_NONE, &fs_mgr.async_master_idx);
+	}
+
+	LOG_MUST(
+		"[%u] ID:%#x(sidx:%u), flag:%u, async_master(user_sidx:%d/curr_idx:%d->%d) [streaming:%d/enSync:%d/validSync:%d]\n",
+		idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		flag,
+		user_async_m_sidx,
+		async_m_idx,
+		FS_ATOMIC_READ(&fs_mgr.async_master_idx),
+		FS_ATOMIC_READ(&fs_mgr.streaming_bits),
+		FS_ATOMIC_READ(&fs_mgr.enSync_bits),
+		FS_ATOMIC_READ(&fs_mgr.validSync_bits));
+}
+
+
+void fs_sa_set_user_async_master(const unsigned int sidx,
+	const unsigned int flag)
+{
+	unsigned int idx = fs_get_reg_sensor_pos(sidx);
+
+	if (flag > 0)
+		FS_ATOMIC_SET(sidx, &fs_mgr.user_async_master_sidx);
+	else
+		FS_ATOMIC_SET(MASTER_IDX_NONE, &fs_mgr.user_async_master_sidx);
+
+	/* if sensor is registered and valid for doing frame-sync, */
+	/* (streaming ON + set sync) update async master idx simultaneously */
+	if (check_idx_valid(idx)
+		&& FS_CHECK_BIT(idx, &fs_mgr.validSync_bits)) {
+		fs_sa_update_async_master_idx(idx, flag);
+
+		/* log info can be see by above function */
+		return;
+	}
+
+	LOG_MUST(
+		"[%d] sidx:%u, flag:%u, user_async_master_sidx:%d, streaming:%d, enSync:%d, validSync:%d, async_master_idx:%u\n",
+		(int)idx, sidx, flag,
+		FS_ATOMIC_READ(&fs_mgr.user_async_master_sidx),
+		FS_ATOMIC_READ(&fs_mgr.streaming_bits),
+		FS_ATOMIC_READ(&fs_mgr.enSync_bits),
+		FS_ATOMIC_READ(&fs_mgr.validSync_bits),
+		FS_ATOMIC_READ(&fs_mgr.async_master_idx));
+}
+
+
+static inline void fs_sa_set_async_info(const unsigned int idx,
+	const unsigned int flag)
+{
+	const unsigned int async_en = (flag & FS_SYNC_TYPE_ASYNC_MODE);
+
+	FS_WRITE_BIT(idx, async_en, &fs_mgr.async_mode_bits);
 }
 #endif // SUPPORT_FS_NEW_METHOD
 
 
-static inline void fs_set_sync_status(unsigned int idx, unsigned int flag)
+static void fs_set_sync_status(unsigned int idx, unsigned int flag)
 {
-	struct SensorInfo info = {0}; // for log using
-
-	fs_get_reg_sensor_info(idx, &info);
-
-
 	/* unset sync => reset pf_ctrl_bits data of this idx */
 	/* TODO: add a API for doing this */
 	if (flag == 0) {
@@ -1445,8 +1712,8 @@ static inline void fs_set_sync_status(unsigned int idx, unsigned int flag)
 #if !defined(REDUCE_FS_DRV_LOG)
 			LOG_INF("[%u] ID:%#x(sidx:%u), pw_ccu:%d (OFF)\n",
 				idx,
-				info.sensor_id,
-				info.sensor_idx,
+				fs_get_reg_sensor_id(idx),
+				fs_get_reg_sensor_idx(idx),
 				FS_READ_BITS(&fs_mgr.power_on_ccu_bits));
 #endif // REDUCE_FS_DRV_LOG
 
@@ -1468,8 +1735,8 @@ static inline void fs_set_sync_status(unsigned int idx, unsigned int flag)
 #if !defined(REDUCE_FS_DRV_LOG)
 		LOG_INF("[%u] ID:%#x(sidx:%u), pw_ccu:%d (ON)\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			FS_READ_BITS(&fs_mgr.power_on_ccu_bits));
 #endif // REDUCE_FS_DRV_LOG
 
@@ -1487,33 +1754,80 @@ static inline void fs_set_sync_status(unsigned int idx, unsigned int flag)
 
 
 #if !defined(REDUCE_FS_DRV_LOG)
-	/* log print info */
 	LOG_INF("en:%u [%u] ID:%#x(sidx:%u)   [enSync_bits:%d]\n",
 		flag,
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		FS_READ_BITS(&fs_mgr.enSync_bits));
 #endif // REDUCE_FS_DRV_LOG
 
 }
 
 
-static inline void fs_set_sync_idx(unsigned int idx, unsigned int flag)
+static void fs_update_set_sync_sidx_table(const unsigned int sidx,
+	const unsigned int flag)
+{
+	if (unlikely(check_idx_valid(sidx) == 0)) {
+		LOG_MUST(
+			"ERROR: get invalid sidx:%u, return\n",
+			sidx);
+
+		return;
+	}
+
+	FS_ATOMIC_SET(flag, &fs_mgr.set_sync_sidx_table[sidx]);
+
+	LOG_INF(
+		"sidx:%u, flag:%u, => set_sync_sidx_table[%u]:%d\n",
+		sidx, flag, sidx,
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[sidx]));
+}
+
+
+static int fs_check_set_sync_sidx_table(const unsigned int sidx)
+{
+	int ret = -1;
+
+	if (unlikely(check_idx_valid(sidx) == 0)) {
+		LOG_MUST(
+			"ERROR: get invalid sidx:%u, return (-1)\n",
+			sidx);
+
+		return -1;
+	}
+
+	ret = FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[sidx]);
+
+	LOG_INF(
+		"sidx:%u, set_sync_sidx_table[%u]:%d, => ret:%d\n",
+		sidx, sidx,
+		FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[sidx]),
+		ret);
+
+	return ret;
+}
+
+
+static void fs_set_sync_idx(unsigned int idx, unsigned int flag)
 {
 	fs_set_sync_status(idx, flag);
 
 	fs_alg_set_sync_type(idx, flag);
 
+	fs_sa_set_async_info(idx, flag);
+
 #if defined(FS_UT)
 	fs_reset_ft_mode_data(idx, flag);
 #endif // FS_UT
 
-	fs_sa_try_reset_master_idx(idx);
+	fs_sa_try_reset_master_idx(idx, flag);
+
+	fs_sa_update_async_master_idx(idx, flag);
 
 	fs_decision_maker(idx);
 
-	fs_update_status(idx, flag);
+	fs_update_status(idx, flag, __func__);
 }
 
 
@@ -1521,24 +1835,36 @@ void fs_set_sync(unsigned int ident, unsigned int flag)
 {
 	unsigned int idx = fs_get_reg_sensor_pos(ident);
 
-	if (check_idx_valid(idx) == 0) {
-		LOG_PR_WARN("ERROR: [%u] %s is not register, ident:%u\n",
-			idx, REG_INFO, ident);
+#if !defined(FS_UT)
+	unsigned int owr_flag = flag;
 
+	/* user cmd force disable frame-sync set_sync */
+	if (unlikely(fs_con_chk_force_to_ignore_set_sync())) {
+		LOG_MUST(
+			"WARNING: [%u] ident:%u(%s), USER set frame-sync force to ignore set sync, return\n",
+			idx, ident, REG_INFO);
 		return;
 	}
 
-
-#if !defined(FS_UT)
-	/* user cmd force disable frame-sync set_sync */
-	if (fs_con_chk_force_to_ignore_set_sync()) {
+	/* user cmd overwrite set sync flag */
+	if (unlikely(fs_con_chk_en_overwrite_set_sync(ident, &owr_flag))) {
 		LOG_MUST(
-			"NOTICE: [%u] USER set force to ignore frame-sync set sync, return\n",
-			idx);
-		return;
+			"NOTICE: [%u] ident:%u(%s), USER set overwrite set sync value:(%u -> %u)\n",
+			idx, ident, REG_INFO,
+			flag, owr_flag);
+		flag = owr_flag;
 	}
 #endif // FS_UT
 
+	fs_update_set_sync_sidx_table(ident, flag);
+
+	if (check_idx_valid(idx) == 0) {
+		LOG_MUST(
+			"NOTICE: [%u] ident:%u(%s) is not register, only update set_sync_sidx_table[%u]:%d\n value",
+			idx, ident, REG_INFO, ident,
+			FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[ident]));
+		return;
+	}
 
 	fs_set_sync_idx(idx, flag);
 }
@@ -1547,38 +1873,25 @@ void fs_set_sync(unsigned int ident, unsigned int flag)
 unsigned int fs_is_set_sync(unsigned int ident)
 {
 	unsigned int idx = 0, result = 0;
-#if !defined(REDUCE_FS_DRV_LOG)
-	struct SensorInfo info = {0}; // for log using
-#endif // REDUCE_FS_DRV_LOG
 
 	idx = fs_get_reg_sensor_pos(ident);
-
 	if (check_idx_valid(idx) == 0) {
-
-#if !defined(REDUCE_FS_DRV_LOG)
-		LOG_MUST("WARNING: [%u] %s is not register, ident:%u, return\n",
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
 			idx, REG_INFO, ident);
-#endif // REDUCE_FS_DRV_LOG
-
 		return 0;
 	}
 
-
 	result = FS_CHECK_BIT(idx, &fs_mgr.enSync_bits);
 
-
 #if !defined(REDUCE_FS_DRV_LOG)
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-
 	LOG_INF("%u [%u] ID:%#x(sidx:%u)   [enSync_bits:%d]\n",
 		result,
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		FS_READ_BITS(&fs_mgr.enSync_bits));
 #endif // REDUCE_FS_DRV_LOG
-
 
 	return result;
 }
@@ -1591,11 +1904,6 @@ static void fs_set_sensor_driver_framelength_lc(
 	struct callback_st *p_cb = &fs_mgr.cb_data[idx];
 	callback_set_framelength cb_func = p_cb->func_ptr;
 
-	struct SensorInfo info = {0}; // for log using
-
-	fs_get_reg_sensor_info(idx, &info);
-
-
 	/* callback sensor driver to set framelength lc */
 	if (p_cb->func_ptr != NULL) {
 		if (fl_lc != 0)
@@ -1605,16 +1913,16 @@ static void fs_set_sensor_driver_framelength_lc(
 			LOG_PR_WARN(
 				"ERROR: [%u] ID:%#x(sidx:%u), set fl_lc:%u failed, p_ctx:%p\n",
 				idx,
-				info.sensor_id,
-				info.sensor_idx,
+				fs_get_reg_sensor_id(idx),
+				fs_get_reg_sensor_idx(idx),
 				fl_lc,
 				fs_mgr.cb_data[idx].p_ctx);
 		}
 	} else
 		LOG_PR_WARN("ERROR: [%u] ID:%#x(sidx:%u), func_ptr is NULL\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx);
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx));
 }
 
 
@@ -1634,7 +1942,7 @@ static inline void fs_set_framelength_lc(unsigned int idx, unsigned int fl_lc)
 
 
 #ifndef REDUCE_FS_DRV_LOG
-	frec_dump_recorder(idx);
+	frec_dump_recorder(idx, __func__);
 #endif //REDUCE_FS_DRV_LOG
 
 
@@ -1651,7 +1959,7 @@ static inline void fs_set_framelength_lc(unsigned int idx, unsigned int fl_lc)
 static inline unsigned int fs_check_n_1_status_ctrl(
 	unsigned int idx, unsigned int en)
 {
-	enum FS_FEATURE_MODE mode_status = fs_mgr.ft_mode[idx];
+	enum FS_HDR_FT_MODE mode_status = fs_mgr.hdr_ft_mode[idx];
 
 	if (en) {
 		/* only normal mode can turn ON N:1 mode */
@@ -1660,55 +1968,51 @@ static inline unsigned int fs_check_n_1_status_ctrl(
 
 	/* only FRAME_TAG and N_1_KEEP can turn OFF N:1 mode */
 	return (mode_status
-		& (FS_FT_MODE_FRAME_TAG | FS_FT_MODE_N_1_KEEP))
+		& (FS_HDR_FT_MODE_FRAME_TAG | FS_HDR_FT_MODE_N_1_KEEP))
 		? 1 : 0;
 }
 
 
 static inline void fs_check_n_1_status_extra_ctrl(unsigned int idx)
 {
-	enum FS_FEATURE_MODE old_ft_status;
-	struct SensorInfo info = {0}; // for log using
+	enum FS_HDR_FT_MODE old_ft_status;
 
-	fs_get_reg_sensor_info(idx, &info);
+	old_ft_status = fs_mgr.hdr_ft_mode[idx];
 
-
-	old_ft_status = fs_mgr.ft_mode[idx];
-
-	if (fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_ON) {
-		fs_mgr.ft_mode[idx] &= ~(FS_FT_MODE_N_1_ON);
-		fs_mgr.ft_mode[idx] |= FS_FT_MODE_N_1_KEEP;
+	if (fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_ON) {
+		fs_mgr.hdr_ft_mode[idx] &= ~(FS_HDR_FT_MODE_N_1_ON);
+		fs_mgr.hdr_ft_mode[idx] |= FS_HDR_FT_MODE_N_1_KEEP;
 
 		LOG_MUST(
 			"[%u] ID:%#x(sidx:%u), feature mode status change (%u->%u), ON:%u/KEEP:%u\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			old_ft_status,
-			fs_mgr.ft_mode[idx],
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_ON,
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_KEEP
+			fs_mgr.hdr_ft_mode[idx],
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_ON,
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_KEEP
 		);
 
 		/* turn off FS algo n_1_on_off flag */
 		/* for calculating FL normally */
 		fs_alg_set_n_1_on_off_flag(idx, 0);
 
-	} else if (fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_OFF) {
-		fs_mgr.ft_mode[idx] &= ~(FS_FT_MODE_N_1_OFF);
-		fs_mgr.ft_mode[idx] &= ~(FS_FT_MODE_FRAME_TAG);
-		fs_mgr.ft_mode[idx] |= FS_FT_MODE_NORMAL;
+	} else if (fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_OFF) {
+		fs_mgr.hdr_ft_mode[idx] &= ~(FS_HDR_FT_MODE_N_1_OFF);
+		fs_mgr.hdr_ft_mode[idx] &= ~(FS_HDR_FT_MODE_FRAME_TAG);
+		fs_mgr.hdr_ft_mode[idx] |= FS_HDR_FT_MODE_NORMAL;
 
 		LOG_MUST(
 			"[%u] ID:%#x(sidx:%u), feature mode status change (%u->%u), OFF:%u/FRAME_TAG:%u/NORMAL:%u\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			old_ft_status,
-			fs_mgr.ft_mode[idx],
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_OFF,
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_FRAME_TAG,
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_NORMAL
+			fs_mgr.hdr_ft_mode[idx],
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_OFF,
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_FRAME_TAG,
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_NORMAL
 		);
 
 		/* turn off FS algo n_1_on_off flag */
@@ -1753,30 +2057,46 @@ void fs_sa_request_switch_master(unsigned int idx)
 }
 
 
-static inline int fs_get_valid_master_instance_idx(void)
+static int fs_get_valid_master_instance_idx(const unsigned int idx)
 {
-	int m_idx = MASTER_IDX_NONE, valid = 0, i = 0;
+	const int async_mode_bits = FS_ATOMIC_READ(&fs_mgr.async_mode_bits);
+	const int valid_bits = FS_ATOMIC_READ(&fs_mgr.validSync_bits);
+	const int m_idx = FS_ATOMIC_READ(&fs_mgr.master_idx);
+	int i = 0;
 
-	m_idx = FS_ATOMIC_READ(&fs_mgr.master_idx);
-
-	/* check case -> user not config master sensor */
-	/* or config a non valid sensor as master */
+	/* check case */
+	/* --- user not config master sensor */
+	/*     or config a invalid sensor as master */
+	/*     invalid: (not set sync || uses async mode) */
 	if (m_idx == MASTER_IDX_NONE
-		|| FS_CHECK_BIT(m_idx, &fs_mgr.validSync_bits) == 0) {
+		|| (((valid_bits >> m_idx) & 0x01) == 0)
+		|| (((async_mode_bits >> m_idx) & 0x01) == 1)) {
 		/* auto select a master sensor */
-		/* using the sensor first valid for sync */
-		valid = FS_READ_BITS(&fs_mgr.validSync_bits);
-
-		while ((i < SENSOR_MAX_NUM) && (((valid >> i) & 0x01) != 1))
+		i = 0;
+		while ((i < SENSOR_MAX_NUM)
+			&& ((((valid_bits >> i) & 0x01) != 1)
+				|| ((async_mode_bits >> i) & 0x01) == 1))
 			i++;
+
+		/* no match => set to itself & preventing OOB */
+		if (i >= SENSOR_MAX_NUM) {
+			i = idx;
+
+			/* unexpected case */
+			if (async_mode_bits == 0) {
+				LOG_MUST(
+					"[%u] NOTICE: can't auto select SA master idx, force set to itself, m_idx:%d [validSync:%u/Async_Mode_bits:%d]\n",
+					idx, i, valid_bits, async_mode_bits);
+			}
+		}
 
 		FS_ATOMIC_SET(i, &fs_mgr.master_idx);
 
 #if !defined(REDUCE_FS_DRV_LOG)
-		LOG_INF(
-			"NOTICE: current master_idx:%d is not valid for doing frame-sync, validSync_bits:%d, auto set to idx:%d\n",
-			m_idx, valid, i);
-#endif // REDUCE_FS_DRV_LOG
+		LOG_MUST(
+			"NOTICE: current master_idx:%d is not valid for doing frame-sync, validSync_bits:%d, Async_Mode_bits:%d, auto set to idx:%d\n",
+			m_idx, valid_bits, async_mode_bits, i);
+#endif
 
 		return i;
 	}
@@ -1785,81 +2105,105 @@ static inline int fs_get_valid_master_instance_idx(void)
 }
 
 
-/*
- * return: (0/1): trigger (failed/successfully)
- */
-static int fs_try_trigger_frame_sync_sa(unsigned int idx)
+static int fs_get_valid_async_master_instance_idx(const unsigned int idx)
 {
-	unsigned int ret = 0;
-	int valid_sync_bits = 0, m_idx = MASTER_IDX_NONE, sa_method = 0;
-	unsigned int fl_lc = 0;
-	struct SensorInfo info = {0}; // for log using
+	const int async_mode_bits = FS_READ_BITS(&fs_mgr.async_mode_bits);
+	const int valid_bits = FS_ATOMIC_READ(&fs_mgr.validSync_bits);
+	const int async_m_idx = FS_ATOMIC_READ(&fs_mgr.async_master_idx);
 
-	fs_get_reg_sensor_info(idx, &info);
+	/* check async master idx */
+	/* --- no sensor uses async mode => it's fine */
+	if (async_mode_bits == 0)
+		return MASTER_IDX_NONE;
+
+	/* --- has async_mode sensor => check async_m_idx is valid */
+	if ((async_mode_bits != 0) && ((async_m_idx != MASTER_IDX_NONE)
+		&& ((valid_bits >> async_m_idx) & 0x01)))
+		return async_m_idx;
+
+	/* un-wish case handling */
+	/* --- async master idx is not valid */
+	if ((async_mode_bits != 0) && ((async_m_idx == MASTER_IDX_NONE)
+		|| (((valid_bits >> async_m_idx) & 0x01) == 0))) {
+		fs_dump_status(idx, -1, __func__,
+			"WARNING: async_m_sidx is invalid for using, auto assign to itself");
+		return idx;
+	}
+
+	LOG_MUST(
+		"[%u] WARNING: undefined case, return async_m_idx:%u (itself) for using\n",
+		idx, idx);
+
+	return idx;
+}
 
 
-	if (FS_CHECK_BIT(idx, &fs_mgr.validSync_bits) == 0) {
+static inline void fs_sa_setup_perframe_cfg_info(const unsigned int idx,
+	struct fs_sa_cfg *p_sa_cfg)
+{
+	p_sa_cfg->idx = idx;
+	p_sa_cfg->sa_method = FS_ATOMIC_READ(&fs_mgr.sa_method);
+	p_sa_cfg->m_idx = fs_get_valid_master_instance_idx(idx);
+	p_sa_cfg->valid_sync_bits = FS_READ_BITS(&fs_mgr.validSync_bits);
+	p_sa_cfg->async_m_idx = fs_get_valid_async_master_instance_idx(idx);
+	p_sa_cfg->async_s_bits = FS_READ_BITS(&fs_mgr.async_mode_bits);
+
 #if !defined(REDUCE_FS_DRV_LOG)
+	LOG_MUST(
+		"[%u] idx:%u, sa_mthod:%u, m_idx:%d, valid_sync_bits:%#x, async_m_idx:%d, async_s_bits:%#x\n",
+		idx,
+		p_sa_cfg->idx,
+		p_sa_cfg->sa_method,
+		p_sa_cfg->m_idx,
+		p_sa_cfg->valid_sync_bits,
+		p_sa_cfg->async_m_idx,
+		p_sa_cfg->async_s_bits);
+#endif
+}
+
+
+static void fs_try_trigger_frame_sync_sa(const unsigned int idx)
+{
+	struct fs_sa_cfg sa_cfg = {0};
+	unsigned int fl_lc = 0;
+	unsigned int ret = 0;
+
+	/* unexpected case check (but it should be detect in previous caller) */
+	if (unlikely(
+		(FS_CHECK_BIT(idx, &fs_mgr.validSync_bits) == 0)
+		|| (FS_CHECK_BIT(idx, &fs_mgr.pf_ctrl_bits) == 0)
+		|| (FS_CHECK_BIT(idx, &fs_mgr.setup_complete_bits) == 0))) {
+		/* call dump all info for seeing what's happened */
+		fs_dump_status(idx, -1, __func__,
+			"ERROR: invalid for doing frame-sync, check validSync/pf_ctrl/setup_complete");
+		return;
+	}
+
+	/* clear status bit */
+	/* --- because it's valid for trigger FL calculation */
+	FS_WRITE_BIT(idx, 0, &fs_mgr.pf_ctrl_bits);
+	FS_WRITE_BIT(idx, 0, &fs_mgr.setup_complete_bits);
+
+	/* trigger FS-SA for calculating frame length, */
+	/*    but only set FL to sensor driver if return with no error */
+	fs_sa_setup_perframe_cfg_info(idx, &sa_cfg);
+	ret = fs_alg_solve_frame_length_sa(&sa_cfg, &fl_lc);
+
+	if (ret != 0) { // !0 => had error
 		LOG_INF(
-			"WARNING: [%u] ID:%#x(sidx:%u), not valid for sync:%d(streaming:%d/enSync:%d), return\n",
+			"ERROR: [%u] ID:%#x(sidx:%u), fs_alg_solve_frame_length_sa return error:%u, auto set fl_lc:%u to min_fl_lc for sensor driver",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
-			FS_READ_BITS(&fs_mgr.validSync_bits),
-			FS_READ_BITS(&fs_mgr.streaming_bits),
-			FS_READ_BITS(&fs_mgr.enSync_bits));
-#endif // REDUCE_FS_DRV_LOG
-
-		return 0;
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
+			ret,
+			fl_lc);
 	}
 
-	if (FS_CHECK_BIT(idx, &fs_mgr.pf_ctrl_bits) == 0) {
-		LOG_MUST(
-			"WARNING: [%u] ID:%#x(sidx:%u), wait for getting pf_ctrl:%d, return\n",
-			idx,
-			info.sensor_id,
-			info.sensor_idx,
-			FS_READ_BITS(&fs_mgr.pf_ctrl_bits));
+	/* set framelength (all FL operation must use this API) */
+	fs_set_framelength_lc(idx, fl_lc);
 
-		return 0;
-	}
-
-	if (FS_CHECK_BIT(idx, &fs_mgr.setup_complete_bits) == 0) {
-		LOG_MUST(
-			"WARNING: [%u] ID:%#x(sidx:%u), wait for setup_coplete:%d, return\n",
-			idx,
-			info.sensor_id,
-			info.sensor_idx,
-			FS_READ_BITS(&fs_mgr.setup_complete_bits));
-
-		return 0;
-	}
-
-
-	/* FS standalone trigger for calculating frame length */
-	m_idx = fs_get_valid_master_instance_idx();
-	valid_sync_bits = FS_READ_BITS(&fs_mgr.validSync_bits);
-	sa_method = FS_ATOMIC_READ(&fs_mgr.sa_method);
-
-	ret = fs_alg_solve_frame_length_sa(
-		idx, m_idx, valid_sync_bits, sa_method, &fl_lc);
-
-	if (ret == 0) { // 0 => no error
-		/* set framelength */
-		/* all framelength operation must use this API */
-		fs_set_framelength_lc(idx, fl_lc);
-
-
-		/* clear status bit */
-		FS_WRITE_BIT(idx, 0, &fs_mgr.pf_ctrl_bits);
-		FS_WRITE_BIT(idx, 0, &fs_mgr.setup_complete_bits);
-
-
-		/* check/change feature mode status */
-		fs_feature_status_extra_ctrl(idx);
-	}
-
-	return 1;
+	/* check/change feature mode status */
+	fs_feature_status_extra_ctrl(idx);
 }
 
 
@@ -1875,14 +2219,14 @@ static inline void fs_try_set_auto_frame_tag(unsigned int idx)
 {
 	unsigned int f_tag = 0, f_cell = 0;
 
-	if (((fs_mgr.ft_mode[idx] & FS_FT_MODE_ASSIGN_FRAME_TAG) == 0)
-		&& (fs_mgr.ft_mode[idx] & FS_FT_MODE_FRAME_TAG)) {
+	if (((fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_ASSIGN_FRAME_TAG) == 0)
+		&& (fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_FRAME_TAG)) {
 		/* N:1 case */
 		if (fs_mgr.frame_cell_size[idx] == 0) {
 			LOG_MUST(
 				"NOTICE: [%u] call set auto frame_tag, feature_mode:%u, but frame_cell_size:%u not valid, return\n",
 				idx,
-				fs_mgr.ft_mode[idx],
+				fs_mgr.hdr_ft_mode[idx],
 				fs_mgr.frame_cell_size[idx]
 			);
 
@@ -1909,16 +2253,14 @@ void fs_set_frame_tag(unsigned int ident, unsigned int f_tag)
 
 	if (check_idx_valid(idx) == 0) {
 		LOG_MUST(
-			"ERROR: [%u] %s is not register, ident:%u\n",
-			idx, REG_INFO, ident
-		);
-
+			"NOTICE: [%u] %s is not register, ident:%u, f_tag:%u, return\n",
+			idx, REG_INFO, ident, f_tag);
 		return;
 	}
 
 
-	if ((fs_mgr.ft_mode[idx] & FS_FT_MODE_ASSIGN_FRAME_TAG)
-		&& (fs_mgr.ft_mode[idx] & FS_FT_MODE_FRAME_TAG)) {
+	if ((fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_ASSIGN_FRAME_TAG)
+		&& (fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_FRAME_TAG)) {
 		/* M-Stream case */
 #if !defined(TWO_STAGE_FS) || defined(QUERY_CCU_TS_AT_SOF)
 		fs_mgr.frame_tag[idx] = f_tag;
@@ -1943,7 +2285,7 @@ void fs_set_frame_tag(unsigned int ident, unsigned int f_tag)
 			"WARNING: [%u] call set frame_tag:%u, but feature_mode:%u not allow\n",
 			idx,
 			f_tag,
-			fs_mgr.ft_mode[idx]
+			fs_mgr.hdr_ft_mode[idx]
 		);
 	}
 }
@@ -1951,48 +2293,41 @@ void fs_set_frame_tag(unsigned int ident, unsigned int f_tag)
 
 void fs_n_1_en(unsigned int ident, unsigned int n, unsigned int en)
 {
-	unsigned int idx = fs_get_reg_sensor_pos(ident);
-	struct SensorInfo info = {0}; // for log using
+	unsigned int idx = 0;
 
+	idx = fs_get_reg_sensor_pos(ident);
 	if (check_idx_valid(idx) == 0) {
 		LOG_MUST(
-			"ERROR: [%u] %s is not register, ident:%u\n",
-			idx, REG_INFO, ident
-		);
-
+			"NOTICE: [%u] %s is not register, ident:%u, n:%u, en:%u, return\n",
+			idx, REG_INFO, ident, n, en);
 		return;
 	}
-
-	fs_get_reg_sensor_info(idx, &info);
-
 
 	if (fs_check_n_1_status_ctrl(idx, en) == 0) {
 		/* feature mode status is non valid for this ctrl */
 		LOG_MUST(
 			"NOTICE: [%u] ID:%#x(sidx:%u), set N:%u, but ft ctrl non valid, feature_mode:%u (FRAME_TAG:%u/ON:%u/KEEP:%u/OFF:%u), return  [en:%u]\n",
 			idx,
-			info.sensor_id,
-			info.sensor_idx,
+			fs_get_reg_sensor_id(idx),
+			fs_get_reg_sensor_idx(idx),
 			n,
-			fs_mgr.ft_mode[idx],
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_FRAME_TAG,
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_ON,
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_KEEP,
-			fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_OFF,
-			en
-		);
-
+			fs_mgr.hdr_ft_mode[idx],
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_FRAME_TAG,
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_ON,
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_KEEP,
+			fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_OFF,
+			en);
 		return;
 	}
 
 	if (en) {
 		fs_mgr.frame_cell_size[idx] = n;
-		fs_mgr.ft_mode[idx] =
-			(FS_FT_MODE_FRAME_TAG | FS_FT_MODE_N_1_ON);
+		fs_mgr.hdr_ft_mode[idx] =
+			(FS_HDR_FT_MODE_FRAME_TAG | FS_HDR_FT_MODE_N_1_ON);
 	} else {
 		fs_mgr.frame_cell_size[idx] = 0;
-		fs_mgr.ft_mode[idx] =
-			(FS_FT_MODE_FRAME_TAG | FS_FT_MODE_N_1_OFF);
+		fs_mgr.hdr_ft_mode[idx] =
+			(FS_HDR_FT_MODE_FRAME_TAG | FS_HDR_FT_MODE_N_1_OFF);
 	}
 
 	fs_alg_set_frame_cell_size(idx, fs_mgr.frame_cell_size[idx]);
@@ -2011,55 +2346,47 @@ void fs_n_1_en(unsigned int ident, unsigned int n, unsigned int en)
 	LOG_MUST(
 		"[%u] ID:%#x(sidx:%u), N:%u, feature_mode:%u (FRAME_TAG:%u/ON:%u/OFF:%u)  [en:%u]\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		n,
-		fs_mgr.ft_mode[idx],
-		fs_mgr.ft_mode[idx] & FS_FT_MODE_FRAME_TAG,
-		fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_ON,
-		fs_mgr.ft_mode[idx] & FS_FT_MODE_N_1_OFF,
-		en
-	);
+		fs_mgr.hdr_ft_mode[idx],
+		fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_FRAME_TAG,
+		fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_ON,
+		fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_N_1_OFF,
+		en);
 }
 
 
 void fs_mstream_en(unsigned int ident, unsigned int en)
 {
-	unsigned int idx = fs_get_reg_sensor_pos(ident);
-	struct SensorInfo info = {0}; // for log using
+	unsigned int idx = 0;
 
+	idx = fs_get_reg_sensor_pos(ident);
 	if (check_idx_valid(idx) == 0) {
 		LOG_MUST(
-			"ERROR: [%u] %s is not register, ident:%u\n",
-			idx, REG_INFO, ident
-		);
-
+			"NOTICE: [%u] %s is not register, ident:%u, en:%u, return\n",
+			idx, REG_INFO, ident, en);
 		return;
 	}
-
-	fs_get_reg_sensor_info(idx, &info);
-
 
 	fs_n_1_en(ident, 2, en);
 
 	if (en) {
 		/* set M-Stream mode */
-		fs_mgr.ft_mode[idx] |= FS_FT_MODE_ASSIGN_FRAME_TAG;
+		fs_mgr.hdr_ft_mode[idx] |= FS_HDR_FT_MODE_ASSIGN_FRAME_TAG;
 	} else {
 		/* unset M-Stream mode */
-		fs_mgr.ft_mode[idx] &= ~(FS_FT_MODE_ASSIGN_FRAME_TAG);
+		fs_mgr.hdr_ft_mode[idx] &= ~(FS_HDR_FT_MODE_ASSIGN_FRAME_TAG);
 	}
-
 
 	LOG_MUST(
 		"[%u] ID:%#x(sidx:%u), N:2, feature_mode:%u (ASSIGN_FRAME_TAG:%u)  [en:%u]\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
-		fs_mgr.ft_mode[idx],
-		fs_mgr.ft_mode[idx] & FS_FT_MODE_ASSIGN_FRAME_TAG,
-		en
-	);
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		fs_mgr.hdr_ft_mode[idx],
+		fs_mgr.hdr_ft_mode[idx] & FS_HDR_FT_MODE_ASSIGN_FRAME_TAG,
+		en);
 }
 #endif // SUPPORT_FS_NEW_METHOD
 
@@ -2070,9 +2397,9 @@ void fs_set_extend_framelength(
 	unsigned int idx = fs_get_reg_sensor_pos(ident);
 
 	if (check_idx_valid(idx) == 0) {
-		LOG_PR_WARN("ERROR: [%u] %s is not register, ident:%u\n",
-			idx, REG_INFO, ident);
-
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, ext_fl(lc:%u/us:%u), return\n",
+			idx, REG_INFO, ident, ext_fl_lc, ext_fl_us);
 		return;
 	}
 
@@ -2080,18 +2407,112 @@ void fs_set_extend_framelength(
 }
 
 
-void fs_seamless_switch(unsigned int ident)
+void fs_chk_exit_seamless_switch_frame(const unsigned int ident)
 {
-	unsigned int idx = fs_get_reg_sensor_pos(ident);
+	const unsigned int idx = fs_get_reg_sensor_pos(ident);
 
-	if (check_idx_valid(idx) == 0) {
-		LOG_PR_WARN("ERROR: [%u] %s is not register, ident:%u\n",
+	/* error handling (unexpected case) */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
 			idx, REG_INFO, ident);
-
 		return;
 	}
 
-	fs_alg_seamless_switch(idx);
+	/* check if new vsync sof cnt been updated and is NOT match to seamless sof cnt */
+	/* because it is the next frame that after seamless switch frame */
+	/* if yes, clear/reset seamless ctrl data */
+	if (fs_chk_seamless_switch_status(idx)) {
+		if (fs_mgr.seamless_ctrl[idx].seamless_sof_cnt != fs_mgr.sof_cnt_arr[idx]
+			|| (FS_ATOMIC_READ(&fs_mgr.seamless_ctrl[idx].wait_for_processing) == 0)) {
+			LOG_MUST(
+				"NOTICE: [%u] ID:%#x(sidx:%u), wait_for_processing:%d or (current sof cnt:%u)/(seamelss sof cnt:%u) is different => It is NOT seamless switch frame => enter to NORMAL frame => clear seamless ctrl that keep before\n",
+				idx,
+				fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl.sensor_id,
+				fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl.sensor_idx,
+				FS_ATOMIC_READ(&fs_mgr.seamless_ctrl[idx].wait_for_processing),
+				fs_mgr.sof_cnt_arr[idx],
+				fs_mgr.seamless_ctrl[idx].seamless_sof_cnt);
+
+			fs_clr_seamless_switch_info(idx);
+		}
+	}
+}
+
+
+void fs_chk_valid_for_doing_seamless_switch(const unsigned int ident)
+{
+	struct fs_sa_cfg sa_cfg = {0};
+	const unsigned int idx = fs_get_reg_sensor_pos(ident);
+
+	/* error handling (unexpected case) */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
+			idx, REG_INFO, ident);
+		return;
+	}
+
+	/* check if new vsync sof cnt been updated and is match to seamless sof cnt */
+	/* if not, keep seamless ctrl for vsync notify using. */
+	if (fs_chk_seamless_switch_status(idx)) {
+		if (fs_mgr.seamless_ctrl[idx].seamless_sof_cnt != fs_mgr.sof_cnt_arr[idx]) {
+			LOG_MUST(
+				"NOTICE: [%u] ID:%#x(sidx:%u), seamless:%#x, wait_for_processing:%d, (current sof cnt:%u)/(seamelss sof cnt:%u) is different, SA(m_idx:%d), keep this seamless ctrl\n",
+				idx,
+				fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl.sensor_id,
+				fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl.sensor_idx,
+				FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+				FS_ATOMIC_READ(&fs_mgr.seamless_ctrl[idx].wait_for_processing),
+				fs_mgr.sof_cnt_arr[idx],
+				fs_mgr.seamless_ctrl[idx].seamless_sof_cnt,
+				FS_ATOMIC_READ(&fs_mgr.master_idx));
+
+			return;
+		}
+
+		/* !!! can do seamless frame-sync flow !!! */
+		fs_sa_setup_perframe_cfg_info(idx, &sa_cfg);
+
+		LOG_MUST(
+			"NOTICE: [%u] ID:%#x(sidx:%u), seamless_bits:%#x, wait_for_processing:%d, (current sof cnt:%u)/(seamelss sof cnt:%u) is same, SA(idx:%u/m_idx:%d/async_m_idx:%u/async_s:%#x/valid_sync:%#x/method:%u) => do seamless switch process\n",
+			idx,
+			fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl.sensor_id,
+			fs_mgr.seamless_ctrl[idx].seamless_info.seamless_pf_ctrl.sensor_idx,
+			FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+			FS_ATOMIC_READ(&fs_mgr.seamless_ctrl[idx].wait_for_processing),
+			fs_mgr.sof_cnt_arr[idx],
+			fs_mgr.seamless_ctrl[idx].seamless_sof_cnt,
+			sa_cfg.idx,
+			sa_cfg.m_idx,
+			sa_cfg.async_m_idx,
+			sa_cfg.async_s_bits,
+			sa_cfg.valid_sync_bits,
+			sa_cfg.sa_method);
+
+		FS_ATOMIC_SET(0, &fs_mgr.seamless_ctrl[idx].wait_for_processing);
+		fs_do_seamless_switch_proc(idx, &sa_cfg);
+	}
+}
+
+
+void fs_seamless_switch(const unsigned int ident,
+	struct fs_seamless_st *p_seamless_info,
+	const unsigned int seamless_sof_cnt)
+{
+	unsigned int idx = 0;
+
+	idx = fs_get_reg_sensor_pos(ident);
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
+			idx, REG_INFO, ident);
+		return;
+	}
+
+	fs_set_seamless_switch_info(idx, p_seamless_info, seamless_sof_cnt);
+
+	fs_chk_valid_for_doing_seamless_switch(ident);
 }
 
 
@@ -2101,20 +2522,15 @@ void fs_seamless_switch(unsigned int ident)
  */
 void fs_update_tg(unsigned int ident, unsigned int tg)
 {
-	struct SensorInfo info = {0};
-	unsigned int idx = fs_get_reg_sensor_pos(ident);
+	unsigned int idx = 0;
 
-
+	idx = fs_get_reg_sensor_pos(ident);
 	if (check_idx_valid(idx) == 0) {
-
-#if !defined(REDUCE_FS_DRV_LOG)
-		LOG_MUST("WARNING: [%u] %s is not register, ident:%u, return\n",
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
 			idx, REG_INFO, ident);
-#endif // REDUCE_FS_DRV_LOG
-
 		return;
 	}
-
 
 #ifdef USING_CCU
 	/* 0. check ccu pwr ON, and disable INT(previous tg) */
@@ -2123,7 +2539,8 @@ void fs_update_tg(unsigned int ident, unsigned int tg)
 #endif // USING_CCU
 
 	/* 0-1 convert cammux id to ccu tg id */
-	tg = frm_convert_cammux_tg_to_ccu_tg(tg);
+	// tg = frm_convert_cammux_tg_to_ccu_tg(tg);
+	tg = frm_convert_cammux_id_to_ccu_tg_id(tg);
 
 
 	/* 1. update the fs_streaming_st data */
@@ -2131,15 +2548,12 @@ void fs_update_tg(unsigned int ident, unsigned int tg)
 	frm_update_tg(idx, tg);
 
 
-	fs_get_reg_sensor_info(idx, &info);
-
-
 #if !defined(REDUCE_FS_DRV_LOG)
 	LOG_MUST(
 		"[%u] ID:%#x(sidx:%u), updated tg:%u (fs_alg, frm)\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		tg
 	);
 #endif // REDUCE_FS_DRV_LOG
@@ -2160,6 +2574,81 @@ void fs_update_tg(unsigned int ident, unsigned int tg)
 #endif // USING_CCU
 }
 
+
+/*
+ * update fs_streaming_st data
+ *     (for cam_mux switch & sensor stream on before cam mux setup)
+ *     ISP7s HW change, seninf assign target tg ID (direct map to CCU tg ID)
+ */
+void fs_update_target_tg(const unsigned int ident,
+	const unsigned int target_tg)
+{
+	unsigned int idx = 0;
+
+	idx = fs_get_reg_sensor_pos(ident);
+	if (check_idx_valid(idx) == 0) {
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
+			idx, REG_INFO, ident);
+		return;
+	}
+
+#ifdef USING_CCU
+	/* 0. check ccu pwr ON, and disable INT(previous tg) */
+	if (FS_CHECK_BIT(idx, &fs_mgr.power_on_ccu_bits))
+		frm_reset_ccu_vsync_timestamp(idx, 0);
+#endif
+
+
+	/* 1. update the fs_streaming_st data */
+	fs_alg_update_tg(idx, target_tg);
+	frm_update_tg(idx, target_tg);
+
+
+#if !defined(REDUCE_FS_DRV_LOG)
+	LOG_MUST(
+		"[%u] ID:%#x(sidx:%u), updated target_tg:%u (fs_alg, frm)\n",
+		idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		target_tg);
+#endif
+
+
+#ifdef USING_CCU
+	/* 2. on the fly change cam_mux/tg */
+	/*    => reset/re-init frame info data for after using */
+	if (FS_CHECK_BIT(idx, &fs_mgr.power_on_ccu_bits)) {
+		// frm_reset_frame_info(idx);
+
+		// frm_init_frame_info_st_data(idx,
+		//	info.sensor_id, info.sensor_idx,
+		//	tg);
+
+		frm_reset_ccu_vsync_timestamp(idx, 1);
+	}
+#endif
+}
+
+static unsigned int fs_chk_and_get_tg_value(
+	const unsigned int cammux_id, const unsigned int target_tg)
+{
+	unsigned int tg = CAMMUX_ID_INVALID;
+
+	if ((cammux_id != 0) && (cammux_id != CAMMUX_ID_INVALID))
+		tg = frm_convert_cammux_id_to_ccu_tg_id(cammux_id);
+
+	if ((target_tg != 0) && (target_tg != CAMMUX_ID_INVALID))
+		tg = target_tg;
+
+	LOG_MUST(
+		"get cammux_id:%u, target_tg:%u, => ret tg:%u\n",
+		cammux_id,
+		target_tg,
+		tg);
+
+	return tg;
+}
 
 static inline void fs_reset_idx_ctx(unsigned int idx)
 {
@@ -2194,19 +2683,44 @@ static inline void fs_reset_idx_ctx(unsigned int idx)
  *     flag: "non 0" -> stream on; "0" -> stream off;
  *     sensor_info: struct fs_streaming_st*
  */
-unsigned int fs_streaming(
-	unsigned int flag, struct fs_streaming_st (*sensor_info))
+unsigned int fs_streaming(const unsigned int flag,
+	struct fs_streaming_st (*sensor_info))
 {
-	unsigned int idx = 0;
-
-
-	/* 1. register this sensor */
+	struct fs_perframe_st preset_pf_ctrl = {0};
 	struct SensorInfo info = {
 		.sensor_id = sensor_info->sensor_id,
 		.sensor_idx = sensor_info->sensor_idx,
 	};
+	unsigned int idx = 0;
+	int ret = 0;
 
-	/* register this sensor and check return idx/position value */
+#if !defined(FS_UT)
+	unsigned int owr_flag = 1;
+
+	/* streaming with enable set sync if user set it */
+	if (unlikely(fs_con_chk_default_en_set_sync())) {
+		/* user cmd overwrite set sync flag */
+		if (fs_con_chk_en_overwrite_set_sync(sensor_info->sensor_idx,
+			&owr_flag)) {
+			LOG_MUST(
+				"NOTICE: ID:%#x(sidx:%u), USER set overwrite set sync value:(1 -> %u)\n",
+				sensor_info->sensor_id,
+				sensor_info->sensor_idx,
+				owr_flag);
+		}
+
+		fs_update_set_sync_sidx_table(sensor_info->sensor_idx, owr_flag);
+		LOG_MUST(
+			"NOTICE: ID:%#x(sidx:%u), USER set frame-sync force enable set sync, set_sync_sidx_table[%u]:%d\n",
+			sensor_info->sensor_id,
+			sensor_info->sensor_idx,
+			sensor_info->sensor_idx,
+			FS_ATOMIC_READ(&fs_mgr.set_sync_sidx_table[
+				sensor_info->sensor_idx]));
+	}
+#endif // !FS_UT
+
+	/* 1. register this sensor and check return idx/position value */
 	idx = fs_register_sensor(&info, REGISTER_METHOD);
 	if (check_idx_valid(idx) == 0) {
 		LOG_PR_WARN("ERROR: [idx:%u] ID:%#x(sidx:%u)\n",
@@ -2216,170 +2730,139 @@ unsigned int fs_streaming(
 		return 1;
 	}
 
-
 	/* 2. reset this idx item and reset CCU vsync timestamp */
-#ifndef REDUCE_FS_DRV_LOG
-	LOG_INF("Reset FS.(en:%u) [%u] ID:%#x(sidx:%u)\n",
-		flag,
-		idx,
-		sensor_info->sensor_id,
-		sensor_info->sensor_idx);
-#endif // REDUCE_FS_DRV_LOG
-
 	fs_reset_idx_ctx(idx);
 
+	/* set/clear hw sensor sync info */
+	fs_set_hw_sync_info(
+		idx, flag,
+		sensor_info->sync_mode,
+		sensor_info->hw_sync_group_id);
 
 	/* 3. if fs_streaming on, set information of this idx correctlly */
 	if (flag > 0) {
-		LOG_INF("Stream on [%u] ID:%#x(sidx:%u)\n",
-			idx,
-			sensor_info->sensor_id,
-			sensor_info->sensor_idx);
-
-
-#if defined(USING_CCU) && !defined(DELAY_CCU_OP)
-		if (FS_CHECK_BIT(idx, &fs_mgr.power_on_ccu_bits) == 0) {
-			FS_WRITE_BIT(idx, 1, &fs_mgr.power_on_ccu_bits);
-
-			LOG_INF("[%u] ID:%#x(sidx:%u), pw_ccu:%d (ON)\n",
-				idx,
-				sensor_info->sensor_id,
-				sensor_info->sensor_idx,
-				FS_READ_BITS(&fs_mgr.power_on_ccu_bits));
-
-			/* power on CCU and get device handle */
-			frm_power_on_ccu(1);
-		}
-#endif // USING_CCU && !DELAY_CCU_OP
-
-
-		/* convert cammux id to ccu tg id */
-		sensor_info->tg =
-			frm_convert_cammux_tg_to_ccu_tg(sensor_info->tg);
+		/* get tg by check cammux_id and target_tg value */
+		sensor_info->tg = fs_chk_and_get_tg_value(
+			sensor_info->cammux_id, sensor_info->target_tg);
 
 		/* set data to frm, fs algo, and frame recorder */
 		frm_init_frame_info_st_data(idx,
 			sensor_info->sensor_id, sensor_info->sensor_idx,
 			sensor_info->tg);
 
-		fs_alg_set_streaming_st_data(idx, sensor_info);
+		ret = fs_get_preset_perframe_data(sensor_info->sensor_idx,
+			&preset_pf_ctrl);
+		if (ret)
+			fs_alg_set_preset_perframe_streaming_st_data(idx,
+				sensor_info, &preset_pf_ctrl);
+		else
+			fs_alg_set_streaming_st_data(idx, sensor_info);
 
-#if !defined(FS_UT)
 		hw_fs_alg_set_streaming_st_data(idx, sensor_info);
-#endif // FS_UT
 
-		frec_push_def_shutter_fl_lc(
-				idx,
-				sensor_info->def_shutter_lc,
-				sensor_info->def_fl_lc);
+		frec_push_def_shutter_fl_lc(idx,
+			sensor_info->def_shutter_lc,
+			sensor_info->def_fl_lc);
 
 		fs_set_stream(idx, 1);
 
 		/* set/init callback data */
 		fs_init_cb_data(idx, sensor_info->p_ctx, sensor_info->func_ptr);
-	} else {
-		LOG_INF("Stream off [%u] ID:%#x(sidx:%u)\n",
-			idx,
-			sensor_info->sensor_id,
-			sensor_info->sensor_idx);
 
-
-		/* reset fs act cnt */
-		fs_mgr.act_cnt = 0;
-
-
-		fs_reset_ft_mode_data(idx, flag);
-
-
-#if defined(USING_CCU) && !defined(DELAY_CCU_OP)
-		if (FS_CHECK_BIT(idx, &fs_mgr.power_on_ccu_bits) == 1) {
-			FS_WRITE_BIT(idx, flag, &fs_mgr.power_on_ccu_bits);
-
-			LOG_INF("[%u] ID:%#x(sidx:%u), pw_ccu:%d (OFF)\n",
+		/* check if set sync before streaming on */
+		ret = fs_check_set_sync_sidx_table(sensor_info->sensor_idx);
+		if (ret > 0) {
+			LOG_MUST(
+				"NOTICE: [%u] ID:%#x(sidx:%u), apply set sync procedure, due to set_sync_sidx_table[%u]:%d\n",
 				idx,
 				sensor_info->sensor_id,
 				sensor_info->sensor_idx,
-				FS_READ_BITS(&fs_mgr.power_on_ccu_bits));
+				sensor_info->sensor_idx,
+				ret);
 
-			/* power off CCU */
-			frm_power_on_ccu(0);
+			fs_set_sync_idx(idx, ret);
 		}
-#endif // USING_CCU && !DELAY_CCU_OP
+
+	} else {
+		fs_reset_ft_mode_data(idx, flag);
+
+		/* reset/clear set sync sidx table value */
+		fs_update_set_sync_sidx_table(sensor_info->sensor_idx, 0);
+
+		fs_reset_preset_perframe_data(sensor_info->sensor_idx);
 	}
 
-
-#ifndef REDUCE_FS_DRV_LOG
-	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
-	LOG_INF("en:%u, [%u] ID:%#x(sidx:%u)   [streaming_bits:%d]\n",
-		flag,
+	LOG_INF(
+		"[%u] ID:%#x(sidx:%u), flag:%u(ON:1/OFF:0)   [streaming_bits:%d]\n",
 		idx,
 		info.sensor_id,
 		info.sensor_idx,
+		flag,
 		FS_READ_BITS(&fs_mgr.streaming_bits));
-#endif // REDUCE_FS_DRV_LOG
-
-
-#if !defined(FS_UT)
-	if (flag > 0 && fs_con_chk_default_en_set_sync()) {
-		LOG_MUST(
-			"NOTICE: [%u] USER set default enable frame-sync set sync\n",
-			idx);
-
-		fs_set_sync_idx(idx, 1);
-	}
-#endif // FS_UT
 
 	return 0;
 }
 
 
-static inline void fs_notify_sensor_ctrl_setup_complete(unsigned int idx)
+static void fs_notify_sensor_ctrl_setup_complete(unsigned int idx)
 {
-	int is_streaming = 0;
+	unsigned int hw_sync_group_id = FS_HW_SYNC_GROUP_ID_MIN;
 
-#ifndef REDUCE_FS_DRV_LOG
-	struct SensorInfo info = {0}; // for log using
-#endif // REDUCE_FS_DRV_LOG
-
-#if !defined(FS_UT)
-	/* for checking if use HW sensor sync */
-	unsigned int solveIdxs[1] = {idx};
-#endif // FS_UT
-
-	is_streaming = FS_CHECK_BIT(idx, &fs_mgr.streaming_bits);
-
-	if (is_streaming == 1)
-		FS_WRITE_BIT(idx, 1, &fs_mgr.setup_complete_bits);
-
-#ifndef REDUCE_FS_DRV_LOG
-	fs_get_reg_sensor_info(idx, &info);
-
-	if (is_streaming == 0) {
-		LOG_INF("WARNING: [%u] ID:%#x(sidx:%u) is not streaming ON\n",
-			idx,
-			info.sensor_id,
-			info.sensor_idx);
+	if (FS_CHECK_BIT(idx, &fs_mgr.validSync_bits) == 0) {
+		/* no start frame sync, return */
+		return;
 	}
 
+	/* set setup complete */
+	FS_WRITE_BIT(idx, 1, &fs_mgr.setup_complete_bits);
+
+	/* checking for hw sync method */
+	if (FS_CHECK_BIT(idx, &fs_mgr.hw_sync_bits)) {
+		hw_sync_group_id = fs_mgr.hw_sync_group_id[idx];
+
+		if (hw_sync_group_id < FS_HW_SYNC_GROUP_ID_MAX) {
+			/* hw group id is a valid value */
+			FS_WRITE_BIT(idx, 1,
+				&fs_mgr.setup_complete_hw_group_bits[
+					hw_sync_group_id]);
+		}
+	}
+
+
+#if !defined(REDUCE_FS_DRV_LOG)
 	LOG_INF(
-		"[%u] ID:%#x(sidx:%u)  [setup_complete_bits:%d]\n",
+		"[%u] ID:%#x(sidx:%u), hw_sync(bits:%d, group_id:%u)  [setup_complete(%d, hw_group(%d/%d/%d/%d/%d/%d))]\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
-		FS_READ_BITS(&fs_mgr.setup_complete_bits));
-#endif // REDUCE_FS_DRV_LOG
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		FS_READ_BITS(&fs_mgr.hw_sync_bits),
+		fs_mgr.hw_sync_group_id[idx],
+		FS_READ_BITS(&fs_mgr.setup_complete_bits),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_0]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_1]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_2]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_3]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_4]),
+		FS_READ_BITS(
+			&fs_mgr.setup_complete_hw_group_bits[
+				FS_HW_SYNC_GROUP_ID_5]));
+#endif
 
 
 #ifdef SUPPORT_FS_NEW_METHOD
-#if !defined(FS_UT)
-	/* check if use HW sensor sync */
-	if (handle_by_hw_sensor_sync(solveIdxs, 1))
-		return;
-#endif // FS_UT
-
 	/* setup compeleted => tirgger FS standalone method */
-	if (FS_ATOMIC_READ(&fs_mgr.using_sa_ver))
+	if (FS_ATOMIC_READ(&fs_mgr.using_sa_ver)
+		&& !FS_CHECK_BIT(idx, &fs_mgr.hw_sync_bits))
 		fs_try_trigger_frame_sync_sa(idx);
 #endif // SUPPORT_FS_NEW_METHOD
 }
@@ -2392,41 +2875,28 @@ static inline void fs_notify_sensor_ctrl_setup_complete(unsigned int idx)
  */
 void fs_update_auto_flicker_mode(unsigned int ident, unsigned int en)
 {
-#if !defined(REDUCE_FS_DRV_LOG)
-	struct SensorInfo info = {0};
-#endif // REDUCE_FS_DRV_LOG
+	unsigned int idx = 0;
 
-	unsigned int idx = fs_get_reg_sensor_pos(ident);
-
-
+	idx = fs_get_reg_sensor_pos(ident);
 	if (check_idx_valid(idx) == 0) {
-		LOG_PR_WARN("ERROR: [%u] %s is not register, ident:%u\n",
-			idx, REG_INFO, ident);
-
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, en:%u, return\n",
+			idx, REG_INFO, ident, en);
 		return;
 	}
 
-
-	/* 1. update the fs_perframe_st data in fs algo */
+	/* update the fs_perframe_st data in fs algo */
 	fs_alg_set_anti_flicker(idx, en);
 
-
 #if !defined(REDUCE_FS_DRV_LOG)
-	fs_get_reg_sensor_info(idx, &info);
-
 	LOG_INF(
 		"[%u] ID:%#x(sidx:%u), updated flicker_en:%u\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		en
 	);
 #endif // REDUCE_FS_DRV_LOG
-
-
-	/* if this is the last ctrl needed by FrameSync, notify setup complete */
-	/* NOTE: don't bind here, flicker is NOT per-frame ctrl */
-	// fs_notify_sensor_ctrl_setup_complete(idx);
 }
 
 
@@ -2437,42 +2907,27 @@ void fs_update_auto_flicker_mode(unsigned int ident, unsigned int en)
  */
 void fs_update_min_framelength_lc(unsigned int ident, unsigned int min_fl_lc)
 {
-#if !defined(REDUCE_FS_DRV_LOG)
-	struct SensorInfo info = {0};
-#endif // REDUCE_FS_DRV_LOG
+	unsigned int idx = 0;
 
-	unsigned int idx = fs_get_reg_sensor_pos(ident);
-
-
+	idx = fs_get_reg_sensor_pos(ident);
 	if (check_idx_valid(idx) == 0) {
-
-#if !defined(REDUCE_FS_DRV_LOG)
-		LOG_MUST("WARNING: [%u] %s is not register, ident:%u, return\n",
-			idx, REG_INFO, ident);
-#endif // REDUCE_FS_DRV_LOG
-
+		LOG_INF(
+			"NOTICE: [%u] %s is not register, ident:%u, min_fl_lc:%u, return\n",
+			idx, REG_INFO, ident, min_fl_lc);
 		return;
 	}
 
-
-	/* 1. update the fs_perframe_st data in fs algo */
+	/* update the fs_perframe_st data in fs algo */
 	fs_alg_update_min_fl_lc(idx, min_fl_lc);
-
-#if !defined(FS_UT)
 	hw_fs_alg_update_min_fl_lc(idx, min_fl_lc);
-#endif // FS_UT
-
 
 #if !defined(REDUCE_FS_DRV_LOG)
-	fs_get_reg_sensor_info(idx, &info);
-
 	LOG_INF(
 		"[%u] ID:%#x(sidx:%u), updated min_fl_lc:%u\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
-		min_fl_lc
-	);
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
+		min_fl_lc);
 #endif // REDUCE_FS_DRV_LOG
 
 
@@ -2498,11 +2953,9 @@ static inline unsigned int fs_run_frame_sync_proc(
 {
 	unsigned int ret = 0;
 
-#if !defined(FS_UT)
 	if (handle_by_hw_sensor_sync(solveIdxs, len))
 		ret = hw_fs_alg_solve_frame_length(solveIdxs, framelength, len);
 	else
-#endif // FS_UT
 		ret = fs_alg_solve_frame_length(solveIdxs, framelength, len);
 
 	return ret;
@@ -2542,11 +2995,12 @@ unsigned int fs_try_trigger_frame_sync(void)
 
 
 	if (fs_act == 1) {
-		LOG_INF("fs_activate:%u, validSync:%2d, pf_ctrl:%2d, cnt:%u\n",
+		// LOG_INF("fs_activate:%u, validSync:%2d, pf_ctrl:%2d, cnt:%u\n",
+		LOG_INF("fs_activate:%u, validSync:%2d, pf_ctrl:%2d\n",
 			fs_act,
 			FS_READ_BITS(&fs_mgr.validSync_bits),
-			FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
-			++fs_mgr.act_cnt);
+			FS_READ_BITS(&fs_mgr.pf_ctrl_bits));
+			// ++fs_mgr.act_cnt);
 
 
 		/* 1 pick up validSync sensor information correctlly */
@@ -2586,8 +3040,180 @@ unsigned int fs_try_trigger_frame_sync(void)
 }
 
 
+/*
+ * For trigger HW sync Frame-Sync solution
+ *
+ * return:
+ *     pf ctrl that be triggered successfully by Frame-Sync
+ */
+int fs_try_trigger_hw_frame_sync(void)
+{
+	int pf_ctrl_bits = 0, trigger_ctrl_bits = 0;
+	int setup_complete_hw_group_bits = 0;
+	unsigned int i = 0, j = 0, ret = 1;
+	unsigned int len = 0; /* how many sensors wait for doing frame sync */
+	unsigned int solveIdxs[SENSOR_MAX_NUM] = {0};
+	unsigned int fl_lc[SENSOR_MAX_NUM] = {0};
+
+
+	/* trigger Frame-Sync proc by group (find out 1 group) */
+	for (i = FS_HW_SYNC_GROUP_ID_MIN; i < FS_HW_SYNC_GROUP_ID_MAX; ++i) {
+		if (FS_READ_BITS(&fs_mgr.hw_sync_group_bits[i]) == 0)
+			continue;
+
+		do {
+			ret = 1;
+
+			/* reset/clear tmp data for current run */
+			len = 0;
+			for (j = 0; j < SENSOR_MAX_NUM; ++j) {
+				solveIdxs[j] = 0;
+				fl_lc[j] = 0;
+			}
+
+			setup_complete_hw_group_bits =
+				FS_READ_BITS(
+					&fs_mgr.setup_complete_hw_group_bits[i]);
+			pf_ctrl_bits =
+				FS_READ_BITS(&fs_mgr.pf_ctrl_bits) &
+				FS_READ_BITS(&fs_mgr.validSync_bits);
+
+			/* do NOT expect */
+			if (pf_ctrl_bits == 0) {
+				LOG_MUST(
+					"WARNING: try trigger, but validSync:%d, pf_ctrl:%d, setup_complete:%d(%d/%d/%d/%d/%d/%d), abort\n",
+					FS_READ_BITS(&fs_mgr.validSync_bits),
+					FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_bits),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_0]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_1]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_2]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_3]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_4]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_5]));
+
+				ret = 1;
+				break;
+			}
+
+			/* check group match for triggering pf ctrl */
+			trigger_ctrl_bits =
+				(pf_ctrl_bits
+				& FS_READ_BITS(&fs_mgr.hw_sync_group_bits[i]));
+
+			if (trigger_ctrl_bits ==
+				(FS_READ_BITS(&fs_mgr.hw_sync_group_bits[i])
+				& FS_READ_BITS(&fs_mgr.validSync_bits))) {
+
+				LOG_PF_INF(
+					"Trigger group id:%u, cnt:%u, valid_sync:%d, trigger_ctrl:%u/%u, pf_ctrl:%d, setup_complete:%d(%d/%d/%d/%d/%d/%d)\n",
+					i,
+					fs_mgr.act_cnt[i] + 1,
+					FS_READ_BITS(&fs_mgr.validSync_bits),
+					trigger_ctrl_bits,
+					setup_complete_hw_group_bits,
+					FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_bits),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_0]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_1]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_2]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_3]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_4]),
+					FS_READ_BITS(
+						&fs_mgr.setup_complete_hw_group_bits[
+							FS_HW_SYNC_GROUP_ID_5]));
+
+				/* pick up sensor information */
+				for (j = 0; j < SENSOR_MAX_NUM; ++j) {
+					if ((FS_CHECK_BIT(j,
+							&fs_mgr.hw_sync_group_bits[i])
+						& FS_CHECK_BIT(j,
+							&fs_mgr.validSync_bits))
+						== 1) {
+						/* pick up sensor registered location */
+						solveIdxs[len++] = j;
+					}
+				}
+
+				/* run frame sync proc (hw) to solve frame length */
+				ret = hw_fs_alg_solve_frame_length(
+					solveIdxs, fl_lc, len);
+			}
+#ifdef FS_UT
+		} while (
+			!atomic_compare_exchange_weak(
+				&fs_mgr.setup_complete_hw_group_bits[i],
+				&setup_complete_hw_group_bits, 0));
+#else
+		} while (
+			atomic_cmpxchg(
+				&fs_mgr.setup_complete_hw_group_bits[i],
+				setup_complete_hw_group_bits, 0)
+			!= setup_complete_hw_group_bits);
+#endif // FS_UT
+
+
+		/* if this group proc. has some error occurred, */
+		/* move on to next group for preventing */
+		/* each time entering this function jump out at this group */
+		if (ret == 0) { // 0 => no error
+			/* increase frame-sync act cnt */
+			fs_mgr.act_cnt[i]++;
+			break;
+		}
+	}
+
+
+	/* clear pf ctrl & setup complete bits */
+	/* that those ctrls are been triggered */
+	/* and update framelength to frame recorder and then */
+	/* use callback function to set framelength to sensor */
+	if (ret == 0) { // 0 => No error
+		FS_ATOMIC_FETCH_AND(
+			(~(trigger_ctrl_bits)), &fs_mgr.pf_ctrl_bits);
+		FS_ATOMIC_FETCH_AND(
+			(~(trigger_ctrl_bits)), &fs_mgr.setup_complete_bits);
+
+
+		for (j = 0; j < len; ++j) {
+			unsigned int idx = solveIdxs[j];
+
+			/* set framelength */
+			fs_set_framelength_lc(idx, fl_lc[j]);
+		}
+	}
+
+
+	return (ret == 0) ? trigger_ctrl_bits : 0;
+}
+
+
 static void fs_check_frame_sync_ctrl(
-	unsigned int idx, struct fs_perframe_st (*frameCtrl))
+	unsigned int idx, struct fs_perframe_st (*pf_ctrl))
 {
 	/* before doing frame sync, check some situation */
 	unsigned int ret = 0;
@@ -2602,7 +3228,7 @@ static void fs_check_frame_sync_ctrl(
 		LOG_PR_WARN(
 			"WARNING: Not valid for doing sync. [%u] ID:%#x\n",
 			idx,
-			frameCtrl->sensor_id);
+			pf_ctrl->sensor_id);
 #endif // REDUCE_FS_DRV_LOG
 
 		return;
@@ -2616,7 +3242,7 @@ static void fs_check_frame_sync_ctrl(
 		LOG_PR_WARN(
 			"WARNING: Set same sensor, return. [%u] ID:%#x  [pf_ctrl_bits:%d]\n",
 			idx,
-			frameCtrl->sensor_id,
+			pf_ctrl->sensor_id,
 			FS_READ_BITS(&fs_mgr.pf_ctrl_bits));
 
 		return;
@@ -2624,12 +3250,12 @@ static void fs_check_frame_sync_ctrl(
 	} else {
 		FS_WRITE_BIT(idx, 1, &fs_mgr.pf_ctrl_bits);
 
-		fs_set_cb_cmd_id(idx, frameCtrl->cmd_id);
+		fs_set_cb_cmd_id(idx, pf_ctrl->cmd_id);
 
 
 #ifdef FS_SENSOR_CCU_IT
 		/* for frame-sync single cam IT */
-		fs_single_cam_IT(idx, frameCtrl->lineTimeInNs);
+		fs_single_cam_IT(idx, pf_ctrl->lineTimeInNs);
 #endif // FS_SENSOR_CCU_IT
 	}
 
@@ -2646,69 +3272,59 @@ static void fs_check_frame_sync_ctrl(
  *     fs_perframe_st is a settings for a certain sensor.
  *
  * input:
- *     frameCtrl: struct fs_perframe_st*
+ *     pf_ctrl: struct fs_perframe_st*
  */
-void fs_set_shutter(struct fs_perframe_st (*frameCtrl))
+void fs_set_shutter(struct fs_perframe_st (*pf_ctrl))
 {
-	unsigned int ident = 0, idx = 0;
+	unsigned int idx = 0;
+	unsigned int ident = 0;
 
-
-	switch (REGISTER_METHOD) {
-	case BY_SENSOR_ID:
-		ident = frameCtrl->sensor_id;
-		break;
-
-	case BY_SENSOR_IDX:
-		ident = frameCtrl->sensor_idx;
-		break;
-
-	default:
-		ident = frameCtrl->sensor_idx;
-		break;
-	}
-
-
+	ident = fs_get_reg_sensor_ident(pf_ctrl->sensor_id, pf_ctrl->sensor_idx);
 	idx = fs_get_reg_sensor_pos(ident);
-
 	if (check_idx_valid(idx) == 0) {
-
-#if !defined(REDUCE_FS_DRV_LOG)
-		LOG_MUST("WARNING: [%u] %s is not register, ident:%u, return\n",
+		LOG_INF("NOTICE: [%u] %s is not register, ident:%u, return\n",
 			idx, REG_INFO, ident);
-#endif // REDUCE_FS_DRV_LOG
-
 		return;
 	}
 
 	if (FS_CHECK_BIT(idx, &fs_mgr.validSync_bits) == 0) {
-		/* no start frame sync, return */
+		/* not start frame sync, return */
 		return;
 	}
 
 	/* check streaming status, due to maybe calling by non-sync flow */
 	if (FS_CHECK_BIT(idx, &fs_mgr.streaming_bits) == 0) {
-		LOG_INF("WARNING: [%u] is stream off. ID:%#x(sidx:%u), return\n",
+		LOG_INF("NOTICE: [%u] ID:%#x(sidx:%u) is NOT stream ON, return\n",
 			idx,
-			frameCtrl->sensor_id,
-			frameCtrl->sensor_idx);
+			pf_ctrl->sensor_id,
+			pf_ctrl->sensor_idx);
+		return;
+	}
 
+	if (fs_chk_seamless_switch_status(idx)) {
+		LOG_MUST(
+			"NOTICE: [%u] ID:%#x(sidx:%u), (%d/%u), in seamless frame, seamless(%#x, sof_cnt:%u), skip/return\n",
+			idx,
+			pf_ctrl->sensor_id,
+			pf_ctrl->sensor_idx,
+			pf_ctrl->req_id,
+			fs_mgr.sof_cnt_arr[idx],
+			FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+			fs_mgr.seamless_ctrl[idx].seamless_sof_cnt);
 		return;
 	}
 
 
-	//fs_dump_pf_info(frameCtrl);
-
-
-	fs_mgr.pf_ctrl[idx] = *frameCtrl;
+	fs_mgr.pf_ctrl[idx] = *pf_ctrl;
 
 
 #if !defined(FORCE_USING_SA_MODE)
 #if defined(SUPPORT_AUTO_EN_SA_MODE) && !defined(FS_UT)
 	/* check needed SA */
-	if (frameCtrl->hdr_exp.mode_exp_cnt > 0)
-		fs_mgr.ft_mode[idx] |= FS_FT_MODE_STG_HDR;
+	if (pf_ctrl->hdr_exp.mode_exp_cnt > 0)
+		fs_mgr.hdr_ft_mode[idx] |= FS_HDR_FT_MODE_STG_HDR;
 	else
-		fs_mgr.ft_mode[idx] &= ~FS_FT_MODE_STG_HDR;
+		fs_mgr.hdr_ft_mode[idx] &= ~FS_HDR_FT_MODE_STG_HDR;
 
 
 	fs_decision_maker(idx);
@@ -2721,103 +3337,141 @@ void fs_set_shutter(struct fs_perframe_st (*frameCtrl))
 
 
 	/* 1. set perframe ctrl data to fs algo */
-	fs_alg_set_perframe_st_data(idx, frameCtrl);
-
-#if !defined(FS_UT)
-	hw_fs_alg_set_perframe_st_data(idx, frameCtrl);
-#endif // FS_UT
+	fs_alg_set_perframe_st_data(idx, pf_ctrl);
+	hw_fs_alg_set_perframe_st_data(idx, pf_ctrl);
 
 
 #ifdef FS_UT
-	/* only do when FS_UT */
-	/* In normal run, use data send from sensor driver directly */
-	/* 2. call fs algo api to simulate the result of write_shutter() */
-	frameCtrl->out_fl_lc = fs_alg_write_shutter(idx);
+	pf_ctrl->out_fl_lc = fs_alg_write_shutter(idx);
 #endif // FS_UT
 
 
 #if !defined(QUERY_CCU_TS_AT_SOF)
 	/* 3. push frame settings into frame recorder */
-	frec_push_record(idx, frameCtrl->shutter_lc, frameCtrl->out_fl_lc);
+	frec_push_record(idx, pf_ctrl->shutter_lc, pf_ctrl->out_fl_lc);
 #else
 	/* 3. update frame recorder data */
 	frec_update_shutter_fl_lc(idx,
-		frameCtrl->shutter_lc, frameCtrl->out_fl_lc);
+		pf_ctrl->shutter_lc, pf_ctrl->out_fl_lc);
 #endif // QUERY_CCU_TS_AT_SOF
 
 
 	/* 4. frame sync ctrl */
-	fs_check_frame_sync_ctrl(idx, frameCtrl);
+	fs_check_frame_sync_ctrl(idx, pf_ctrl);
 
 
 #ifdef USING_V4L2_CTRL_REQUEST_SETUP
-	/* if this is the last ctrl needed by FrameSync, notify setup complete*/
-	/* for N3D and not using v4l2_ctrl_request_setup*/
+	/* if this is the last ctrl needed by FrameSync, notify setup complete */
 	fs_notify_sensor_ctrl_setup_complete(idx);
 #endif // USING_V4L2_CTRL_REQUEST_SETUP
 }
 
 
-void fs_update_shutter(struct fs_perframe_st (*frameCtrl))
+void fs_update_shutter(struct fs_perframe_st (*pf_ctrl))
 {
-	unsigned int ident = 0, idx = 0;
+	unsigned int idx = 0;
+	unsigned int ident = 0;
 
+	fs_set_preset_perframe_data(pf_ctrl->sensor_idx, pf_ctrl);
 
-	switch (REGISTER_METHOD) {
-	case BY_SENSOR_ID:
-		ident = frameCtrl->sensor_id;
-		break;
-
-	case BY_SENSOR_IDX:
-		ident = frameCtrl->sensor_idx;
-		break;
-
-	default:
-		ident = frameCtrl->sensor_idx;
-		break;
-	}
-
-
+	ident = fs_get_reg_sensor_ident(pf_ctrl->sensor_id, pf_ctrl->sensor_idx);
 	idx = fs_get_reg_sensor_pos(ident);
-
 	if (check_idx_valid(idx) == 0) {
-
-#if !defined(REDUCE_FS_DRV_LOG)
-		LOG_MUST("WARNING: [%u] %s is not register, ident:%u, return\n",
+		LOG_INF("NOTICE: [%u] %s is not register, ident:%u, return\n",
 			idx, REG_INFO, ident);
-#endif // REDUCE_FS_DRV_LOG
-
 		return;
 	}
 
 	if (FS_CHECK_BIT(idx, &fs_mgr.validSync_bits) == 0) {
-		/* no start frame sync, return */
+		/* not start frame sync, return */
 		return;
 	}
 
 	/* check streaming status, due to maybe calling by non-sync flow */
 	if (FS_CHECK_BIT(idx, &fs_mgr.streaming_bits) == 0) {
-		LOG_INF("WARNING: [%u] is stream off. ID:%#x(sidx:%u), return\n",
+		LOG_INF("NOTICE: [%u] ID:%#x(sidx:%u) is NOT stream ON, return\n",
 			idx,
-			frameCtrl->sensor_id,
-			frameCtrl->sensor_idx);
-
+			pf_ctrl->sensor_id,
+			pf_ctrl->sensor_idx);
 		return;
 	}
 
+	if (fs_chk_seamless_switch_status(idx)) {
+		LOG_MUST(
+			"NOTICE: [%u] ID:%#x(sidx:%u), (%d/%u), in seamless frame, seamless(%#x, sof_cnt:%u), skip/return\n",
+			idx,
+			pf_ctrl->sensor_id,
+			pf_ctrl->sensor_idx,
+			pf_ctrl->req_id,
+			fs_mgr.sof_cnt_arr[idx],
+			FS_ATOMIC_READ(&fs_mgr.seamless_bits),
+			fs_mgr.seamless_ctrl[idx].seamless_sof_cnt);
+		return;
+	}
 
-	//fs_dump_pf_info(frameCtrl);
-
-
-	fs_mgr.pf_ctrl[idx] = *frameCtrl;
-
+	// fs_mgr.pf_ctrl[idx] = *pf_ctrl;
+	/* ONLY update frame length value (we care this value) */
+	/* Not modify other data that getting from set shutter API */
+	/* (HW sync flow will pass in data that almost 0, except FL) */
+	fs_mgr.pf_ctrl[idx].out_fl_lc = pf_ctrl->out_fl_lc;
 
 	/* update frame recorder data */
-	frec_update_shutter_fl_lc(idx, 0, frameCtrl->out_fl_lc);
+	frec_update_shutter_fl_lc(idx, 0, pf_ctrl->out_fl_lc);
 }
 
 
-void fs_notify_vsync(unsigned int ident)
+void fs_get_fl_record_info(const unsigned int ident,
+	unsigned int *p_target_min_fl_us, unsigned int *p_out_fl_us)
+{
+	const unsigned int idx = fs_get_reg_sensor_pos(ident);
+
+	/* error handling (unexpected case) */
+	if (check_idx_valid(idx) == 0) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, ident:%u, return\n",
+			idx, REG_INFO, ident);
+		return;
+	}
+
+	fs_alg_get_fl_rec_st_info(idx, p_target_min_fl_us, p_out_fl_us);
+}
+
+
+#if !defined(FS_UT)
+static void fs_debug_hw_sync(unsigned int idx)
+{
+	unsigned int arr[1] = {idx};
+
+	fs_alg_setup_frame_monitor_fmeas_data(idx);
+	frec_notify_vsync(idx);
+	fs_alg_get_vsync_data(arr, 1);
+	// fs_alg_sa_notify_vsync(idx);
+
+	hw_fs_dump_dynamic_para(idx);
+}
+#endif // !FS_UT
+
+
+void fs_set_debug_info_sof_cnt(const unsigned int ident,
+	const unsigned int sof_cnt)
+{
+	unsigned int idx = fs_get_reg_sensor_pos(ident);
+
+	/* error handling (unexpected case) */
+	if (unlikely(check_idx_valid(idx) == 0)) {
+		LOG_MUST(
+			"NOTICE: [%u] %s is not register, return\n",
+			idx, REG_INFO);
+		return;
+	}
+
+	/* update debug info */
+	fs_mgr.sof_cnt_arr[idx] = sof_cnt;
+	fs_alg_set_debug_info_sof_cnt(idx, sof_cnt);
+}
+
+
+void fs_notify_vsync(const unsigned int ident, const unsigned int sof_cnt)
 {
 #if !defined(FS_UT)
 	unsigned int listen_vsync_usr = fs_con_get_usr_listen_ext_vsync();
@@ -2825,13 +3479,25 @@ void fs_notify_vsync(unsigned int ident)
 	unsigned int idx = fs_get_reg_sensor_pos(ident);
 
 
-	if (check_idx_valid(idx) == 0) {
+	if (unlikely(check_idx_valid(idx) == 0)) {
 		/* not register/streaming on */
 		return;
 	}
 
 	if (FS_CHECK_BIT(idx, &fs_mgr.validSync_bits) == 0) {
 		/* no start frame sync, return */
+		return;
+	}
+
+	if (FS_CHECK_BIT(idx, &fs_mgr.hw_sync_bits)) {
+		/* using hw sensor sync, not doing sw sync flow */
+		fs_debug_hw_sync(idx);
+		return;
+	}
+
+	if (FS_CHECK_BIT(idx, &fs_mgr.hw_sync_bits)) {
+		/* using hw sensor sync, not doing sw sync flow */
+		fs_debug_hw_sync(idx);
 		return;
 	}
 
@@ -2850,7 +3516,15 @@ void fs_notify_vsync(unsigned int ident)
 #endif // QUERY_CCU_TS_AT_SOF
 
 
-#endif // FS_UT
+	/* update debug info --- sof cnt */
+	fs_set_debug_info_sof_cnt(ident, sof_cnt);
+
+
+	/* check special ctrl (e.g., seamless switch) */
+	fs_chk_valid_for_doing_seamless_switch(ident);
+	fs_chk_exit_seamless_switch_frame(ident);
+
+#endif // !FS_UT
 }
 
 
@@ -2865,19 +3539,19 @@ void fs_notify_vsync(unsigned int ident)
  *
  * header file:
  *     frame_sync_camsys.h
+ *
+ * descriptions:
+ *     By default, SW Frame-Sync Algo is using SA algo,
+ *     so this function now is only for HW Frame-Sync Algo using.
  */
 unsigned int fs_sync_frame(unsigned int flag)
 {
+#if defined(FS_UT)
+	unsigned int pf_log_tracer = 1;
+#endif
+
 	enum FS_STATUS status = get_fs_status();
-	unsigned int triggered = 0;
-
-#ifdef ALL_USING_ATOMIC
-	int valid_sync = 0;
-	int last_pf_ctrl = 0, last_setup_complete = 0;
-
-
-	valid_sync = FS_ATOMIC_READ(&fs_mgr.validSync_bits);
-#endif // ALL_USING_ATOMIC
+	int valid_sync = FS_ATOMIC_READ(&fs_mgr.validSync_bits);
 
 
 #if !defined(FS_UT)
@@ -2886,150 +3560,55 @@ unsigned int fs_sync_frame(unsigned int flag)
 		return 0;
 #endif // FS_UT
 
-
 #ifdef SUPPORT_FS_NEW_METHOD
-	/* check using FS standalone mode => do nothing here */
-	if (FS_ATOMIC_READ(&fs_mgr.using_sa_ver) != 0) {
-
-#if !defined(REDUCE_FS_DRV_LOG)
-		/* (LOG) show new status and pf_ctrl_bits value */
-		LOG_MUST(
-			"[Start:%u] streaming:%d, enSync:%d, validSync:%d, pf_ctrl:%d(last:%d), setup_complete:%d(last:%d) [FS SA mode]\n",
-			flag,
-			status,
-			FS_READ_BITS(&fs_mgr.streaming_bits),
-			FS_READ_BITS(&fs_mgr.enSync_bits),
-			FS_READ_BITS(&fs_mgr.validSync_bits),
-			FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
-			FS_READ_BITS(&fs_mgr.last_pf_ctrl_bits),
-			FS_READ_BITS(&fs_mgr.setup_complete_bits),
-			FS_READ_BITS(&fs_mgr.last_setup_complete_bits));
-#endif // REDUCE_FS_DRV_LOG
-
+	if (FS_READ_BITS(&fs_mgr.hw_sync_bits) == 0
+		&& (FS_ATOMIC_READ(&fs_mgr.using_sa_ver) != 0
+			|| fs_user_sa_config())) {
+		/* Only using SW soltuion and using SA algo for Frame-Sync */
 		return 0;
 	}
 #endif // SUPPORT_FS_NEW_METHOD
 
 
 	/* check sync frame start/end */
-	/*     flag > 0  : start sync frame */
-	/*     flag == 0 : end sync frame */
+	/*     flag > 0 : cam-sys call - start sync frame */
+	/*     flag = 0 : cam-sys call - end sync frame */
 	if (flag > 0) {
 		/* check status is ready for starting sync frame or not */
 		if (status < FS_WAIT_FOR_SYNCFRAME_START) {
-			LOG_MUST(
-				"[Start:%u] ERROR: stat:%u, streaming:%d, enSync:%d, validSync:%d, pf_ctrl:%d(last:%d), setup_complete:%d(last:%d)\n",
-				flag,
-				status,
-				FS_READ_BITS(&fs_mgr.streaming_bits),
-				FS_READ_BITS(&fs_mgr.enSync_bits),
-				FS_READ_BITS(&fs_mgr.validSync_bits),
-				FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
-				FS_READ_BITS(&fs_mgr.last_pf_ctrl_bits),
-				FS_READ_BITS(&fs_mgr.setup_complete_bits),
-				FS_READ_BITS(&fs_mgr.last_setup_complete_bits));
-
+			fs_dump_status(-1, flag, __func__, "Start:1 Notice");
 			return 0;
 		}
 
-		/* ready for sync -> update status */
-		change_fs_status(FS_START_TO_GET_PERFRAME_CTRL);
-
-
-		/* log --- show new status and all bits value */
-		status = get_fs_status();
-
-		LOG_INF(
-			"[Start:%u] stat:%u, streaming:%d, enSync:%d, validSync:%d, pf_ctrl:%d(last:%d), setup_complete:%d(last:%d)\n",
-			flag,
-			status,
-			FS_READ_BITS(&fs_mgr.streaming_bits),
-			FS_READ_BITS(&fs_mgr.enSync_bits),
-			FS_READ_BITS(&fs_mgr.validSync_bits),
-			FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
-			FS_READ_BITS(&fs_mgr.last_pf_ctrl_bits),
-			FS_READ_BITS(&fs_mgr.setup_complete_bits),
-			FS_READ_BITS(&fs_mgr.last_setup_complete_bits));
-
+		if (unlikely(pf_log_tracer))
+			fs_dump_status(-1, flag, __func__, "Start:1");
 
 		/* return the number of valid sync sensors */
-#ifndef ALL_USING_ATOMIC
-		return FS_POPCOUNT(fs_mgr.validSync_bits);
-#else
 		return FS_POPCOUNT(valid_sync);
-#endif // ALL_USING_ATOMIC
 
 	} else {
 		/* fs_sync_frame(0) flow */
+		fs_mgr.last_pf_ctrl_bits =
+			FS_READ_BITS(&fs_mgr.pf_ctrl_bits);
+		fs_mgr.last_setup_complete_bits =
+			FS_READ_BITS(&fs_mgr.setup_complete_bits);
 
-		/* 1. check fs status */
-		if (status != FS_START_TO_GET_PERFRAME_CTRL) {
-			LOG_MUST(
-				"[Start:%u] ERROR: stat:%u, streaming:%d, enSync:%d, validSync:%d, pf_ctrl:%d(%d), setup_complete:%d(%d)\n",
-				flag,
-				status,
-				FS_READ_BITS(&fs_mgr.streaming_bits),
-				FS_READ_BITS(&fs_mgr.enSync_bits),
-				FS_READ_BITS(&fs_mgr.validSync_bits),
-				FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
-				FS_READ_BITS(&fs_mgr.last_pf_ctrl_bits),
-				FS_READ_BITS(&fs_mgr.setup_complete_bits),
-				FS_READ_BITS(&fs_mgr.last_setup_complete_bits));
+		/* try to trigger frame sync processing */
+		fs_mgr.trigger_ctrl_bits =
+			// fs_try_trigger_frame_sync();
+			fs_try_trigger_hw_frame_sync();
 
-			return 0;
+		if (likely(fs_mgr.trigger_ctrl_bits)) {
+			/* framesync trigger DONE */
+			if (pf_log_tracer)
+				fs_dump_status(-1, flag, __func__, "Start:0 DONE");
+		} else {
+			/* framesync trigger FAIL */
+			fs_dump_status(-1, flag, __func__, "Start:0 WARNING: FAIL");
 		}
-
-
-		/* 2. check for running frame sync processing or not */
-		triggered = fs_try_trigger_frame_sync();
-
-		if (triggered) {
-			/* 2-1. update status */
-			change_fs_status(FS_WAIT_FOR_SYNCFRAME_START);
-
-
-			/* 2-2. framesync trigger complete */
-			/*      , clear pf_ctrl_bits, setup_complete_bits */
-#ifndef ALL_USING_ATOMIC
-			fs_mgr.last_pf_ctrl_bits = fs_mgr.pf_ctrl_bits;
-			fs_mgr.last_setup_complete_bits =
-						fs_mgr.setup_complete_bits;
-
-			clear_all_bit(&fs_mgr.pf_ctrl_bits);
-			clear_all_bit(&fs_mgr.setup_complete_bits);
-#else
-			last_pf_ctrl =
-				FS_ATOMIC_XCHG(0, &fs_mgr.pf_ctrl_bits);
-			FS_ATOMIC_SET(last_pf_ctrl,
-				&fs_mgr.last_pf_ctrl_bits);
-
-			last_setup_complete =
-				FS_ATOMIC_XCHG(0, &fs_mgr.setup_complete_bits);
-			FS_ATOMIC_SET(last_setup_complete,
-				&fs_mgr.last_setup_complete_bits);
-#endif // ALL_USING_ATOMIC
-
-
-			/* 2-3. (LOG) show new status and pf_ctrl_bits value */
-			status = get_fs_status();
-
-			LOG_INF(
-				"[Start:%u] stat:%u, pf_ctrl:%d->%d, ctrl_setup_complete:%d->%d\n",
-				flag,
-				status,
-				FS_READ_BITS(&fs_mgr.last_pf_ctrl_bits),
-				FS_READ_BITS(&fs_mgr.pf_ctrl_bits),
-				FS_READ_BITS(&fs_mgr.last_setup_complete_bits),
-				FS_READ_BITS(&fs_mgr.setup_complete_bits));
-		}
-
 
 		/* return the number of perframe ctrl sensors */
-#ifndef ALL_USING_ATOMIC
-		return FS_POPCOUNT(fs_mgr.last_pf_ctrl_bits);
-#else
-		return FS_POPCOUNT(last_pf_ctrl);
-#endif // ALL_USING_ATOMIC
+		return FS_POPCOUNT(fs_mgr.trigger_ctrl_bits);
 	}
 }
 #if !defined(FS_UT)
@@ -3050,9 +3629,6 @@ static void fs_single_cam_IT(unsigned int idx, unsigned int line_time_ns)
 	unsigned int idxs[TG_MAX_NUM] = {0};
 	unsigned int fl_lc = 0;
 
-	struct SensorInfo info = {0}; // for log using
-
-
 	/* 1. query timestamp from CCU */
 	idxs[0] = idx;
 
@@ -3066,11 +3642,10 @@ static void fs_single_cam_IT(unsigned int idx, unsigned int line_time_ns)
 	fl_lc = convert2LineCount(line_time_ns, fl_lc);
 
 	/* log print info */
-	fs_get_reg_sensor_info(idx, &info);
 	LOG_INF("[FS IT] [%u] ID:%#x(sidx:%u) set FL:%u(%u), lineTimeInNs:%u\n",
 		idx,
-		info.sensor_id,
-		info.sensor_idx,
+		fs_get_reg_sensor_id(idx),
+		fs_get_reg_sensor_idx(idx),
 		fl_table[fl_table_idxs[idx]],
 		fl_lc,
 		line_time_ns);
@@ -3098,20 +3673,27 @@ static void fs_single_cam_IT(unsigned int idx, unsigned int line_time_ns)
 static struct FrameSync frameSync = {
 	fs_streaming,
 	fs_set_sync,
+	fs_sa_set_user_async_master,
 	fs_sync_frame,
 	fs_set_shutter,
 	fs_update_shutter,
 	fs_update_tg,
+	fs_update_target_tg,
 	fs_update_auto_flicker_mode,
 	fs_update_min_framelength_lc,
 	fs_set_extend_framelength,
+	fs_chk_exit_seamless_switch_frame,
+	fs_chk_valid_for_doing_seamless_switch,
 	fs_seamless_switch,
 	fs_set_using_sa_mode,
 	fs_set_frame_tag,
 	fs_n_1_en,
 	fs_mstream_en,
+	fs_set_debug_info_sof_cnt,
 	fs_notify_vsync,
-	fs_is_set_sync
+	fs_is_set_sync,
+	fs_is_hw_sync,
+	fs_get_fl_record_info
 };
 
 

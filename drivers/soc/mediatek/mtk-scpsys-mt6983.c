@@ -22,16 +22,18 @@
 #include <dt-bindings/power/mt6983-power.h>
 
 /* Define MTCMOS Bus Protect Mask */
+#define AUDIO_PROT_STEP1_0_MASK		(BIT(20) | BIT(22))
+#define AUDIO_PROT_STEP1_0_ACK_MASK		(BIT(20) | BIT(22))
 #define ADSP_INFRA_PROT_STEP1_0_MASK     ((0x1 << 18) | (0x1 << 19) | \
-					(0x1 << 22) | (0x1 << 26) | (0x1 << 27) | (0x1 << 28) | \
+					(0x1 << 26) | (0x1 << 27) | (0x1 << 28) | \
 					(0x1 << 29) | (0x1 << 30))
 #define ADSP_INFRA_PROT_STEP1_0_ACK_MASK   ((0x1 << 18) | (0x1 << 19) | \
-					(0x1 << 22) | (0x1 << 26) | (0x1 << 27) | (0x1 << 28) | \
+					(0x1 << 26) | (0x1 << 27) | (0x1 << 28) | \
 					(0x1 << 29) | (0x1 << 30))
 #define ADSP_INFRA_PROT_STEP1_1_MASK     ((0x1 << 8))
 #define ADSP_INFRA_PROT_STEP1_1_ACK_MASK   ((0x1 << 8))
-#define ADSP_INFRA_PROT_STEP2_0_MASK     ((0x1 << 20) | (0x1 << 21) | (0x1 << 25) | (0x1 << 31))
-#define ADSP_INFRA_PROT_STEP2_0_ACK_MASK   ((0x1 << 20) | (0x1 << 21) | (0x1 << 25) | (0x1 << 31))
+#define ADSP_INFRA_PROT_STEP2_0_MASK     ((0x1 << 21) | (0x1 << 25) | (0x1 << 31))
+#define ADSP_INFRA_PROT_STEP2_0_ACK_MASK   ((0x1 << 21) | (0x1 << 25) | (0x1 << 31))
 #define ADSP_INFRA_PROT_STEP2_1_MASK     ((0x1 << 4) | (0x1 << 5))
 #define ADSP_INFRA_PROT_STEP2_1_ACK_MASK   ((0x1 << 4) | (0x1 << 5))
 #define ADSP_TOP_PROT_STEP1_0_MASK       ((0x1 << 14) | (0x1 << 15) | (0x1 << 16) | (0x1 << 17))
@@ -467,6 +469,10 @@ static const struct scp_domain_data scp_domain_data_mt6983[] = {
 		.sram_pdn_bits = GENMASK(8, 8),
 		.sram_pdn_ack_bits = GENMASK(12, 12),
 		.basic_clk_name = {"audio_0", "audio_1"},
+		.bp_table = {
+			BUS_PROT_IGN(VLP_TYPE, 0x0214, 0x0218, 0x0210, 0x0220,
+				AUDIO_PROT_STEP1_0_MASK),
+		},
 		.caps = MTK_SCPD_IS_PWR_CON_ON | MTK_SCPD_BYPASS_INIT_ON,
 	},
 	[MT6983_POWER_DOMAIN_ISP_MAIN] = {

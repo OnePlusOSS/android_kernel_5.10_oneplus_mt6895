@@ -211,6 +211,14 @@ config BLK_INLINE_ENCRYPTION_FALLBACK
 	  by falling back to the kernel crypto API when inline
 	  encryption hardware is not present.
 
+config SCSI_BATCH_UNMAP
+	bool
+	depends on BLOCK
+	default y
+	help
+	  Enabling this feature that it can support unmapping one or more LBA range
+	  in single UNMAP command as SPEC.
+
 menu "Partition Types"
 
 source "block/partitions/Kconfig"

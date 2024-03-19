@@ -24,6 +24,14 @@
 #include <mtk_lpm_sysfs.h>
 #include <mt6983_cond.h>
 
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+//add for mtk connectivity power monitor
+#include <linux/miscdevice.h>
+#include <linux/fs.h>
+#include <linux/workqueue.h>
+#include <linux/jiffies.h>
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
+
 #define MT6983_LOG_DEFAULT_MS		5000
 
 #define PCM_32K_TICKS_PER_SEC		(32768)
@@ -169,6 +177,77 @@ static struct lpm_log_helper mt6983_log_help = {
 	.prev = 0,
 };
 
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+//add for mtk connectivity power monitor
+#define RET_ERR  1
+#define RET_OK  0
+#define OPLUS_26M_PCT_GAP	50
+#define OPLUS_TIME_GAP	PCM_32K_TICKS_PER_SEC
+
+static struct miscdevice lpm_object;
+static struct workqueue_struct *mQueue = NULL;
+static struct delayed_work mWork;
+static char mUevent[256] = {'\0'};
+static unsigned long mWakeupLast = OPLUS_TIME_GAP;
+
+static void oplusWorkHandler(struct work_struct *data)
+{
+        char *envp[2];
+
+        if (mUevent[0] == '\0')
+                return;
+
+        envp[0] = mUevent;
+        envp[1] = NULL;
+        kobject_uevent_env(
+                &lpm_object.this_device->kobj,
+                KOBJ_CHANGE, envp);
+}
+
+int oplusLpmUeventInit(void)
+{
+        u_int8_t ret = RET_OK;
+
+        if (lpm_object.this_device != NULL) {
+                return RET_OK;
+        }
+        lpm_object.name = "lpm";
+        lpm_object.minor = MISC_DYNAMIC_MINOR;
+        ret = misc_register(&lpm_object);
+        if (ret == RET_OK) {
+                ret = kobject_uevent(&lpm_object.this_device->kobj, KOBJ_ADD);
+                if (ret != RET_OK) {
+                        misc_deregister(&lpm_object);
+                        return RET_ERR;
+                }
+        }
+	if (mQueue == NULL) {
+		mQueue = create_singlethread_workqueue("oplus_conn_uevent");
+		INIT_DELAYED_WORK(&mWork, oplusWorkHandler);
+	}
+
+        return ret;
+}
+
+int oplusLpmSendUevent(const char *src)
+{
+        if (lpm_object.this_device == NULL) {
+                return RET_ERR;
+        }
+	if (src == NULL) {
+		return RET_ERR;
+	}
+
+	strlcpy(mUevent, src, sizeof(mUevent));
+	if (mQueue) {
+		queue_delayed_work(mQueue, &mWork, msecs_to_jiffies(200));
+	} else {
+		schedule_delayed_work(&mWork, msecs_to_jiffies(200));
+	}
+
+	return RET_OK;
+}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 
 #define IRQ_NUMBER	\
 	(sizeof(mt6983_spm_wakesrc_irqs)/sizeof(struct spm_wakesrc_irq_list))
@@ -689,6 +768,19 @@ static int lpm_show_message(int type, const char *prefix, void *data)
 				plat_mmio_read(SYS_TIMER_VALUE_L),
 				plat_mmio_read(SYS_TIMER_VALUE_H),
 				spm_26M_off_pct);
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+			//add for mtk connectivity power monitor
+			if ((wakesrc->r13 & (R13_CONN_DDR_EN|R13_CONN_STATE|R13_CONN_SRCCKENA|R13_CONN_APSRC_REQ|R13_CONN_SRCCLKENB))
+				&& (spm_26M_off_pct < OPLUS_26M_PCT_GAP)) {
+				mWakeupLast += wakesrc->timer_out;
+				if (mWakeupLast >= OPLUS_TIME_GAP) {
+					char uevent[100] = {'\0'};
+					snprintf(uevent, sizeof(uevent), "lpm=src:%s;r13:%d;timer_out:%d;26M_off_pct:%d;", buf, wakesrc->r13, wakesrc->timer_out, spm_26M_off_pct);
+					oplusLpmSendUevent(uevent);
+					mWakeupLast = 0;
+				}
+			}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 		}
 	}
 	WARN_ON(log_size >= LOG_BUF_OUT_SZ);
@@ -724,6 +816,14 @@ int mt6983_dbg_ops_register(void)
 {
 	int ret;
 
+
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+	//add for mtk connectivity power monitor
+	ret = oplusLpmUeventInit();
+	if (ret != 0) {
+		pr_info("oplusLpmUeventInit error");
+	}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 	ret = lpm_dbg_plat_ops_register(&mt6983_dbg_ops);
 
 	return ret;

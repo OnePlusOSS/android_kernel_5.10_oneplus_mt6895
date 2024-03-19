@@ -47,8 +47,8 @@
 	sd-uhs-sdr104;
 	sd-uhs-ddr50;
 	cd-debounce-delay-ms = <0>;
-	cd-gpios = <&pio 7 GPIO_ACTIVE_LOW>;
-	vmmc-supply = <&mt6358_vmch_eint_high>;
+	cd-gpios = <&pio 7 GPIO_ACTIVE_HIGH>;
+	vmmc-supply = <&mt6358_vmch_eint_low>;
 	vqmmc-supply = <&mt6358_vmc_reg>;
 	no-mmc;
 	dvfsrc-vcore-supply = <&dvfsrc_vcore>;

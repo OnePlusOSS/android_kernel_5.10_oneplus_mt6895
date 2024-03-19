@@ -186,7 +186,7 @@ static const struct hdr_data mt6895_hdr_data = {
 	.min_tile_width = 16,
 	.cpr = {CMDQ_CPR_MML_PQ0_ADDR, CMDQ_CPR_MML_PQ1_ADDR},
 	.gpr = {CMDQ_GPR_R08, CMDQ_GPR_R10},
-	.vcp_readback = true,
+	.vcp_readback = false,
 };
 
 struct mml_comp_hdr {
@@ -387,19 +387,27 @@ static s32 hdr_config_frame(struct mml_comp *comp, struct mml_task *task,
 	}
 	hdr_relay(pkt, base_pa, 0x0);
 
-	ret = mml_pq_get_comp_config_result(task, HDR_WAIT_TIMEOUT_MS);
+	ret = mml_pq_get_comp_config_result(task, CONFIG_FRAME_WAIT_TIME_MS);
+
 	if (ret) {
 		mml_pq_comp_config_clear(task);
-		mml_pq_err("get hdr param timeout: %d in %dms",
-			ret, HDR_WAIT_TIMEOUT_MS);
+		mml_pq_err("%s get hdr param timeout: %d in %dms",
+			__func__, ret, CONFIG_FRAME_WAIT_TIME_MS);
 		ret = -ETIMEDOUT;
-		goto err;
 	}
 
 	result = get_hdr_comp_config_result(task);
 	if (!result) {
 		mml_pq_err("%s: not get result from user lib", __func__);
 		ret = -EBUSY;
+		hdr_frm->config_success = false;
+		goto err;
+	}
+
+	if (!result->hdr_reg_cnt) {
+		hdr_frm->config_success = false;
+		mml_pq_err("%s: not get correct reg count", __func__);
+		hdr_relay(pkt, base_pa, 0x1);
 		goto err;
 	}
 
@@ -505,6 +513,11 @@ static s32 hdr_config_tile(struct mml_comp *comp, struct mml_task *task,
 		hdr_hist_end_x = hdr_frm->cut_pos_x - tile->in.xs - 1;
 	else
 		hdr_hist_end_x = tile->out.xe - tile->in.xs;
+
+	if (tile->in.xs + hdr_hist_begin_x > tile->in.xe)
+		hdr_hist_begin_x = tile->in.xe - tile->in.xs;
+	if (hdr_hist_end_x < hdr_hist_begin_x)
+		hdr_hist_end_x = hdr_hist_begin_x;
 
 	cmdq_pkt_write(pkt, NULL, base_pa + HDR_HIST_CTRL_0, hdr_hist_begin_x, 0x0000ffff);
 	cmdq_pkt_write(pkt, NULL, base_pa + HDR_HIST_CTRL_1, hdr_hist_end_x, 0x0000ffff);
@@ -743,7 +756,6 @@ static s32 hdr_reconfig_frame(struct mml_comp *comp, struct mml_task *task,
 		mml_pq_err("get hdr param timeout: %d in %dms",
 			ret, HDR_WAIT_TIMEOUT_MS);
 		ret = -ETIMEDOUT;
-		goto err;
 	}
 
 	result = get_hdr_comp_config_result(task);
@@ -770,8 +782,6 @@ static s32 hdr_reconfig_frame(struct mml_comp *comp, struct mml_task *task,
 	mml_pq_msg("%s is_hdr_need_readback[%d]",
 		__func__, result->is_hdr_need_readback);
 	hdr_frm->is_hdr_need_readback = result->is_hdr_need_readback;
-
-	return 0;
 
 err:
 	return ret;
@@ -954,6 +964,8 @@ static void hdr_task_done_readback(struct mml_comp *comp, struct mml_task *task,
 	if (vcp) {
 		mml_pq_put_vcp_buf_offset(task, engine, task->pq_task->hdr_hist[pipe]);
 		cmdq_vcp_enable(false);
+		kfree(task->pq_task->hdr_hist[pipe]);
+		task->pq_task->hdr_hist[pipe] = NULL;
 	} else
 		mml_pq_put_readback_buffer(task, pipe, task->pq_task->hdr_hist[pipe]);
 exit:
