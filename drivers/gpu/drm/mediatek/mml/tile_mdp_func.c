@@ -1037,7 +1037,8 @@ enum isp_tile_message tile_wrot_back(struct tile_func_block *ptr_func,
 			full_size_x_out = data->crop.left + data->crop.width;
 
 			if (ptr_func->out_pos_xe + 1 >= full_size_x_out) {
-				ptr_func->in_pos_xe = full_size_x_out - 1;
+				ptr_func->out_pos_xe = full_size_x_out - 1;
+				ptr_func->in_pos_xe = ptr_func->out_pos_xe;
 				/* ptr_func->h_end_flag = true; */
 			}
 		}
@@ -1046,11 +1047,9 @@ enum isp_tile_message tile_wrot_back(struct tile_func_block *ptr_func,
 			if (ptr_func->out_pos_xe + 1 < full_size_x_out &&
 			    ptr_func->out_pos_xe + 9 + 1 > full_size_x_out &&
 			    ptr_func->out_pos_xe != ptr_func->out_pos_xs) {
-				ptr_func->out_pos_xe = full_size_x_out - 9 - 1;
-				ptr_func->in_pos_xe  = full_size_x_out - 9 - 1;
-
-				ptr_func->out_pos_xe = ((ptr_func->out_pos_xe + 1) >> 2 << 2) - 1;
-				ptr_func->in_pos_xe  = ((ptr_func->in_pos_xe + 1) >> 2 << 2) - 1;
+				ptr_func->out_pos_xe =
+					((full_size_x_out - 9 - 1 + 1) >> 2 << 2) - 1;
+				ptr_func->in_pos_xe = ptr_func->out_pos_xe;
 			}
 		}
 
@@ -1076,7 +1075,8 @@ enum isp_tile_message tile_wrot_back(struct tile_func_block *ptr_func,
 			full_size_y_out = data->crop.top + data->crop.height;
 
 			if (ptr_func->out_pos_ye + 1 >= full_size_y_out) {
-				ptr_func->in_pos_ye = full_size_y_out - 1;
+				ptr_func->out_pos_ye = full_size_y_out - 1;
+				ptr_func->in_pos_ye = ptr_func->out_pos_ye;
 				/* ptr_func->v_end_flag = true; */
 			}
 		}
@@ -1133,7 +1133,8 @@ enum isp_tile_message tile_dlo_back(struct tile_func_block *ptr_func,
 			full_size_x_out = data->crop.left + data->crop.width;
 
 			if (ptr_func->out_pos_xe + 1 >= full_size_x_out) {
-				ptr_func->in_pos_xe = full_size_x_out - 1;
+				ptr_func->out_pos_xe = full_size_x_out - 1;
+				ptr_func->in_pos_xe = ptr_func->out_pos_xe;
 				/* ptr_func->h_end_flag = true; */
 			}
 		}

@@ -1,0 +1,184 @@
+/* Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&accdet {
+	is_hp_switch;
+	headset-three-key-threshold = <0 82 170 306>;
+};
+
+&mt6358codec {
+	mediatek,init_dis_micbias;
+	mediatek,is_smartpa;
+};
+
+&i2c6 {
+	fsa4480: fsa4480@42 {
+		compatible = "qcom,fsa4480-i2c";
+		reg = <0x42>;
+		is_sw_irq;
+		status = "okay";
+	};
+};
+
+&pio {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pio_default>;
+
+	pio_default: pio_default {
+		pins_cmd0_dat {
+			pinmux = <PINMUX_GPIO171__FUNC_AUD_DAT_MOSI0>;
+			input-schmitt-enable;
+			bias-disable;
+			drive-strength = <3>;
+		};
+		pins_cmd1_dat {
+			pinmux = <PINMUX_GPIO172__FUNC_AUD_DAT_MOSI1>;
+			input-schmitt-enable;
+			bias-disable;
+			drive-strength = <3>;
+		};
+		pins_cmd2_dat {
+			pinmux = <PINMUX_GPIO170__FUNC_AUD_SYNC_MOSI>;
+			input-schmitt-enable;
+			bias-disable;
+			drive-strength = <3>;
+		};
+		pins_cmd3_dat {
+			pinmux = <PINMUX_GPIO169__FUNC_AUD_CLK_MOSI>;
+			input-schmitt-enable;
+			bias-disable;
+			drive-strength = <3>;
+		};
+	};
+};
+
+&i2c9 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	clock-frequency = <400000>;
+	mediatek,use-open-drain;
+
+	aw883xx_smartpa_0: aw883xx_smartpa@34 {
+		compatible = "awinic,aw883xx_smartpa";
+		#sound-dai-cells = <0>;
+		reg = <0x34>; /* 34 35 36 37 */
+		reset-gpio = <&pio 98 0>; /*Reset pin configuration */
+		sound-channel = <1>;  /* pa Incremental */
+		re-min = <1000>; /*re Calibration min(mohms)*/
+		re-max= <40000>; /*re Calibration max(mohms)*/
+		sync-load = <1>; /*ko load fw*/
+		spin-mode = "reg_spin"; /*rotation status*/
+		spin-data = "l r r l"; /*rotation set 0 90 180 270*/
+		status = "okay";
+	};
+
+	aw883xx_smartpa_1: aw883xx_smartpa@35 {
+		compatible = "awinic,aw883xx_smartpa";
+		#sound-dai-cells = <0>;
+		reg = <0x35>;
+		reset-gpio = <&pio 103 0>;
+		sound-channel = <3>;
+		re-min = <1000>;
+		re-max= <40000>;
+		sync-load = <1>;
+		spin-mode = "reg_spin";
+		spin-data = "r l l r";
+		status = "okay";
+        };
+
+	aw883xx_smartpa_2: aw883xx_smartpa@36 {
+		compatible = "awinic,aw883xx_smartpa";
+		#sound-dai-cells = <0>;
+		reg = <0x36>;
+		reset-gpio = <&pio 97 0>;
+		sound-channel = <2>;
+		re-min = <1000>;
+		re-max= <40000>;
+		sync-load = <1>;
+		spin-mode = "reg_spin";
+		spin-data = "r r l l";
+		status = "okay";
+        };
+
+	aw883xx_smartpa_3: aw883xx_smartpa@37 {
+		compatible = "awinic,aw883xx_smartpa";
+		#sound-dai-cells = <0>;
+		reg = <0x37>;
+		reset-gpio = <&pio 104 0>;
+		sound-channel = <0>;
+		re-min = <1000>;
+		re-max= <40000>;
+		sync-load = <1>;
+		spin-mode = "reg_spin";
+		spin-data = "l l r r";
+		status = "okay";
+        };
+
+        fs16xx@38 {
+		compatible = "foursemi,fs16xx";
+		reg = <0x38>;
+		fsm,re25-dft = <7>; /* re25 * 1024 */
+		status = "ok";
+	};
+
+	fs16xx@39 {
+		compatible = "foursemi,fs16xx";
+		reg = <0x39>;
+		fsm,re25-dft = <7>; /* re25 * 1024 */
+		status = "ok";
+	};
+
+	fs16xx@40 {
+		compatible = "foursemi,fs16xx";
+		reg = <0x40>;
+		fsm,re25-dft = <7>; /* re25 * 1024 */
+		status = "ok";
+	};
+
+	fs16xx@41 {
+		compatible = "foursemi,fs16xx";
+		reg = <0x41>;
+		fsm,re25-dft = <7>; /* re25 * 1024 */
+		status = "ok";
+	};
+};
+
+&audio_extend {
+ 	//for awinic speaker
+ 	oplus,speaker-vendor = "awinic";
+	oplus,speaker-i2s-id = <1>;
+	oplus,speaker-i2s-id-in = <2>;
+ 	oplus,speaker-codec-name = "aw883xx_smartpa.9-0034","aw883xx_smartpa.9-0035","aw883xx_smartpa.9-0036","aw883xx_smartpa.9-0037";
+ 	oplus,speaker-codec-dai-name = "aw883xx-aif-9-34","aw883xx-aif-9-35","aw883xx-aif-9-36","aw883xx-aif-9-37";
+	oplus,speaker-vendor-fs = "foursemi";
+	oplus,speaker-codec-name-fs = "fs16xx.9-0038";
+	oplus,speaker-codec-dai-name-fs = "fs16xx-aif";
+	oplus,is_multi_smartpa;
+	status = "okay";
+};
+
+&sound {
+		mediatek,spk-i2s = <1 2>;
+		mediatek,spk-out-ch = <4>;
+ 		/* mtk_spk_i2s_mck = <3>; */
+		mediatek,speaker-codec {
+			sound-dai = <&aw883xx_smartpa_0 &aw883xx_smartpa_1 &aw883xx_smartpa_2 &aw883xx_smartpa_3>;
+		};
+
+ 		mediatek,speaker-codec-aw {
+ 			sound-dai = <&aw883xx_smartpa_0 &aw883xx_smartpa_1 &aw883xx_smartpa_2 &aw883xx_smartpa_3>;
+		};
+
+		mediatek,speaker-codec-fs {
+			sound-dai = "fs16xx";
+		};
+};

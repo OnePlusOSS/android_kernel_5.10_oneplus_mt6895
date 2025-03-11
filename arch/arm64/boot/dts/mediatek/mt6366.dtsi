@@ -122,8 +122,8 @@
 
 		mt6366keys: mt6366keys {
 			compatible = "mediatek,mt6366-keys";
-			mediatek,long-press-mode = <1>;
-			power-off-time-sec = <0>;
+			mediatek,long-press-mode = <2>;
+			power-off-time-sec = <1>;
 			power {
 				linux,keycodes = <116>;
 				wakeup-source;

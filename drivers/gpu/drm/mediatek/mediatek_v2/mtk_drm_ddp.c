@@ -16,6 +16,10 @@
 #include "mtk-cmdq-ext.h"
 #endif
 
+/*#ifdef OPLUS_BUG_STABILITY*/
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+/*#endif*/
+
 #include "mtk_drm_ddp.h"
 #include "mtk_drm_crtc.h"
 #include "mtk_drm_drv.h"
@@ -24,12 +28,19 @@
 #include "mtk_drm_mmp.h"
 #include "mtk_disp_aal.h"
 #include "mtk_disp_c3d.h"
+// #ifdef OPLUS_BUG_STABILITY
+#include "mtk_disp_ccorr.h"
+// #endif OPLUS_BUG_STABILITY
 #include "mtk_disp_gamma.h"
 #include "platform/mtk_drm_6789.h"
 #ifdef CONFIG_MTK_SMI_EXT
 #include "smi_public.h"
 #endif
-
+#include "oplus_display_onscreenfingerprint.h"
+#ifdef OPLUS_FEATURE_DISPLAY
+#include "mtk_drm_trace.h"
+extern int g_commit_pid;
+#endif /* OPLUS_FEATURE_DISPLAY */
 #define DISP_REG_OVL0_MOUT_EN(data) (data->ovl0_mout_en)
 #define DISP_REG_DPI0_SEL_IN(data) (data->dpi0_sel_in)
 #define DISP_REG_DPI0_SEL_IN_RDMA1(data) (data->dpi0_sel_in_rdma1)
@@ -536,7 +547,6 @@
 
 #define MT6983_DISP_MDP_ALL0_SEL_IN	0xF4C
 	#define DISP_MDP_ALL0_SEL_IN_FROM_DISP_C3D0_SOUT_SEL	0x1
-
 #define MT6983_DISP_MERGE0_L_SEL_IN 0xF60
 	#define DISP_MERGE0_L_SEL_IN_FROM_DISP_TV0_SOUT_SEL	0x1
 
@@ -13715,9 +13725,13 @@ void mtk_disp_mutex_submit_sof(struct mtk_disp_mutex *mutex)
 	}
 }
 
+#ifdef OPLUS_FEATURE_DISPLAY_APOLLO
+unsigned long long mutex_sof_ns = 0;
+#endif /* OPLUS_FEATURE_DISPLAY_APOLLO */
 static irqreturn_t mtk_disp_mutex_irq_handler(int irq, void *dev_id)
 {
 	struct mtk_ddp *ddp = dev_id;
+	struct mtk_drm_crtc *mtk_crtc = ddp->mtk_crtc[0];
 	unsigned int val = 0;
 	unsigned int m_id = 0;
 	int ret = 0;
@@ -13746,6 +13760,10 @@ static irqreturn_t mtk_disp_mutex_irq_handler(int irq, void *dev_id)
 	for (m_id = 0; m_id < DISP_MUTEX_DDP_COUNT; m_id++) {
 		if (val & (0x1 << (m_id + DISP_MUTEX_TOTAL))) {
 			DDPIRQ("[IRQ] mutex%d eof!\n", m_id);
+#ifdef OPLUS_FEATURE_DISPLAY
+			mtk_drm_trace_c("%d|smutex eof|%d", g_commit_pid, 1);
+			mtk_drm_trace_c("%d|smutex eof|%d", g_commit_pid, 0);
+#endif /* OPLUS_FEATURE_DISPLAY */
 			DRM_MMP_MARK(mutex[m_id], val, 1);
 #ifndef DRM_BYPASS_PQ
 			irq_debug[1] = sched_clock();
@@ -13756,6 +13774,24 @@ static irqreturn_t mtk_disp_mutex_irq_handler(int irq, void *dev_id)
 		if (val & (0x1 << m_id)) {
 			DDPIRQ("[IRQ] mutex%d sof!\n", m_id);
 			DRM_MMP_MARK(mutex[m_id], val, 0);
+//#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
+			if (oplus_ofp_is_support()) {
+					if (oplus_ofp_video_mode_aod_fod_is_enabled()) {
+						oplus_ofp_pressed_icon_status_update(OPLUS_OFP_TE_RDY);
+						oplus_ofp_aod_off_hbm_on_delay_check(mtk_crtc);
+						/* send ui ready */
+						oplus_ofp_notify_uiready(mtk_crtc);
+					}
+			}
+//#endif
+
+#ifdef OPLUS_FEATURE_DISPLAY_APOLLO
+			mutex_sof_ns = ktime_get();
+#endif /* OPLUS_FEATURE_DISPLAY_APOLLO */
+#ifdef OPLUS_FEATURE_DISPLAY
+			mtk_drm_trace_c("%d|smutex sof|%d", g_commit_pid, 1);
+			mtk_drm_trace_c("%d|smutex sof|%d", g_commit_pid, 0);
+#endif /* OPLUS_FEATURE_DISPLAY */
 
 			if (disp_helper_get_stage() == DISP_HELPER_STAGE_NORMAL) {
 				irq_debug[3] = sched_clock();
@@ -13772,6 +13808,10 @@ static irqreturn_t mtk_disp_mutex_irq_handler(int irq, void *dev_id)
 			disp_gamma_on_start_of_frame();
 			irq_debug[8] = sched_clock();
 #endif
+
+#ifdef OPLUS_SILKY_ON_START_FRAME
+			disp_ccorr_on_start_of_frame();
+#endif //OPLUS_SILKY_ON_START_FRAME
 		}
 	}
 
@@ -16490,6 +16530,9 @@ SKIP_SIDE_DISP:
 		DDPAEE("%s:%d, failed to request irq:%d ret:%d\n",
 				__func__, __LINE__,
 				irq, ret);
+		/*#ifdef OPLUS_BUG_STABILITY*/
+		mm_fb_display_kevent("DisplayDriverID@@504$$", MM_FB_KEY_RATELIMIT_1H, "mtk_ddp_probe failed to request irq:%d ret:%d", irq, ret);
+		/*#endif*/
 		return ret;
 	}
 

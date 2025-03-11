@@ -19,6 +19,7 @@
 struct usb_dp_selector {
 	struct device *dev;
 	struct typec_switch *sw;
+	struct typec_mux *mux;
 	struct mutex lock;
 	void __iomem *selector_reg_address;
 };
@@ -67,11 +68,57 @@ static int usb_dp_selector_switch_set(struct typec_switch *sw,
 	return 0;
 }
 
+
+static int usb_dp_selector_mux_set(struct typec_mux *mux, struct typec_mux_state *state)
+{
+        struct usb_dp_selector *uds = typec_mux_get_drvdata(mux);
+	struct tcp_notify *data = state->data;
+	int ret = 0;
+
+	/* Debug Message */
+	 dev_err(uds->dev, "%s\n", __func__);
+	 dev_err(uds->dev, "state->mode : %d\n", state->mode);
+	 dev_err(uds->dev, "data-> polarity : %d\n", data->ama_dp_state.polarity);
+	 dev_err(uds->dev, "data-> signal : %d\n", data->ama_dp_state.signal);
+	 dev_err(uds->dev, "data-> pin_assignment : %d\n", data->ama_dp_state.pin_assignment);
+	 dev_err(uds->dev, "data-> active : %d\n", data->ama_dp_state.active);
+
+
+	if (state->mode == TCP_NOTIFY_AMA_DP_HPD_STATE) {
+		uint8_t irq = data->ama_dp_hpd_state.irq;
+		uint8_t state = data->ama_dp_hpd_state.state;
+
+		dev_info(uds->dev, "TCP_NOTIFY_AMA_DP_HPD_STATE irq:%x state:%x\n",
+			irq, state);
+		/* Call DP API */
+		dev_info(uds->dev, "[%s][%d]\n", __func__, __LINE__);
+		if (state) {
+			if (irq)
+				mtk_dp_SWInterruptSet(0x8);
+			else
+				mtk_dp_SWInterruptSet(0x4);
+		} else {
+			mtk_dp_SWInterruptSet(0x2);
+		}
+	} else if (state->mode == TCP_NOTIFY_TYPEC_STATE) {
+		if ((data->typec_state.old_state == TYPEC_ATTACHED_SRC ||
+			data->typec_state.old_state == TYPEC_ATTACHED_SNK) &&
+			data->typec_state.new_state == TYPEC_UNATTACHED) {
+			/* Call DP Event API Ready */
+			dev_info(uds->dev, "Plug Out\n");
+			mtk_dp_SWInterruptSet(0x2);
+		}
+	}
+
+	return ret;
+}
+
 static int usb_dp_selector_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct usb_dp_selector *uds;
-	struct typec_switch_desc sw_desc = { };
+	struct typec_switch_desc sw_desc;
+	struct typec_mux_desc mux_desc;
 
 	uds = devm_kzalloc(&pdev->dev, sizeof(*uds), GFP_KERNEL);
 	if (!uds)
@@ -97,6 +144,22 @@ static int usb_dp_selector_probe(struct platform_device *pdev)
 		dev_info(dev, "error registering typec switch: %ld\n",
 			PTR_ERR(uds->sw));
 		return PTR_ERR(uds->sw);
+	}
+
+	/* Setting Mux Callback */
+	mux_desc.drvdata = uds;
+	mux_desc.fwnode = dev->fwnode;
+	mux_desc.set = usb_dp_selector_mux_set;
+
+#if IS_ENABLED(CONFIG_MTK_USB_TYPEC_MUX)
+	uds->mux = mtk_typec_mux_register(dev, &mux_desc);
+#else
+	uds->mux = typec_switch_register(dev, &mux_desc);
+#endif
+	if (IS_ERR(uds->mux)) {
+		dev_info(dev, "error registering typec mux: %ld\n",
+			PTR_ERR(uds->mux));
+		return PTR_ERR(uds->mux);
 	}
 
 	platform_set_drvdata(pdev, uds);

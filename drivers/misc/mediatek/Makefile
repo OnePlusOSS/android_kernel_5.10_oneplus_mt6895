@@ -113,7 +113,16 @@ obj-$(CONFIG_MTK_CPUQOS_V3) += cache-auditor/
 obj-$(CONFIG_MTK_GATE_IC) += gate_ic/
 obj-$(CONFIG_MTK_WIDEVINE_DRM) += widevine_drm/
 obj-$(CONFIG_INTERCONNECT_MTK_MMQOS_COMMON) += mmqos/
+#ifdef OPLUS_BUG_STABILITY
+obj-$(CONFIG_MTK_BOOT_COMMON) += boot_common/
+#endif
 obj-$(CONFIG_MTK_TIMER_ACCURACY_TEST) += timer/
+obj-$(CONFIG_MTK_CAMERA_LDO) += wl2868c/
+obj-$(CONFIG_MTK_CAMERA_LDO) += aw37004/
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#Add for DFX camera log report
+obj-$(CONFIG_MTK_V4L2_IMGSENSOR) += imgsensor/oplus/
+#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 obj-$(CONFIG_MTK_PPM_V3) += ppm_v3/
 obj-$(CONFIG_MTK_SPM) += spm/
 obj-$(CONFIG_MTK_SPM_V0) += spm/

@@ -565,12 +565,24 @@ static ssize_t dbg_ctrl_write(struct file *file, const char __user *data,
 	} else if (cmd_str[0] == 'd') {
 		if (param_str_0[0] == 's') {
 			mtk_cam_dump_buf_realloc(ctrl, MTK_CAM_DEBUG_DUMP_MAX_BUF);
+			#ifndef OPLUS_FEATURE_CAMERA_COMMON
 			debug_fs->force_dump = MTK_CAM_REQ_DUMP_FORCE;
+			#else
+			debug_fs->force_dump |= 1 << ctrl->pipe_id;
+			#endif
 		} else if (param_str_0[0] == 'r') {
 			mtk_cam_dump_ctrl_reinit(ctrl);
+			#ifndef OPLUS_FEATURE_CAMERA_COMMON
 			debug_fs->force_dump = MTK_CAM_REQ_DUMP_FORCE;
+			#else
+			debug_fs->force_dump |= 1 << ctrl->pipe_id;
+			#endif
 		} else if (param_str_0[0] == 'e') {
+			#ifndef OPLUS_FEATURE_CAMERA_COMMON
 			debug_fs->force_dump = 0;
+			#else
+			debug_fs->force_dump &= ~(1 << ctrl->pipe_id);
+			#endif
 			mtk_cam_dump_buf_realloc(ctrl, 0);
 		} else {
 			ret = -EFAULT;
@@ -918,6 +930,8 @@ static void mtk_cam_exception_work(struct work_struct *work)
 #else
 	WARN_ON(1);
 #endif
+    if(dbg_work->smi_dump)
+        mtk_smi_dbg_hang_detect("camsys");
 
 	atomic_set(&dbg_work->state, MTK_CAM_REQ_DBGWORK_S_FINISHED);
 }
@@ -1022,7 +1036,12 @@ int mtk_cam_req_dump(struct mtk_cam_request_stream_data *s_data,
 
 	if (!ctx->cam->debug_fs)
 		return false;
-
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	dev_dbg(ctx->cam->dev, "%s pipe id:%d, force_dump:%d, ctrl_num:%d\n",
+		__func__, ctx->pipe->id,
+		ctx->cam->debug_fs->force_dump,
+		ctx->cam->debug_fs->ctrl[ctx->stream_id].num);
+	#endif
 	switch (dump_flag) {
 	case MTK_CAM_REQ_DUMP_FORCE:
 		if (!ctx->cam->debug_fs->force_dump ||
@@ -1116,6 +1135,21 @@ mtk_cam_debug_detect_dequeue_failed(struct mtk_cam_request_stream_data *s_data,
 			 s_data->frame_seq_no, s_data->state.estate, irq_info->ts_ns / 1000);
 		}
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*extisp debug dump case*/
+	if (s_data->state.estate == E_STATE_EXTISP_OUTER ||
+	    s_data->state.estate == E_STATE_EXTISP_INNER) {
+		s_data->no_frame_done_cnt++;
+		if (s_data->no_frame_done_cnt > 1) {
+			dev_info(ctx->cam->dev,
+			 "%s:EXTISP-SOF[ctx:%d-#%d] no p1 done for %d sofs, FBC_CNT %d dump req(%d) state(%d) ts(%lu)\n",
+			 req->req.debug_str, ctx->stream_id,
+			 ctx->dequeued_frame_seq_no,
+			 s_data->no_frame_done_cnt, irq_info->fbc_cnt,
+			 s_data->frame_seq_no, s_data->state.estate, irq_info->ts_ns / 1000);
+		}
+	}
+#endif
 	if (s_data->no_frame_done_cnt >= NO_P1_DONE_DEBUG_START) {
 		dev_info(raw_dev->dev,
 			 "INT_EN %x\n",

@@ -25,6 +25,7 @@
 #include "mtk_rect.h"
 #include "mtk_drm_drv.h"
 #include "mtk_drm_graphics_base.h"
+#include "mtk_drm_mmp.h"
 
 #include <soc/mediatek/mmqos.h>
 
@@ -488,6 +489,27 @@ static bool _rollback_all_to_GPU_for_idle(struct drm_device *dev)
 	return true;
 }
 
+static bool _rollback_to_new_hrt_for_paper_mode(struct drm_device *dev, unsigned int hrt_idx)
+{
+	struct drm_crtc *crtc;
+	struct mtk_drm_crtc *mtk_crtc = NULL;
+
+	drm_for_each_crtc(crtc, dev) {
+		if (drm_crtc_index(crtc) == 0) {
+			mtk_crtc = to_mtk_crtc(crtc);
+			break;
+		}
+	}
+
+	if (mtk_crtc && mtk_crtc->paper_mode == paper_enabling) {
+		mtk_crtc->papering_hrt_idx = hrt_idx;
+		mtk_crtc->paper_mode = paper_renew_hrt;
+		DDPINFO("hrt idx for paper mode is:%d\n", hrt_idx);
+	}
+
+	return true;
+}
+
 unsigned long long _layering_get_frame_bw(struct drm_crtc *crtc,
 						struct drm_display_mode *mode)
 {
@@ -543,19 +565,17 @@ static int layering_get_valid_hrt(struct drm_crtc *crtc, int mode_idx)
 
 	dvfs_bw *= 10000;
 
+	DDP_MUTEX_LOCK(&mtk_crtc->lock, __func__, __LINE__);
+	DDPDBG("%s mode_idx:%d->%d\n", __func__, mtk_crtc->mode_idx, mode_idx);
 	output_comp = mtk_ddp_comp_request_output(mtk_crtc);
-	if (!mtk_crtc->res_switch) {
-		if (output_comp)
-			mtk_ddp_comp_io_cmd(output_comp, NULL,
-				GET_FRAME_HRT_BW_BY_DATARATE, &tmp);
-	} else {
-		DDPDBG("%s mode_idx:%d\n", __func__, mode_idx);
+	DDPDBG("%s mode_idx:%d\n", __func__, mode_idx);
+	if (mtk_crtc->res_switch || mtk_crtc->skip_unnecessary_switch)
 		mtk_crtc->mode_idx = mode_idx;
-		tmp = mode_idx;
-		if (output_comp)
-			mtk_ddp_comp_io_cmd(output_comp, NULL,
-				GET_FRAME_HRT_BW_BY_MODE, &tmp);
-	}
+	tmp = mode_idx;
+	if (output_comp)
+		mtk_ddp_comp_io_cmd(output_comp, NULL,
+			GET_FRAME_HRT_BW_BY_MODE, &tmp);
+	DDP_MUTEX_UNLOCK(&mtk_crtc->lock, __func__, __LINE__);
 
 	if (!tmp) {
 		DDPPR_ERR("Get frame hrt bw by datarate is zero\n");
@@ -893,6 +913,7 @@ static struct layering_rule_ops l_rule_ops = {
 	.get_mapping_table = get_mapping_table,
 	.rollback_to_gpu_by_hw_limitation = filter_by_hw_limitation,
 	.rollback_all_to_GPU_for_idle = _rollback_all_to_GPU_for_idle,
+	.rollback_to_new_hrt_for_paper_mode = _rollback_to_new_hrt_for_paper_mode,
 	.fbdc_pre_calculate = fbdc_pre_calculate,
 	.fbdc_adjust_layout = fbdc_adjust_layout,
 	.fbdc_restore_layout = fbdc_restore_layout,

@@ -30,6 +30,9 @@
 #include "mtk_disp_pmqos.h"
 #include "slbc_ops.h"
 
+#if defined(CONFIG_PXLW_IRIS)
+#include "iris_mtk_api.h"
+#endif
 #if IS_ENABLED(CONFIG_ARM64)
 #define MAX_CRTC 4
 #else
@@ -97,7 +100,16 @@ enum DISP_PMQOS_SLOT {
 	(DISP_SLOT_PRESENT_FENCE(MAX_CRTC))
 #define DISP_SLOT_SUBTRACTOR_WHEN_FREE(n)                                      \
 	(DISP_SLOT_SUBTRACTOR_WHEN_FREE_BASE + (0x4 * (n)))
+
+#define DISP_SLOT_RDMA_FB_IDX_BASE (DISP_SLOT_SUBTRACTOR_WHEN_FREE(MAX_PLANE_NR))
+
+#define DISP_SLOT_ESD_READ_BASE DISP_SLOT_SUBTRACTOR_WHEN_FREE(OVL_LAYER_NR)
+#define DISP_SLOT_PMQOS_BW_BASE                                                \
+	(DISP_SLOT_ESD_READ_BASE + (ESD_CHECK_NUM * 2 * 0x4))
+//#define DISP_SLOT_RDMA_FB_IDX (DISP_SLOT_RDMA_FB_IDX_BASE + 0x4)
+
 #define DISP_SLOT_RDMA_FB_IDX (DISP_SLOT_SUBTRACTOR_WHEN_FREE(MAX_PLANE_NR))
+
 #define DISP_SLOT_RDMA_FB_ID (DISP_SLOT_RDMA_FB_IDX + 0x4)
 #define DISP_SLOT_CUR_HRT_IDX (DISP_SLOT_RDMA_FB_ID + 0x4)
 #define DISP_SLOT_CUR_HRT_LEVEL (DISP_SLOT_CUR_HRT_IDX + 0x4)
@@ -121,6 +133,17 @@ enum DISP_PMQOS_SLOT {
 #define DISP_SLOT_DSI_STATE_DBG7_2 (DISP_SLOT_DSI_STATE_DBG7 + 0x4)
 
 #define DISP_SLOT_TE1_EN (DISP_SLOT_DSI_STATE_DBG7_2 + 0x4)
+
+#if defined(CONFIG_PXLW_IRIS)
+#define DISP_SLOT_IRIS_READ_BASE (DISP_SLOT_TE1_EN + 0x4)
+#define DISP_SLOT_IRIS_SIZE (DISP_SLOT_IRIS_READ_BASE + 0x10)
+
+#if DISP_SLOT_IRIS_SIZE > CMDQ_BUF_ALLOC_SIZE
+#error "DISP_SLOT_IRIS_SIZE exceed CMDQ_BUF_ALLOC_SIZE"
+#endif
+
+#endif /* CONFIG_PXLW_IRIS */
+
 #define DISP_SLOT_SIZE (DISP_SLOT_TE1_EN + 0x4)
 
 #if DISP_SLOT_SIZE > CMDQ_BUF_ALLOC_SIZE
@@ -373,6 +396,19 @@ enum MTK_CRTC_PROP {
 	CRTC_PROP_MSYNC2_0_ENABLE,
 	CRTC_PROP_SKIP_CONFIG,
 	CRTC_PROP_OVL_DSI_SEQ,
+	CRTC_PROP_AUTO_MODE,
+	CRTC_PROP_AUTO_FAKE_FRAME,
+	CRTC_PROP_AUTO_MIN_FPS,
+
+	/* #ifdef OPLUS_BUG_STABILITY */
+	CRTC_PROP_HW_BLENDSPACE,
+	/* #ifdef OPLUS_BUG_STABILITY */
+
+/* #ifdef OPLUS_FEATURE_LOCAL_HDR  */
+	CRTC_PROP_HW_BRIGHTNESS,
+	CRTC_PROP_BRIGHTNESS_NEED_SYNC,
+/* #endif */
+	CRTC_PROP_STYLUS,
 	CRTC_PROP_MAX,
 };
 
@@ -447,8 +483,8 @@ enum MTK_CRTC_COLOR_FMT {
 	EXPR(CLIENT_EVENT_LOOP)                                                 \
 	EXPR(CLIENT_SUB_CFG)                                                   \
 	EXPR(CLIENT_DSI_CFG)                                                   \
+	EXPR(CLIENT_PQ)                                                   \
 	EXPR(CLIENT_SEC_CFG)                                                   \
-	EXPR(CLIENT_PQ)                                                        \
 	EXPR(CLIENT_TYPE_MAX)
 
 enum CRTC_GCE_CLIENT_TYPE { DECLARE_GCE_CLIENT(DECLARE_NUM) };
@@ -488,6 +524,18 @@ enum CRTC_DDP_PATH {
 	DDP_FIRST_PATH,
 	DDP_SECOND_PATH,
 	DDP_PATH_NR,
+};
+
+/**
+ * enum CRTC_PAPER_MODE -   use for paper mode
+ * @default is disabled
+ */
+enum CRTC_PAPER_MODE {
+	paper_disabled,
+	paper_disabling,
+	paper_enabled,
+	paper_enabling,
+	paper_renew_hrt,
 };
 
 /**
@@ -789,11 +837,13 @@ struct mtk_drm_crtc {
 	bool vblank_en;
 
 	atomic_t already_config;
+	int config_cnt;
 
 	bool layer_rec_en;
 	unsigned int mode_change_index;
 	int mode_idx;
 	bool res_switch;
+	bool skip_unnecessary_switch;
 
 	wait_queue_head_t state_wait_queue;
 	bool crtc_blank;
@@ -850,6 +900,40 @@ struct mtk_drm_crtc {
 	atomic_t force_high_step;
 	int force_high_enabled;
 	bool is_dsc_output_swap;
+
+	/* record status of paper_mode and mem */
+	struct task_struct *paper_texture_task;
+	struct mtk_drm_gem_obj *paper_texture_gem;
+	enum CRTC_PAPER_MODE paper_mode;
+	atomic_t paper_mode_done;
+	int papering_hrt_idx;
+	wait_queue_head_t signal_paper_mode_wq;
+	/* #ifdef OPLUS_BUG_STABILITY */
+	int blendspace;
+	/* #endif OPLUS_BUG_STABILITY */
+
+/* #ifdef OPLUS_FEATURE_LOCAL_HDR  */
+	/* indicate that whether the current frame backlight has been updated */
+	bool oplus_backlight_updated;
+#ifdef OPLUS_FEATURE_DISPLAY_APOLLO
+	int oplus_pending_backlight;
+	bool oplus_backlight_need_sync;
+	bool oplus_power_on;
+	bool oplus_refresh_rate_switching;
+	int oplus_te_tag_ns;
+	int oplus_timing_switch_tag_ns;
+	int oplus_te_diff_ns;
+	int cur_vsync;
+	int limit_superior_ns;
+	int limit_inferior_ns;
+	int transfer_time_us;
+	int pending_vsync;
+	int pending_limit_superior_ns;
+	int pending_limit_inferior_ns;
+	int pending_transfer_time_us;
+#endif /* OPLUS_FEATURE_DISPLAY_APOLLO */
+/* #endif OPLUS_FEATURE_LOCAL_HDR */
+
 };
 
 struct mtk_crtc_state {
@@ -887,6 +971,9 @@ struct mtk_cmdq_cb_data {
 	void __iomem *mmlsys_reg_va;
 	bool is_mml;
 	unsigned int pres_fence_idx;
+	// #ifdef OPLUS_BUG_STABILITY
+	unsigned int bl;
+	// #endif OPLUS_BUG_STABILITY
 	unsigned int hrt_idx;
 	struct drm_framebuffer *wb_fb;
 	unsigned int wb_fence_idx;
@@ -1053,7 +1140,7 @@ void mtk_crtc_dual_layer_config(struct mtk_drm_crtc *mtk_crtc,
 		struct mtk_ddp_comp *comp, unsigned int idx,
 		struct mtk_plane_state *plane_state, struct cmdq_pkt *cmdq_handle);
 unsigned int dual_pipe_comp_mapping(unsigned int mmsys_id, unsigned int comp_id);
-
+bool mtk_crtc_is_dual_pipe(struct drm_crtc *crtc);
 int mtk_drm_crtc_set_panel_hbm(struct drm_crtc *crtc, bool en);
 int mtk_drm_crtc_hbm_wait(struct drm_crtc *crtc, bool en);
 
@@ -1100,5 +1187,26 @@ int mtk_drm_ioctl_set_pq_caps(struct drm_device *dev, void *data,
 void mtk_crtc_prepare_instr(struct drm_crtc *crtc);
 unsigned int check_dsi_underrun_event(void);
 void clear_dsi_underrun_event(void);
+/* #ifdef OPLUS_FEATURE_ONSCREENFINGERPRINT */
+void mtk_atomic_hbm_bypass_pq(struct drm_crtc *crtc,
+		struct cmdq_pkt *handle, int en);
+void mtk_drm_send_lcm_cmd_prepare(struct drm_crtc *crtc,
+	struct cmdq_pkt **cmdq_handle);
+void mtk_drm_send_lcm_cmd_flush(struct drm_crtc *crtc,
+	struct cmdq_pkt **cmdq_handle, bool sync);
+
+int mtk_crtc_set_high_pwm_switch(struct drm_crtc *crtc, unsigned int en);
+
+/* #endif */ /* OPLUS_FEATURE_ONSCREENFINGERPRINT */
 void mtk_crtc_update_gce_event(struct mtk_drm_crtc *mtk_crtc);
+
+int mtk_drm_paper_mode_ioctl(struct drm_device *dev, void *data, struct drm_file *file_priv);
+int mtk_drm_paper_mode_en(struct drm_crtc *crtc, int en, int strength);
+int mtk_crtc_show_paper_texture(struct drm_crtc *crtc, bool enable, struct cmdq_pkt *crtc_cmdq_handle);
+int mtk_crtc_restore_paper_texture(struct drm_crtc *crtc, bool enable, struct cmdq_pkt *crtc_cmdq_handle);
+
+#ifdef OPLUS_FEATURE_DISPLAY_APOLLO
+int mtk_drm_setbacklight_without_lock(struct drm_crtc *crtc, unsigned int level);
+#endif /* OPLUS_FEATURE_DISPLAY_APOLLO */
+
 #endif /* MTK_DRM_CRTC_H */

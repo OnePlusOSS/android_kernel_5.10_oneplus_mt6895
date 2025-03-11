@@ -317,6 +317,11 @@ static int adsp_user_event_notify(struct notifier_block *nb,
 	case ADSP_EVENT_READY:
 		ret = kobject_uevent(&dev->kobj, KOBJ_ONLINE);
 		break;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	case ADSP_EVENT_MONITOR:
+		ret = kobject_uevent(&dev->kobj, KOBJ_CHANGE);
+		break;
+#endif
 	default:
 		pr_info("%s, ignore event %lu", __func__, event);
 		break;
@@ -520,6 +525,31 @@ static void adsp_suspend_ipi_handler(int id, void *data, unsigned int len)
 	complete(&pdata->done);
 }
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+typedef struct
+{
+	unsigned int max_load;
+	unsigned int load_thd;
+	unsigned int cnt_thd;
+}adsp_load_fb_info;
+
+static void oplus_adsp_timer_ipi_handler(int id, void *data, unsigned int len)
+{
+	adsp_load_fb_info fb;
+
+	if (unlikely(!data) || unlikely(len < sizeof(adsp_load_fb_info))) {
+		pr_warn("%s(), [ADSP] id=%d, data=%p or len=%u invalid\n", __func__, id, data, len);
+		return;
+	}
+
+	fb = *(adsp_load_fb_info *)data;
+	pr_info("%s(), [ADSP] more than %u times adsp load > %u%%, max load %u%%\n",
+		__func__, fb.cnt_thd, fb.load_thd, fb.max_load);
+
+	adsp_extern_notify_chain(ADSP_EVENT_MONITOR);
+}
+#endif
+
 static int adsp_system_init(void)
 {
 	int ret = 0;
@@ -536,6 +566,12 @@ static int adsp_system_init(void)
 	adsp_ipi_registration(ADSP_IPI_DVFS_SUSPEND,
 			      adsp_suspend_ipi_handler,
 			      "adsp_suspend_ack");
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	adsp_ipi_registration(ADSP_IPI_ADSP_TIMER,
+			      oplus_adsp_timer_ipi_handler,
+			      "adsp_load_monitor_timer");
+#endif
 
 	/* time sync with adsp */
 	adsp_timesync_init();

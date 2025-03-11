@@ -1,0 +1,267 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA2X2,
+			ICM4X6XX,
+			ICM4N607,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <9>;//ICM4N607
+			device_name = "icm4n607";
+			i2c_num = <2>;
+			i2c_addr = <0x68>;
+			direction = <0>;
+			eint_num = <25>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			gyro_cali_range = <350>;
+			acc_cali_range= <300 300 300>;
+		};
+		sub_gsensor_1: sub_gsensor_1 {
+			status = "okay";
+			sensor_name = <9>;//ICM4N607
+			device_name = "icm4n607";
+			i2c_num = <2>;
+			i2c_addr = <0x69>;
+			direction = <7>;
+			eint_num = <5>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			gyro_cali_range = <350>;
+			acc_cali_range= <300 300 300>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+			AKM09918,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <4>;//AKM09918
+			i2c_num = <6>;
+			i2c_addr = <0x0C>;
+			direction = <1>;
+			eint_num = <0>;
+			soft-mag-parameter = <8072 0 587 0 178 0 114 0 11343 0 133 0 139 1 444 1 11222 0>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+			STK33502,
+			MN78911,
+			TCS3720,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <9>;//TCS3720
+			i2c_num = <5>;
+			i2c_addr = <0x39>;
+			direction = <0>;
+			eint_num = <18>;
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <400>;
+			high_limit = <600>;
+			dirty_low_step = <180>;
+			dirty_high_step = <280>;
+			ps_dirty_limit = <1800>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <800>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <100>;
+			step_div = <2000>;
+			anti_shake_delta = <120>;
+			dynamic_cali_max = <1500>;
+			raw2offset_radio = <1000>;
+			offset_max = <15000>;
+			offset_range_min = <0>;
+			offset_range_max = <65534>;
+			force_cali_limit = <0>;
+			cali_jitter_limit = <40>;
+			cal_offset_margin = <3000>;
+			ps_check_num = <3>;
+			ps_mid_filter = <0>;
+			sensor-reg = <0x82 0x43 0xD9 0xB9>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <9>;//TCS3720
+			i2c_num = <5>;
+			i2c_addr = <0x39>;
+			direction = <0>;
+			eint_num = <18>;
+			use_lb_algo = <1>;
+			lb_bri_max = <4095>;
+			als_ratio = <110>;
+			cct_type = <0x02>; //0x01 CCT_NORMAL 0x02 CCT_WISE
+			device_name = "tcs3720";
+			gold_cct_3k = <6441 3223 1592 10121 1001 1001>;
+			gold_cct_6k = <4350 3477 1951 8865 1001 1001>;
+			gold_cct_factor = <1065 1128 1204 1088 1001 1001>;
+		};
+		/*
+		enum {
+			STK37600,
+			MN29005,
+			TCS3408,
+		};
+		*/
+		rear_cct_1: rear_cct_1 {
+			status = "okay";
+			sensor_name = <0>;//STK37600
+			i2c_num = <0>;
+			i2c_addr = <0x48>;
+			direction = <0>;
+			eint_num = <21>;
+			available_sensor = <15>; // bit 0: rear als, bit 1: rear cct, bit 2: rear flicker, bit 3: rear proximity
+			gold_rear_cct_3k = <55949 86078 8625 1971 64 225437>; // 3000k gold parameter R, G, B, C, W, F
+			gold_rear_cct_6k = <41366 81570 19902 1466 64 233145>;  // 6000k gold parameter R, G, B, C, W, F
+			device_name = "stk3b6x";
+			cct_coef_Hir = <28073000 1 28853000 0 25804000 1 1703000 0
+							26384000 1 27124000 0 19232000 1 1027000 0
+							10716000 1 8010000 0 31176000 0 365000 1>;
+			cct_coef_Lir = <31772000 0 9486000 1 31860000 0 118193000 1
+							23055000 0 5374000 1 30599000 0 89059000 1
+							13033000 0 7999000 1 65764000 0 77206000 1>;
+			gold_rear_cct_factor = <947 990 906 836 1001 941>;
+		};
+		/*
+		enum {
+			SX933x
+		};
+		*/
+		sar_1: sar_1 {
+			status = "okay";
+			sensor_name = <0>;//SX933x
+			i2c_num = <6>;
+			i2c_addr = <0x28>;
+			direction = <4>;
+			eint_num = <11>;
+			channel_num = <2>;
+			channel_0_min = <5000>;
+			channel_0_max = <8000>;
+			channel_1_min = <5000>;
+			channel_1_max = <8500>;
+			channel_2_min = <0>;
+			channel_2_max = <70000>;
+			channel_3_min = <0>;
+			channel_3_max = <70000>;
+			reg_table_num = <3>;
+			use_far_near = <1>;
+		};
+		/*
+		enum {
+			MXM1120,
+		};
+		*/
+		hall_1: hall_1 {
+			status = "okay";
+			sensor_name = <0>;//MXM1120
+			i2c_num = <0>;
+			i2c_addr = <0x0C>;
+			direction = <0>;
+			eint_num = <4>;
+			device_name = "mxm1120";
+		};
+
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+			revert_gravity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		oplus_fusion: oplus_fusion {
+			status = "okay";
+			use_sub_accgyro = <1>;
+		};
+		smart_prox: smart_prox {
+			status = "okay";
+			support_smart_prox = <1>;
+			use_sub_accgyro = <1>;
+		};
+		gesture_prox: gesture_prox {
+			status = "okay";
+			support_gesture_prox = <1>;
+			use_sub_accgyro = <1>;
+		};
+		dev_ori: dev_ori {
+			status = "okay";
+			support_dev_ori = <1>;
+			use_sub_accgyro = <1>;
+		};
+		sub_dev_ori: sub_dev_ori {
+			status = "okay";
+			support_sub_dev_ori = <1>;
+			use_sub_accgyro = <1>;
+		};
+		ui_dev_ori: ui_dev_ori {
+			status = "okay";
+			support_ui_dev_ori = <1>;
+			use_sub_accgyro = <1>;
+		};
+		free_fall: free_fall{
+			status = "okay";
+			static_judge_length = <400>;
+			static_judge_acc_thresh = <1>;
+			freefall_judge_length = <80>;
+			freefall_judge_acc_thresh = <20>;
+			move_judge_length = <60>;
+			move_judge_acc_thresh = <1>;
+			freefall_start_judge_length  = <50>;
+			freefall_start_acc_thresh = <70>;
+			freefall_throw_judge_length = <700>;
+			freefall_throw_acc_thresh = <50>;
+			freefall_end_acc_thresh = <30>;
+			freefall_valid_time_length = <1000>;
+			freefall_peek_time_length = <200>;
+			freefall_peek_acc_thresh = <98>;
+			freefall_material_thresh = <900>;
+			valid_peek_interval_thresh = <10000>;
+		};
+		pocket: pocket {
+			status = "okay";
+			support_pocket = <1>;
+                        use_sub_accgyro = <1>;
+			need_als = <1>;
+		};
+	};
+/* sensor end */
+};

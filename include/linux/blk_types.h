@@ -10,6 +10,9 @@
 #include <linux/bvec.h>
 #include <linux/ktime.h>
 #include <linux/android_kabi.h>
+#ifdef CONFIG_DEVICE_XCOPY
+#include <linux/time.h>
+#endif
 
 struct bio_set;
 struct bio;
@@ -278,6 +281,18 @@ struct bio {
 	struct bio_vec		bi_inline_vecs[];
 };
 
+#ifdef CONFIG_DEVICE_XCOPY
+typedef u32 block_t;
+
+#define BLK_MAX_COPY_RANGE	256
+
+struct blk_copy_payload {
+	block_t src_addr[BLK_MAX_COPY_RANGE];
+	block_t dst_addr[BLK_MAX_COPY_RANGE];
+	struct page *pages[BLK_MAX_COPY_RANGE];
+};
+#endif
+
 #define BIO_RESET_BYTES		offsetof(struct bio, bi_max_vecs)
 
 /*
@@ -373,7 +388,10 @@ enum req_opf {
 	REQ_OP_ZONE_RESET	= 15,
 	/* reset all the zone present on the device */
 	REQ_OP_ZONE_RESET_ALL	= 17,
-
+#ifdef CONFIG_DEVICE_XCOPY
+	/* device copy */
+	REQ_OP_DEVICE_COPY	= 18,
+#endif
 	/* SCSI passthrough using struct scsi_request */
 	REQ_OP_SCSI_IN		= 32,
 	REQ_OP_SCSI_OUT		= 33,
@@ -512,6 +530,9 @@ static inline bool op_is_zone_mgmt(enum req_opf op)
 	case REQ_OP_ZONE_OPEN:
 	case REQ_OP_ZONE_CLOSE:
 	case REQ_OP_ZONE_FINISH:
+#ifdef CONFIG_DEVICE_XCOPY
+	case REQ_OP_DEVICE_COPY:
+#endif
 		return true;
 	default:
 		return false;
@@ -524,6 +545,13 @@ static inline int op_stat_group(unsigned int op)
 		return STAT_DISCARD;
 	return op_is_write(op);
 }
+
+#ifdef CONFIG_DEVICE_XCOPY
+static inline bool op_is_copy(unsigned int op)
+{
+	return (op & REQ_OP_MASK) == REQ_OP_DEVICE_COPY;
+}
+#endif
 
 typedef unsigned int blk_qc_t;
 #define BLK_QC_T_NONE		-1U

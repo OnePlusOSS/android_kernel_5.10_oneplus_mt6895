@@ -233,6 +233,24 @@ struct gce_plat {
 #define MMP_THD(t, c)	((t)->idx | ((c)->hwid << 5))
 #endif
 
+void cmdq_get_usage_cb(struct mbox_chan *chan, cmdq_usage_cb usage_cb)
+{
+	struct cmdq *cmdq = container_of(((struct mbox_chan *)chan)->mbox,
+		typeof(*cmdq), mbox);
+	u32 i;
+
+	for (i = 0; i < ARRAY_SIZE(cmdq->thread); i++)
+		if (cmdq->thread[i].chan == chan)
+			break;
+	if (i >= ARRAY_SIZE(cmdq->thread)) {
+		cmdq_err("Input chan:%p is wrong", chan);
+		return;
+	}
+
+	cmdq->thread[i].usage_cb = usage_cb;
+}
+EXPORT_SYMBOL(cmdq_get_usage_cb);
+
 void cmdq_get_mminfra_cb(cmdq_mminfra_power cb)
 {
 	mminfra_power_cb = cb;
@@ -252,6 +270,8 @@ void cmdq_dump_usage(void)
 	s32 i, j, usage[CMDQ_THR_MAX_COUNT];
 
 	for (i = 0; i < 2; i++) {
+		if (!g_cmdq[i])
+			continue;
 		cmdq_msg(
 			"%s: hwid:%hu suspend:%d usage:%d mbox_usage:%d wake_lock:%d",
 			__func__, g_cmdq[i]->hwid, g_cmdq[i]->suspended,
@@ -259,8 +279,11 @@ void cmdq_dump_usage(void)
 			atomic_read(&g_cmdq[i]->mbox_usage),
 			g_cmdq[i]->wake_locked);
 
-		for (j = 0; j < ARRAY_SIZE(g_cmdq[i]->thread); j++)
+		for (j = 0; j < ARRAY_SIZE(g_cmdq[i]->thread); j++) {
 			usage[j] = atomic_read(&g_cmdq[i]->thread[j].usage);
+			if (usage[j] > 0 && g_cmdq[i]->thread[j].usage_cb)
+				g_cmdq[i]->thread[j].usage_cb(j);
+		}
 
 		cmdq_msg(
 			"%s: thread usage:%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
@@ -632,6 +655,14 @@ static void cmdq_task_connect_buffer(struct cmdq_task *task,
 	task_base = (u64 *)(buf->va_base + CMDQ_CMD_BUFFER_SIZE -
 		task->pkt->avail_buf_size - CMDQ_INST_SIZE);
 	inst = *task_base;
+
+	if (!next_task) {
+		*task_base = (u64)CMDQ_JUMP_BY_OFFSET << 32 | 0x00000001;
+		cmdq_log("%s connect to null change last inst %#018llx to %#018llx connect 0x%p -> NULL",
+			__func__, inst, *task_base, task->pkt);
+		return;
+	}
+
 	*task_base = (u64)CMDQ_JUMP_BY_PA << 32 |
 		CMDQ_REG_SHIFT_ADDR(next_task->pa_base);
 	cmdq_log("change last inst 0x%016llx to 0x%016llx connect 0x%p -> 0x%p",
@@ -1814,7 +1845,7 @@ void cmdq_mbox_thread_remove_task(struct mbox_chan *chan,
 {
 	struct cmdq_thread *thread = (struct cmdq_thread *)chan->con_priv;
 	struct cmdq *cmdq = container_of(thread->chan->mbox, struct cmdq, mbox);
-	struct cmdq_task *task, *tmp;
+	struct cmdq_task *task, *tmp, *next_task, *prev_task;
 	unsigned long flags;
 	dma_addr_t pa_curr;
 	bool curr_task = false;
@@ -1866,6 +1897,12 @@ void cmdq_mbox_thread_remove_task(struct mbox_chan *chan,
 			/* task during error handling, skip */
 			spin_unlock_irqrestore(&thread->chan->lock, flags);
 			return;
+		}
+
+		if (!curr_task) {
+			next_task = last_task ? NULL : list_next_entry(task, list_entry);
+			prev_task = list_prev_entry(task, list_entry);
+			cmdq_task_connect_buffer(prev_task, next_task);
 		}
 
 		cmdq_task_exec_done(task, curr_task ? -ECONNABORTED : 0);
@@ -2370,6 +2407,7 @@ static int cmdq_probe(struct platform_device *pdev)
 			cmdq_thread_handle_timeout, 0);
 		cmdq->thread[i].idx = i;
 		cmdq->mbox.chans[i].con_priv = &cmdq->thread[i];
+		cmdq->thread[i].usage_cb = NULL;
 		INIT_WORK(&cmdq->thread[i].timeout_work,
 			cmdq_thread_handle_timeout_work);
 	}
@@ -2487,6 +2525,10 @@ s32 cmdq_mbox_enable(void *chan)
 	s32 i;
 
 	WARN_ON(cmdq->suspended);
+	//gaoxiaolei modify
+	if (mtk_cmdq_msg == 1)
+		cmdq_msg("%s cmdq:%pa id:%u usage:%d", __func__, &cmdq->base_pa, cmdq->hwid
+			,atomic_read(&cmdq->usage));
 	if (cmdq->suspended) {
 		cmdq_err("cmdq:%pa id:%u suspend:%d cannot enable usage:%d",
 			&cmdq->base_pa, cmdq->hwid, cmdq->suspended,
@@ -2523,6 +2565,10 @@ s32 cmdq_mbox_disable(void *chan)
 	s32 i;
 
 	WARN_ON(cmdq->suspended);
+	//gaoxiaolei modify
+	if (mtk_cmdq_msg == 1)
+		cmdq_msg("%s cmdq:%pa id:%u usage:%d", __func__, &cmdq->base_pa, cmdq->hwid
+			,atomic_read(&cmdq->usage));
 	if (cmdq->suspended) {
 		cmdq_err("cmdq:%pa id:%u suspend:%d cannot disable usage:%d",
 			&cmdq->base_pa, cmdq->hwid, cmdq->suspended,

@@ -488,11 +488,25 @@ void mtk_vdec_pmqos_end_inst(struct mtk_vcodec_ctx *ctx)
 	}
 }
 
+static bool mtk_vdec_dvfs_params_change(struct mtk_vcodec_ctx *ctx)
+{
+	bool need_update = false;
+
+	if (ctx->state == MTK_STATE_HEADER) {
+		if (ctx->dec_param_change & MTK_DEC_PARAM_OPERATING_RATE) {
+			need_update = true;
+			ctx->dec_param_change &= (~MTK_DEC_PARAM_OPERATING_RATE);
+		}
+	}
+
+	return need_update;
+}
 
 void mtk_vdec_dvfs_begin_frame(struct mtk_vcodec_ctx *ctx, int hw_id)
 {
 	struct mtk_vcodec_dev *dev = 0;
 	u8 orig = 0;
+	struct vcodec_inst *inst = 0;
 
 	dev = ctx->dev;
 	if (dev->vdec_reg == 0)
@@ -511,6 +525,17 @@ void mtk_vdec_dvfs_begin_frame(struct mtk_vcodec_ctx *ctx, int hw_id)
 
 	if (!dev->vdec_dvfs_params.per_frame_adjust)
 		dev->vdec_dvfs_params.frame_need_update = 0;
+
+	if (mtk_vdec_dvfs_params_change(ctx)) {
+		inst = get_inst(ctx);
+		if (!inst)
+			return;
+		inst->op_rate = ctx->dec_params.operating_rate;
+		update_freq(ctx->dev, MTK_INST_DECODER);
+		dev->vdec_dvfs_params.frame_need_update = 1;
+		mtk_v4l2_debug(0, "[VDEC] update op_rate %d, freq %u",
+			inst->op_rate, ctx->dev->vdec_dvfs_params.target_freq);
+	}
 
 	if (dev->vdec_dvfs_params.frame_need_update &&
 		(dev->vdec_dvfs_params.target_freq != dev->vdec_dvfs_params.min_freq)) {

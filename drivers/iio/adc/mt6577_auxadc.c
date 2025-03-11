@@ -113,6 +113,9 @@ struct adc_cali_info {
 
 static struct adc_cali_info adc_cali;
 
+/* 1 is normal run, 0 is suspend and clk disable */
+static atomic_t mt_auxadc_state;
+
 static int mt_auxadc_update_cali(struct device *dev)
 {
 	struct device_node *np = dev->of_node;
@@ -261,6 +264,14 @@ static int mt6577_auxadc_read(struct iio_dev *indio_dev,
 		      chan->channel * 0x04;
 
 	mutex_lock(&adc_dev->lock);
+	/* if auxadc suspend, DO NOT allow to read. */
+	if (atomic_read(&mt_auxadc_state) == 0) {
+		dev_err(indio_dev->dev.parent,
+			"can not read, the device goes to suspend.\n",
+			chan->channel);
+		mutex_unlock(&adc_dev->lock);
+		return -EPERM;
+	}
 
 	writel(1 << chan->channel, adc_dev->reg_base + MT6577_AUXADC_CON1_CLR);
 
@@ -384,6 +395,7 @@ static int __maybe_unused mt6577_auxadc_resume(struct device *dev)
 			      MT6577_AUXADC_PDN_EN, 0);
 	mdelay(MT6577_AUXADC_POWER_READY_MS);
 
+	atomic_set(&mt_auxadc_state, 1);
 	return 0;
 }
 
@@ -392,9 +404,15 @@ static int __maybe_unused mt6577_auxadc_suspend(struct device *dev)
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct mt6577_auxadc_device *adc_dev = iio_priv(indio_dev);
 
+	mutex_lock(&adc_dev->lock);
+
+	atomic_set(&mt_auxadc_state, 0);
+
 	mt6577_auxadc_mod_reg(adc_dev->reg_base + MT6577_AUXADC_MISC,
 			      0, MT6577_AUXADC_PDN_EN);
 	clk_disable_unprepare(adc_dev->adc_clk);
+
+	mutex_unlock(&adc_dev->lock);
 
 	return 0;
 }
@@ -437,6 +455,7 @@ static int auxadc_utilization_open(struct inode *inode, struct file *file)
 static const struct file_operations auxadc_debugfs_fops = {
 	.open = auxadc_utilization_open,
 	.read = seq_read,
+	.release = single_release,
 };
 
 static void adc_debug_init(struct device *dev)
@@ -519,7 +538,7 @@ static int mt6577_auxadc_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "failed to register iio device\n");
 		goto err_power_off;
 	}
-
+	atomic_set(&mt_auxadc_state, 1);
 	adc_debug_init(&pdev->dev);
 
 	dev_info(&pdev->dev, "%s done\n", __func__);
@@ -538,7 +557,7 @@ static int mt6577_auxadc_remove(struct platform_device *pdev)
 {
 	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
 	struct mt6577_auxadc_device *adc_dev = iio_priv(indio_dev);
-
+	atomic_set(&mt_auxadc_state, 0);
 	iio_device_unregister(indio_dev);
 
 	mt6577_auxadc_mod_reg(adc_dev->reg_base + MT6577_AUXADC_MISC,
@@ -549,9 +568,17 @@ static int mt6577_auxadc_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/* BSP.CHG.basic, 2022/07/26, Add for charger */
+static const struct dev_pm_ops mt6577_auxadc_pm_ops = {
+ 	 SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(mt6577_auxadc_suspend,
+ 					 mt6577_auxadc_resume)
+};
+#else
 static SIMPLE_DEV_PM_OPS(mt6577_auxadc_pm_ops,
 			 mt6577_auxadc_suspend,
 			 mt6577_auxadc_resume);
+#endif
 
 static const struct of_device_id mt6577_auxadc_of_match[] = {
 	{ .compatible = "mediatek,mt2701-auxadc", .data = &mt8173_compat},

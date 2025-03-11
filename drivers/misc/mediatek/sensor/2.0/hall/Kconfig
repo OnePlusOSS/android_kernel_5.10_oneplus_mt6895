@@ -1,0 +1,5 @@
+config SENSOR_MXM1120_HALL
+	tristate "for oplus hall"
+	default n
+	help
+	  It support sensor_hall.

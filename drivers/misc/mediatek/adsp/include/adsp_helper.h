@@ -147,6 +147,9 @@ enum adsp_core_id {
 enum ADSP_NOTIFY_EVENT {
 	ADSP_EVENT_STOP = 0,
 	ADSP_EVENT_READY,
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	ADSP_EVENT_MONITOR,
+#endif
 };
 
 enum semaphore_id {

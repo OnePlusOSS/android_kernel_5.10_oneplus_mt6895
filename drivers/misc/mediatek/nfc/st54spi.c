@@ -1340,10 +1340,12 @@ static int st54spi_probe(struct spi_device *spi)
 		dev_dbg(&spi->dev, "Added into chip_info!\n");
 	}
 
-	if (status == 0)
-		spi_set_drvdata(spi, st54spi);
-	else
-		kfree(st54spi);
+	if (status == 0) {
+            spi_set_drvdata(spi, st54spi);
+        } else {
+            kfree(st54spi);
+            return -ENODEV;
+       }
 
 	(void)st54spi_parse_dt(&spi->dev, st54spi);
 

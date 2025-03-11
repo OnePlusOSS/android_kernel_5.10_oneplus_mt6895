@@ -31,6 +31,38 @@
 extern void vdec_dump_mem_buf(unsigned long h_vdec);
 #endif
 
+static char *dec_port_name[NUM_MAX_VDEC_M4U_PORT+1] = {
+	[VDEC_M4U_PORT_MC]                  = "MC",
+	[VDEC_M4U_PORT_UFO]                 = "UFO",
+	[VDEC_M4U_PORT_PP]                  = "PP",
+	[VDEC_M4U_PORT_PRED_RD]             = "PRED_RD",
+	[VDEC_M4U_PORT_PRED_WR]             = "PRED_WR",
+	[VDEC_M4U_PORT_PPWRAP]              = "PPWRAP",
+	[VDEC_M4U_PORT_TILE]                = "TILE",
+	[VDEC_M4U_PORT_VLD]                 = "VLD",
+	[VDEC_M4U_PORT_VLD2]                = "VLD2",
+	[VDEC_M4U_PORT_AVC_MV]              = "MV",
+	[VDEC_M4U_PORT_RG_CTRL_DMA]         = "RG_CTRL_DMA",
+	[VDEC_M4U_PORT_UFO_ENC]             = "UFO_ENC",
+	[VDEC_M4U_PORT_LAT0_VLD]            = "LAT_VLD",
+	[VDEC_M4U_PORT_LAT0_VLD2]           = "LAT_VLD2",
+	[VDEC_M4U_PORT_LAT0_AVC_MV]         = "LAT_MV",
+	[VDEC_M4U_PORT_LAT0_PRED_RD]        = "LAT_PRED_RD",
+	[VDEC_M4U_PORT_LAT0_TILE]           = "LAT_TILE",
+	[VDEC_M4U_PORT_LAT0_WDMA]           = "LAT_WDMA",
+	[VDEC_M4U_PORT_LAT0_RG_CTRL_DMA]    = "LAT_RG_CTRL_DMA",
+	[VDEC_M4U_PORT_LAT0_MC]             = "LAT_MC",
+	[VDEC_M4U_PORT_LAT0_UFO]            = "LAT_UFO",
+	[VDEC_M4U_PORT_LAT0_UFO_C]          = "LAT_UFO_C",
+	[VDEC_M4U_PORT_VIDEO_UP_SEC]        = "VIDEO_UP_SEC",
+	[VDEC_M4U_PORT_VIDEO_UP_NOR]        = "VIDEO_UP_NOR",
+	[VDEC_M4U_PORT_UP_1]                = "UP_1",
+	[VDEC_M4U_PORT_UP_2]                = "UP_2",
+	[VDEC_M4U_PORT_UP_3]                = "UP_3",
+	[VDEC_M4U_PORT_UP_4]                = "UP_4",
+	[NUM_MAX_VDEC_M4U_PORT]             = "UNKNOWN",
+};
+
 void mtk_dec_init_ctx_pm(struct mtk_vcodec_ctx *ctx)
 {
 	ctx->input_driven = 0;
@@ -175,6 +207,7 @@ void mtk_vcodec_dec_pw_off(struct mtk_vcodec_pm *pm, int hw_id)
 		mtk_v4l2_err("pm_runtime_put_sync fail");
 }
 
+#ifdef VDEC_DEBUG_DUMP
 static void mtk_vdec_hw_break(struct mtk_vcodec_dev *dev, int hw_id)
 {
 	u32 cg_status = 0, ufo_cg_status = 0;
@@ -343,6 +376,7 @@ static void mtk_vdec_hw_break(struct mtk_vcodec_dev *dev, int hw_id)
 		mtk_v4l2_err("hw_id (%d) is unknown or unsupport\n", hw_id);
 	}
 }
+#endif
 
 void mtk_vcodec_dec_clock_on(struct mtk_vcodec_pm *pm, int hw_id)
 {
@@ -510,8 +544,8 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 		}
 		mutex_unlock(&pm->dec_racing_info_mutex);
 	}
-
-	mtk_vdec_hw_break(dev, hw_id);
+	// remove for security, handle decode timeout hw break in vcp
+	//mtk_vdec_hw_break(dev, hw_id);
 
 	/* avoid translation fault callback dump reg not done */
 	spin_lock_irqsave(&dev->dec_power_lock[hw_id], flags);
@@ -566,6 +600,7 @@ void mtk_vcodec_dec_clock_off(struct mtk_vcodec_pm *pm, int hw_id)
 }
 
 #if IS_ENABLED(CONFIG_MTK_IOMMU_MISC_DBG)
+#ifdef VDEC_DEBUG_DUMP
 static void mtk_vdec_dump_addr_reg(
 	struct mtk_vcodec_dev *dev, int hw_id, enum mtk_dec_dump_addr_type type)
 {
@@ -792,6 +827,7 @@ static void mtk_vdec_dump_addr_reg(
 
 	spin_unlock_irqrestore(&dev->dec_power_lock[hw_id], flags);
 }
+#endif
 
 static int mtk_vdec_translation_fault_callback(
 	int port, dma_addr_t mva, void *data)
@@ -827,6 +863,16 @@ static int mtk_vdec_translation_fault_callback(
 		return 0;
 	}
 
+	if (dev->tf_info != NULL) {
+		dev->tf_info->hw_id  = (__u32)hw_id;
+		dev->tf_info->port   = (__u32)port_idx;
+		dev->tf_info->tf_mva = (__u64)mva;
+		dev->tf_info->has_tf = 1;
+		mtk_v4l2_err("TF set tf_info 0x%lx hw_id %d port %s(%d) mva 0x%llx",
+			(unsigned long)dev->tf_info, dev->tf_info->hw_id,
+			dec_port_name[dev->tf_info->port], dev->tf_info->port, dev->tf_info->tf_mva);
+	}
+
 	ctx = dev->curr_dec_ctx[hw_id];
 	if (ctx) {
 		fourcc = ctx->q_data[MTK_Q_DATA_SRC].fmt->fourcc;
@@ -840,7 +886,7 @@ static int mtk_vdec_translation_fault_callback(
 			(hw_id == MTK_VDEC_LAT) ? "LAT" : "CORE", hw_id,
 			MTK_M4U_TO_LARB(port), dec_port_name[port_idx], port, (u64)mva);
 	}
-
+#ifdef VDEC_DEBUG_DUMP
 	if (port == dev->dec_m4u_ports[VDEC_M4U_PORT_LAT0_VLD] ||
 	    port == dev->dec_m4u_ports[VDEC_M4U_PORT_LAT0_VLD2]) {
 		mtk_vdec_dump_addr_reg(dev, hw_id, DUMP_VDEC_IN_BUF);
@@ -881,7 +927,7 @@ static int mtk_vdec_translation_fault_callback(
 			mtk_vdec_dump_addr_reg(dev, hw_id, DUMP_VDEC_OUT_BUF);
 		}
 	}
-
+#endif
 	return 0;
 }
 

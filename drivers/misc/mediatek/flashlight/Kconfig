@@ -192,3 +192,13 @@ config MTK_FLASHLIGHT_DLPT
 	  the current of battary dynamicly. It will start by request
 	  and notice user by kernel notifier.
 
+config MTK_FLASHLIGHT_24267
+	tristate "Mediatek flashlight with driver IC SC6607"
+	depends on MTK_FLASHLIGHT
+	default n
+	help
+	  This is flashlight dummy gpio driver for camera.
+	  Say Y here if you want a dummy driver IC with GPIO interface.
+	  Select this only if your board has this IC.
+	  Say M here if you want to compile this driver as a module.
+

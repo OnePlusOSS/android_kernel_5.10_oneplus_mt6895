@@ -90,11 +90,28 @@ struct GED_DVFS_BW_DATA {
 
 #define MAX_BW_PROFILE 5
 
+#define MAX_OPP_LOGS_COLUMN_DIGITS 64
+struct GED_DVFS_OPP_STAT {
+	union {
+		uint32_t *aTrans;
+		uint32_t ui32Freq;
+	} uMem;
+
+	/* unit 1us */
+	uint64_t ui64Active;
+	uint64_t ui64Idle;
+};
+
 struct GpuUtilization_Ex {
 	unsigned int util_active;
 	unsigned int util_3d;
 	unsigned int util_ta;
 	unsigned int util_compute;
+	unsigned int util_iter;
+	unsigned int util_mcu;
+
+	unsigned long long delta_time;   // unit: ns
+	unsigned int freq;   // unit: kHz
 };
 
 bool ged_dvfs_cal_gpu_utilization_ex(unsigned int *pui32Loading,
@@ -135,9 +152,19 @@ GED_ERROR  ged_dvfs_probe_signal(int signo);
 
 void ged_dvfs_gpu_clock_switch_notify(bool bSwitch);
 
+void ged_dvfs_reset_opp_cost(int oppsize);
+void ged_dvfs_update_opp_cost(unsigned int loading,	unsigned int TSDiff_us,
+		unsigned long long cur_us, unsigned int idx);
+int ged_dvfs_query_opp_cost(struct GED_DVFS_OPP_STAT *psReport,
+		int i32NumOpp, bool bStript);
+int ged_dvfs_init_opp_cost(void);
+
 GED_ERROR ged_dvfs_system_init(void);
 void ged_dvfs_system_exit(void);
 unsigned long ged_dvfs_get_last_commit_idx(void);
+
+bool ged_dvfs_gpu_freq_commit(unsigned long ui32NewFreqID,
+	unsigned long ui32NewFreq, GED_DVFS_COMMIT_TYPE eCommitType);
 
 extern void (*ged_kpi_set_gpu_dvfs_hint_fp)(int t_gpu_target,
 	int boost_accum_gpu);

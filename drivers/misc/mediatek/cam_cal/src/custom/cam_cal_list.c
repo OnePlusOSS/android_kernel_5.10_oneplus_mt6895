@@ -11,6 +11,7 @@
 
 #define MAX_EEPROM_SIZE_32K 0x8000
 #define MAX_EEPROM_SIZE_16K 0x4000
+#define MAX_EEPROM_SIZE_8K  0x2000
 
 struct stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	/*Below is commom sensor */
@@ -39,9 +40,54 @@ struct stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	{IMX350_SENSOR_ID, 0xA0, Common_read_region},
 	{IMX386_MONO_SENSOR_ID, 0xA0, Common_read_region},
 	{IMX499_SENSOR_ID, 0xA0, Common_read_region},
+	{IMX709_SENSOR_ID, 0xA8, Common_read_region},
+	{IMX766_SENSOR_ID_21641, 0xA0, Common_read_region, MAX_EEPROM_SIZE_32K},
+	{IMX355_SENSOR_ID_21641, 0xA2, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{S5K3P9SP_SENSOR_ID_21641, 0xA8, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{GC02M1_SENSOR_ID_21641, 0xA4, Common_read_region},
+	{IMX766_SENSOR_ID_21861, 0xA0, Common_read_region, MAX_EEPROM_SIZE_32K},
+	{IMX355_SENSOR_ID_21861, 0xA2, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{S5K3P9SP_SENSOR_ID_21861, 0xA8, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{OV64B_SENSOR_ID_21143, 0xA0, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{IMX355_SENSOR_ID_21143, 0xA2, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{S5K3P9SP_SENSOR_ID_21143, 0xA8, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{GC02M1_SENSOR_ID_21143, 0xA4, Common_read_region, MAX_EEPROM_SIZE_8K},
+	{OV64B_SENSOR_ID_22823, 0xA0, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{IMX355_SENSOR_ID_22823, 0xA2, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{S5K3P9SP_SENSOR_ID_22823, 0xA8, Common_read_region, MAX_EEPROM_SIZE_16K},
+	{GC02M1_SENSOR_ID_22823, 0xA4, Common_read_region, MAX_EEPROM_SIZE_8K},
+    {OV64B_SENSOR_ID_22801, 0xA0, Common_read_region, MAX_EEPROM_SIZE_16K},
+	/*Cam.Drv add for Doki otp BringUp 20220523*/
+	{S5KJN1_SENSOR_ID_DOKI, 0xA0, Common_read_region},
+	{OV16A1Q_SENSOR_ID_DOKI, 0xA8, Common_read_region},
+	{S5KHM6SP_SENSOR_ID_DOKI, 0xA0, Common_read_region},
+	{OV16A1Q_SENSOR_ID_ADOKI, 0xA8, Common_read_region},
 	#ifdef SUPPORT_S5K4H7
 	{S5K4H7FRONT_SENSOR_ID, 0x20, s5k4h7_read_otpdata},
 	#endif
+	/*changzheng*/
+	{OV32C_SENSOR_ID_CHANGZHENG, 0xA0, Common_read_region},
+	{GC02M1_SENSOR_ID_CHANGZHENG, 0xA4, Common_read_region},
+	{OVA0B4_SENSOR_ID_CHANGZHENG, 0xA0, Common_read_region},
+	{S5KHM6S_SENSOR_ID_CHANGZHENG, 0xA0, Common_read_region},
+	/*24267*/
+	{OV50D40_SENSOR_ID_24267, 0xA0, Common_read_region},
+	{GC32E2_SENSOR_ID_24267, 0xA8, Common_read_region},
+	{OV08D10_SENSOR_ID_24267, 0xA2, Common_read_region},
+	{OV02B10_SENSOR_ID_24267, 0xA4, Common_read_region},
+	/*sonic start*/
+	{HI846_SENSOR_ID_SONIC, 0X46, Hi846_read_region},
+	{HI556_SENSOR_ID_SONIC, 0X40, Hi556_read_region},
+	/*sonic end*/
+	/*bluey*/
+	{HI846_SENSOR_ID_MAIN_BLUEY, 0xA0, Common_read_region},
+	{GC08A3_SENSOR_ID_BLUEY, 0xB0, Common_read_region},
+	{HI846SUB_SENSOR_ID_FRONT_BLUEY, 0xA8, Common_read_region},
+	{SC820CS_SENSOR_ID_BLUEY, 0xA0, Common_read_region},
+	/*sonic-s start*/
+	{HI846_SENSOR_ID_24695, 0X46, Hi846_read_region},
+	{HI556_SENSOR_ID_24695, 0X40, Hi556_read_region},
+	/*sonic-s end*/
 	/*  ADD before this line */
 	{0, 0, 0}       /*end of list */
 };

@@ -107,7 +107,18 @@ static unsigned int ma_to_mw(unsigned int bat_cur)
 		return 0;
 	}
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/*BSP.CHG.BASIC, 2022/05/20, Add for convert the vol to mV*/
+	/*check if the bat_vol unit is uV.*/
+	if (prop.intval/1000/1000) {
+		bat_vol = prop.intval / 1000; /*voltage unit: mV*/
+	} else {
+		bat_vol = prop.intval;  /*voltage unit: mV*/
+	}
+#else
 	bat_vol = prop.intval / 1000;
+#endif
+
 	ret_val = (bat_vol * bat_cur) / 1000;
 	pr_info("[%s] %d(mV) * %d(mA) = %d(mW)\n",
 		__func__, bat_vol, bat_cur, ret_val);

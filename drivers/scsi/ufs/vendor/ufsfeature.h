@@ -47,6 +47,7 @@
 #include "ufstw.h"
 #include "ufshid.h"
 #include "ufsringbuf.h"
+#include "ufssid.h"
 
 #define UFS_UPIU_MAX_GENERAL_LUN		8
 #define UFSHCD_STATE_OPERATIONAL		2	/* ufshcd.c */
@@ -55,7 +56,7 @@
 
 /* Version info */
 #define UFSFEATURE_DD_VER			0x020001
-#define UFSFEATURE_DD_VER_POST			"PoC"
+#define UFSFEATURE_DD_VER_POST			""
 
 /* For read10 debug */
 #define READ10_DEBUG_LUN			0x7F
@@ -86,7 +87,7 @@
 #define UFSF_QUERY_REQ_RETRIES			1
 
 /* Description */
-#define UFSF_QUERY_DESC_DEVICE_MAX_SIZE		0x5F
+#define UFSF_QUERY_DESC_DEVICE_MAX_SIZE		0x65
 #define UFSF_QUERY_DESC_CONFIGURAION_MAX_SIZE	0xE6
 #define UFSF_QUERY_DESC_UNIT_MAX_SIZE		0x2D
 #define UFSF_QUERY_DESC_GEOMETRY_MAX_SIZE	0x59
@@ -161,8 +162,6 @@ struct ufsf_feature {
 	struct mutex device_check_lock;
 
 	struct work_struct reset_wait_work;
-	struct work_struct reset_lu_work;
-	int reset_lu_pos;
 
 #if defined(CONFIG_UFSSHPB)
 	struct ufsshpb_dev_info hpb_dev_info;
@@ -179,13 +178,15 @@ struct ufsf_feature {
 	atomic_t tw_state;
 #endif
 #if defined(CONFIG_UFSHID)
-	struct work_struct on_idle_work;
 	atomic_t hid_state;
 	struct ufshid_dev *hid_dev;
 #endif
 #if defined(CONFIG_UFSRINGBUF)
 	atomic_t ringbuf_state;
 	struct ufsringbuf_dev *ringbuf_dev;
+#endif
+#if defined(CONFIG_UFSSID)
+	struct ufssid_dev *sid_dev;
 #endif
 };
 
@@ -205,14 +206,13 @@ void ufsf_slave_configure(struct ufsf_feature *ufsf, struct scsi_device *sdev);
 void ufsf_change_lun(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 
 int ufsf_prep_fn(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
-void ufsf_prepare_reset_lu(struct ufsf_feature *ufsf);
 void ufsf_reset_lu(struct ufsf_feature *ufsf);
 void ufsf_reset_host(struct ufsf_feature *ufsf);
 void ufsf_init(struct ufsf_feature *ufsf);
 void ufsf_reset(struct ufsf_feature *ufsf);
 void ufsf_remove(struct ufsf_feature *ufsf);
 void ufsf_set_init_state(struct ufsf_feature *ufsf);
-void ufsf_suspend(struct ufsf_feature *ufsf);
+void ufsf_suspend(struct ufsf_feature *ufsf, bool is_system_pm);
 void ufsf_resume(struct ufsf_feature *ufsf, bool is_link_off);
 
 /* mimic */
@@ -236,9 +236,6 @@ int ufsf_blk_execute_rq_nowait_mimic(struct request *rq,
 /* for hpb */
 void ufsf_hpb_noti_rb(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 
-/* for hid */
-void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
-
 /* Flag idn for Query Requests*/
 #if defined(CONFIG_UFSSHPB)
 #define QUERY_FLAG_IDN_HPB_RESET			0x11
@@ -247,9 +244,13 @@ void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 #define QUERY_FLAG_IDN_TW_EN				0x0E
 #define QUERY_FLAG_IDN_TW_BUF_FLUSH_EN			0x0F
 #define QUERY_FLAG_IDN_TW_FLUSH_DURING_HIBERN		0x10
+#define QUERY_FLAG_IDN_TW_BUF_FULL_COUNT_INIT		0x82
 #endif
 #if defined(CONFIG_UFSRINGBUF)
 #define QUERY_FLAG_IDN_CMD_HISTORY_RECORD_EN		0x12
+#endif
+#if defined(CONFIG_UFSSID)
+#define QUERY_FLAG_IDN_STREAM_ID_EN			0x15
 #endif
 
 /* Attribute idn for Query requests */
@@ -258,10 +259,23 @@ void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 #define QUERY_ATTR_IDN_TW_AVAIL_BUF_SIZE		0x1D
 #define QUERY_ATTR_IDN_TW_BUF_LIFETIME_EST		0x1E
 #define QUERY_ATTR_IDN_TW_CURR_BUF_SIZE			0x1F
+#define QUERY_ATTR_IDN_MAX_NO_FLUSH_TW_BUF_ALLOC_UNITS	0x84
+#define QUERY_ATTR_IDN_TW_BUF_RESIZE			0x85
+#define QUERY_ATTR_IDN_TW_BUF_RESIZE_STATUS		0x86
+#define QUERY_ATTR_IDN_RESIZED_TW_BUF_ALLOC_UNITS	0x87
+#define QUERY_ATTR_IDN_TW_BUF_FULL_COUNT		0x88
+#define QUERY_ATTR_IDN_TW_BUF_RESIZE_NOT_AVAIL		0x89
 #endif
 #if defined(CONFIG_UFSHID)
 #define QUERY_ATTR_IDN_HID_OPERATION			0x20
 #define QUERY_ATTR_IDN_HID_FRAG_LEVEL			0x21
+#define QUERY_ATTR_IDN_HID_SIZE				0x8A
+#define QUERY_ATTR_IDN_HID_AVAIL_SIZE			0x8B
+#define QUERY_ATTR_IDN_HID_PROGRESS_RATIO		0x8C
+#define QUERY_ATTR_IDN_HID_STATE			0x8D
+#define QUERY_ATTR_IDN_HID_L2P_FRAG_LEVEL		0x8E
+#define QUERY_ATTR_IDN_HID_L2P_DEFRAG_THRESHOLD		0x8F
+#define QUERY_ATTR_IDN_HID_FEAT_SUP			0x90
 #endif
 #if defined (CONFIG_UFSRINGBUF)
 #define QUERY_ATTR_IDN_RINGBUF_RTCA			0x22
@@ -297,6 +311,9 @@ void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 #if defined(CONFIG_UFSRINGBUF)
 #define DEVICE_DESC_PARAM_RING_BUF_VER			0x5B
 #endif
+#if defined(CONFIG_UFSSID)
+#define DEVICE_DESC_PARAM_SID_VER			0x63
+#endif
 
 /* Geometry descriptor parameters offsets in bytes*/
 #if defined(CONFIG_UFSSHPB)
@@ -312,6 +329,10 @@ void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp);
 #define GEOMETRY_DESC_TW_CAP_ADJ_FAC			0x54
 #define GEOMETRY_DESC_TW_SUPPORT_USER_REDUCTION_TYPES	0x55
 #define GEOMETRY_DESC_TW_SUPPORT_BUF_TYPE		0x56
+#endif
+#if defined(CONFIG_UFSHID)
+#define GEOMETRY_DESC_HID_MAX_LBA_RANGE_SIZE		0x59
+#define GEOMETRY_DESC_HID_MAX_LBA_RANGE_CNT		0x5D
 #endif
 #if defined(CONFIG_UFSRINGBUF)
 #define GEOMETRY_DESC_RINGBUF_MAX_HIST_BUFSIZE		0x57

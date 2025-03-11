@@ -168,6 +168,7 @@ struct mtk_smi_larb { /* larb: local arbiter */
 	const struct mtk_smi_larb_gen	*larb_gen;
 	int				larbid;
 	int				comm_port_id[LARB_MAX_COMMON];
+	int				suspend_check_port[LARB_MAX_COMMON];
 	u32				*mmu;
 
 	unsigned char			*bank;
@@ -177,7 +178,7 @@ struct mtk_smi_larb { /* larb: local arbiter */
 #define MAX_LARB_FOR_CLAMP		(6)
 #define RESET_CELL_NUM			(2)
 #define MAX_PD_CHECK_DEV_NUM	(2)
-#define SMI_OSTD_CNT_MASK	(0x1FFE000)
+#define SMI_OSTD_CNT_MASK	(0x7FFE000)
 
 struct mtk_smi_pd_log {
 	u8 power_status;
@@ -1950,6 +1951,9 @@ static int mtk_smi_larb_probe(struct platform_device *pdev)
 		larb->comm_port_id[i] = -1;
 		of_property_read_u32_index(dev->of_node, "mediatek,comm-port-id",
 						i, &larb->comm_port_id[i]);
+
+		of_property_read_u32_index(dev->of_node, "mediatek,suspend-check-port",
+						i, &larb->suspend_check_port[i]);
 	}
 
 
@@ -2053,8 +2057,8 @@ static u32 mtk_smi_common_ostd_check(struct mtk_smi *common,
 	for (i = 0; i < SMI_COMMON_LARB_NR_MAX; i++) {
 		if ((check_port >> i) & 1) {
 			val = readl_relaxed(common->base + SMI_DEBUG_S(i));
-			pr_notice("[SMI] common%d: %#x=%#x, power status = %ld\n",
-				common->commid, SMI_DEBUG_S(i), val, flags);
+			//pr_notice("[SMI] common%d: %#x=%#x, power status = %ld\n",
+			//	common->commid, SMI_DEBUG_S(i), val, flags);
 			if (val & SMI_OSTD_CNT_MASK) {
 				pr_notice("[SMI] common%d suspend check fail, power status = %ld\n",
 					common->commid, flags);
@@ -2192,6 +2196,8 @@ static int __maybe_unused mtk_smi_larb_suspend(struct device *dev)
 {
 	struct mtk_smi_larb *larb = dev_get_drvdata(dev);
 	const struct mtk_smi_larb_gen *larb_gen = larb->larb_gen;
+	int i, ret;
+	struct mtk_smi *common;
 
 	atomic_dec(&larb->smi.ref_count);
 	if (log_level & 1 << log_config_bit)
@@ -2209,6 +2215,15 @@ static int __maybe_unused mtk_smi_larb_suspend(struct device *dev)
 	if (readl_relaxed(larb->base + SMI_LARB_STAT)) {
 		pr_notice("[SMI]larb:%d, suspend but busy\n", larb->larbid);
 		raw_notifier_call_chain(&smi_driver_notifier_list, larb->larbid, larb);
+	}
+
+	for (i = 0; i < LARB_MAX_COMMON; i++) {
+		if (!larb->smi_common_dev[i] || !larb->suspend_check_port[i])
+			break;
+		common = dev_get_drvdata(larb->smi_common_dev[i]);
+		ret = mtk_smi_common_ostd_check(common, larb->suspend_check_port[i], 0xf);
+		if (ret)
+			raw_notifier_call_chain(&smi_driver_notifier_list, larb->larbid, larb);
 	}
 
 	if (larb_gen->sleep_ctrl)

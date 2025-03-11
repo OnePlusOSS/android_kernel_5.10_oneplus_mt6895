@@ -176,6 +176,9 @@ static const char *const tcpc_timer_name[] = {
 #endif	/* CONFIG_USB_PD_REV30 */
 
 	"PD_TIMER_PE_IDLE_TOUT",
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	"PD_TIMER_INT_INVAILD",
+#endif
 #endif /* CONFIG_USB_POWER_DELIVERY */
 
 /* TYPEC_RT_TIMER (out of spec) */
@@ -309,6 +312,9 @@ DECL_TCPC_TIMEOUT(PD_TIMER_SNK_FLOW_DELAY,
 #endif	/* CONFIG_USB_PD_REV30 */
 
 DECL_TCPC_TIMEOUT(PD_TIMER_PE_IDLE_TOUT, 10),
+#ifdef OPLUS_FEATURE_CHG_BASIC
+DECL_TCPC_TIMEOUT(PD_TIMER_INT_INVAILD, 150),
+#endif
 #endif /* CONFIG_USB_POWER_DELIVERY */
 
 /* TYPEC_RT_TIMER (out of spec) */
@@ -361,6 +367,10 @@ static inline void on_pe_timer_timeout(
 		struct tcpc_device *tcpc, uint32_t timer_id)
 {
 	struct pd_event pd_event = {0};
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	int rv = 0;
+	uint32_t chip_vid = 0;
+#endif
 
 	pd_event.event_type = PD_EVT_TIMER_MSG;
 	pd_event.msg = timer_id;
@@ -417,7 +427,18 @@ static inline void on_pe_timer_timeout(
 		TCPC_INFO("pe_idle tout\n");
 		pd_put_pe_event(&tcpc->pd_port, PD_PE_IDLE);
 		break;
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	case PD_TIMER_HARD_RESET_COMPLETE:
+		rv = tcpci_get_chip_vid(tcpc, &chip_vid);
+		if (!rv &&  SOUTHCHIP_PD_VID == chip_vid) {
+			pd_put_sent_hard_reset_event(tcpc);
+		}
+		break;
+	case PD_TIMER_INT_INVAILD:
+		tcpc->recv_msg_cnt = 0;
+		tcpc_restart_timer(tcpc, PD_TIMER_INT_INVAILD);
+		break;
+#endif
 	default:
 		pd_put_event(tcpc, &pd_event, false);
 		break;
@@ -809,6 +830,17 @@ static enum hrtimer_restart tcpc_timer_pe_idle_tout(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static enum hrtimer_restart tcpc_timer_int_invaild(struct hrtimer *timer)
+{
+	int index = PD_TIMER_INT_INVAILD;
+	struct tcpc_device *tcpc =
+		container_of(timer, struct tcpc_device, tcpc_timer[index]);
+
+	TCPC_TIMER_TRIGGER();
+	return HRTIMER_NORESTART;
+}
+#endif
 #endif /* CONFIG_USB_POWER_DELIVERY */
 
 /* TYPEC_RT_TIMER (out of spec ) */
@@ -1128,6 +1160,9 @@ static tcpc_hrtimer_call tcpc_timer_call[PD_TIMER_NR] = {
 #endif	/* CONFIG_USB_PD_REV30 */
 
 	tcpc_timer_pe_idle_tout,
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	tcpc_timer_int_invaild,
+#endif
 #endif /* CONFIG_USB_POWER_DELIVERY */
 
 /* TYPEC_RT_TIMER (out of spec )*/
@@ -1202,6 +1237,9 @@ static inline void tcpc_reset_timer_range(
 		if (mask & RT_MASK64(i)) {
 			hrtimer_try_to_cancel(&tcpc->tcpc_timer[i]);
 			tcpc_clear_timer_enable_mask(tcpc, i);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+			atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 		}
 	}
 
@@ -1225,7 +1263,11 @@ void tcpc_enable_wakeup_timer(struct tcpc_device *tcpc, bool en)
 void tcpc_enable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 {
 	uint32_t r, mod, tout;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	uint64_t mask_curr, mask_prev;
 
+	mask_prev = tcpc_get_timer_enable_mask(tcpc);
+#endif
 	TCPC_TIMER_EN_DBG(tcpc, timer_id);
 	if (timer_id >= PD_TIMER_NR) {
 		PD_BUG_ON(1);
@@ -1236,7 +1278,13 @@ void tcpc_enable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 		tcpc_reset_timer_range(tcpc, TYPEC_TIMER_START_ID, PD_TIMER_NR);
 
 	tcpc_set_timer_enable_mask(tcpc, timer_id);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	mask_curr = tcpc_get_timer_enable_mask(tcpc);
+	if (mask_prev ^ mask_curr)
+		atomic_inc(&tcpc->suspend_pending);
+	else
+		atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 	tout = tcpc_timer_timeout[timer_id];
 #if PD_DYNAMIC_SENDER_RESPONSE
 	if ((timer_id == PD_TIMER_SENDER_RESPONSE) &&
@@ -1273,6 +1321,9 @@ void tcpc_disable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 	if (mask & RT_MASK64(timer_id)) {
 		hrtimer_try_to_cancel(&tcpc->tcpc_timer[timer_id]);
 		tcpc_clear_timer_enable_mask(tcpc, timer_id);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 	}
 }
 
@@ -1280,7 +1331,11 @@ void tcpc_disable_timer(struct tcpc_device *tcpc, uint32_t timer_id)
 void tcpc_reset_pe_timer(struct tcpc_device *tcpc)
 {
 	mutex_lock(&tcpc->timer_lock);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	tcpc_reset_timer_range(tcpc, 0, PD_TIMER_INT_INVAILD);
+#else
 	tcpc_reset_timer_range(tcpc, 0, PD_PE_TIMER_END_ID);
+#endif
 	mutex_unlock(&tcpc->timer_lock);
 }
 #endif /* CONFIG_USB_POWER_DELIVERY */
@@ -1306,6 +1361,9 @@ static void tcpc_handle_timer_triggered(struct tcpc_device *tcpc)
 	uint64_t triggered_timer = tcpc_get_timer_tick(tcpc);
 	uint64_t enable_mask = tcpc_get_timer_enable_mask(tcpc);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	atomic_inc(&tcpc->suspend_pending);
+#endif
 #if IS_ENABLED(CONFIG_USB_POWER_DELIVERY)
 	for (i = 0; i < PD_PE_TIMER_END_ID; i++) {
 		if (triggered_timer & RT_MASK64(i)) {
@@ -1329,7 +1387,9 @@ static void tcpc_handle_timer_triggered(struct tcpc_device *tcpc)
 		}
 	}
 	mutex_unlock(&tcpc->typec_lock);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 }
 
 static int tcpc_timer_thread_fn(void *data)

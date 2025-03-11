@@ -211,6 +211,18 @@ int charger_dev_set_input_current(struct charger_device *chg_dev, u32 uA)
 }
 EXPORT_SYMBOL(charger_dev_set_input_current);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+int charger_dev_set_boost_voltage_limit(struct charger_device *chg_dev, u32 uv)
+{
+	if (chg_dev != NULL && chg_dev->ops != NULL &&
+		chg_dev->ops->set_boost_voltage_limit)
+		return chg_dev->ops->set_boost_voltage_limit(chg_dev, uv);
+
+	return -EOPNOTSUPP;
+}
+EXPORT_SYMBOL(charger_dev_set_boost_voltage_limit);
+#endif
+
 int charger_dev_get_input_current(struct charger_device *chg_dev, u32 *uA)
 {
 	if (chg_dev != NULL && chg_dev->ops != NULL &&
@@ -331,8 +343,8 @@ EXPORT_SYMBOL(charger_dev_get_mivr);
 int charger_dev_enable_powerpath(struct charger_device *chg_dev, bool en)
 {
 	if (chg_dev != NULL && chg_dev->ops != NULL &&
-	    chg_dev->ops->enable_powerpath)
-		return chg_dev->ops->enable_powerpath(chg_dev, en);
+		chg_dev->ops->enable_powerpath)
+			return chg_dev->ops->enable_powerpath(chg_dev, en);
 
 	return -EOPNOTSUPP;
 }

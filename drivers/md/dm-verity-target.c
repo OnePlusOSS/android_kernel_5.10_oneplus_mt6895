@@ -252,8 +252,10 @@ out:
 	if (v->mode == DM_VERITY_MODE_LOGGING)
 		return 0;
 
-	if (v->mode == DM_VERITY_MODE_RESTART)
-		kernel_restart("dm-verity device corrupted");
+	if (v->mode == DM_VERITY_MODE_RESTART) {
+                //kernel_restart("dm-verity device corrupted");
+		panic("MODE_RESTART:dm-verity device corrupted");
+        }
 
 	if (v->mode == DM_VERITY_MODE_PANIC)
 		panic("dm-verity device corrupted");
@@ -482,7 +484,7 @@ static int verity_verify_io(struct dm_verity_io *io)
 		sector_t cur_block = io->block + b;
 		struct ahash_request *req = verity_io_hash_req(v, io);
 
-		if (v->validated_blocks &&
+		if (v->validated_blocks && bio->bi_status == BLK_STS_OK &&
 		    likely(test_bit(cur_block, v->validated_blocks))) {
 			verity_bv_skip_block(v, io, &io->iter);
 			continue;
@@ -538,7 +540,7 @@ static int verity_verify_io(struct dm_verity_io *io)
 				return -EIO;
 			}
 			if (verity_handle_err(v, DM_VERITY_BLOCK_TYPE_DATA,
-					   cur_block))
+					      cur_block))
 				return -EIO;
 		}
 	}
@@ -583,7 +585,9 @@ static void verity_end_io(struct bio *bio)
 	struct dm_verity_io *io = bio->bi_private;
 
 	if (bio->bi_status &&
-	    (!verity_fec_is_enabled(io->v) || verity_is_system_shutting_down())) {
+	    (!verity_fec_is_enabled(io->v) ||
+	     verity_is_system_shutting_down() ||
+	     (bio->bi_opf & REQ_RAHEAD))) {
 		verity_finish_io(io, bio->bi_status);
 		return;
 	}
@@ -999,6 +1003,10 @@ static int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	sector_t hash_position;
 	char dummy;
 	char *root_hash_digest_to_validate;
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	static atomic_t verity_wq_id = ATOMIC_INIT(0);
+	char *verity_wq_name;
+#endif
 
 	v = kzalloc(sizeof(struct dm_verity), GFP_KERNEL);
 	if (!v) {
@@ -1219,8 +1227,22 @@ static int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 		goto bad;
 	}
 
-	/* WQ_UNBOUND greatly improves performance when running on ramdisk */
-	v->verify_wq = alloc_workqueue("kverityd", WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM | WQ_UNBOUND, num_online_cpus());
+	/*
+	 * Using WQ_HIGHPRI improves throughput and completion latency by
+	 * reducing wait times when reading from a dm-verity device.
+	 *
+	 * Also as required for the "try_verify_in_tasklet" feature: WQ_HIGHPRI
+	 * allows verify_wq to preempt softirq since verification in tasklet
+	 * will fall-back to using it for error handling (or if the bufio cache
+	 * doesn't have required hashes).
+	 */
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	atomic_add(1, &verity_wq_id);
+	verity_wq_name = kasprintf(GFP_KERNEL, "kverityd%d", atomic_read(&verity_wq_id));
+	v->verify_wq = alloc_workqueue(verity_wq_name, WQ_MEM_RECLAIM | WQ_HIGHPRI | WQ_UX | WQ_UNBOUND | WQ_SYSFS, 0);
+#else
+	v->verify_wq = alloc_workqueue("kverityd", WQ_MEM_RECLAIM | WQ_HIGHPRI, 0);
+#endif
 	if (!v->verify_wq) {
 		ti->error = "Cannot allocate workqueue";
 		r = -ENOMEM;
@@ -1251,7 +1273,9 @@ bad:
 
 static struct target_type verity_target = {
 	.name		= "verity",
+	.features	= DM_TARGET_IMMUTABLE,
 	.version	= {1, 7, 0},
+	.features	= DM_TARGET_IMMUTABLE,
 	.module		= THIS_MODULE,
 	.ctr		= verity_ctr,
 	.dtr		= verity_dtr,

@@ -119,6 +119,9 @@ struct mtk_cam_seninf_ops {
 	int (*_debug)(struct seninf_ctx *ctx);
 	int (*_set_reg)(struct seninf_ctx *ctx, u32 key, u32 val);
 	ssize_t (*_show_err_status)(struct device *dev, struct device_attribute *attr, char *buf);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	int (*_get_csi_irq_status)(struct seninf_ctx *ctx);
+#endif
 	unsigned int seninf_num;
 	unsigned int mux_num;
 	unsigned int cam_mux_num;

@@ -61,6 +61,13 @@ static ssize_t sspm_alive_show(struct device *kobj,
 	int ret;
 	struct scmi_tinysys_info_st *tinfo = get_scmi_tinysys_info();
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (!tinfo) {
+		pr_err("%s tinfo is NULL\n", __func__);
+		return -1;
+	}
+#endif
+
 	msg_data.cmd = 0xDEAD;
 
 	ret = scmi_tinysys_common_set(tinfo->ph, scmi_plt_id,
@@ -83,6 +90,13 @@ int __init sspm_plt_init(void)
 #endif
 	unsigned int *mark;
 	unsigned char *b;
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (!tinfo) {
+		pr_err("sspm_plt_init input tinfo is NULL!\n");
+		goto error;
+	}
+#endif
 
 	ret = sspm_sysfs_create_file(&dev_attr_sspm_alive);
 	if (unlikely(ret != 0))

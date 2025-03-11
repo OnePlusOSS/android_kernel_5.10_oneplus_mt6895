@@ -1071,6 +1071,12 @@ void scp_wdt_reset(int cpu_id)
 #endif
 	switch (cpu_id) {
 	case 0:
+#ifdef OPLUS_FEATURE_SENSOR
+		if (IS_ERR_OR_NULL((void const *) scpreg.cfg_core0)) {
+			pr_debug("[SCP] scpreg.cfg_core0 error\n");
+			return;
+		}
+#endif /* OPLUS_FEATURE_SENSOR */
 		writel(V_INSTANT_WDT, R_CORE0_WDT_CFG);
 		break;
 	case 1:
@@ -2645,6 +2651,39 @@ static struct platform_driver mtk_scpsys_device = {
 	},
 };
 
+#if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
+/* user-space event notify */
+static int scp_user_event_notify(struct notifier_block *nb,
+				  unsigned long event, void *ptr)
+{
+	struct device *dev = scp_device.this_device;
+	int ret = 0;
+
+	if (!dev)
+		return NOTIFY_DONE;
+
+	switch (event) {
+	case SCP_EVENT_STOP:
+		ret = kobject_uevent(&dev->kobj, KOBJ_OFFLINE);
+		break;
+	case SCP_EVENT_READY:
+		ret = kobject_uevent(&dev->kobj, KOBJ_ONLINE);
+		break;
+	default:
+		pr_info("%s, ignore event %lu", __func__, event);
+		break;
+	}
+
+	if (ret)
+		pr_info("%s, uevent(%lu) fail, ret %d", __func__, event, ret);
+
+	return NOTIFY_OK;
+}
+
+struct notifier_block scp_uevent_notifier = {
+	.notifier_call = scp_user_event_notify,
+};
+#endif
 int notify_scp_semaphore_event(struct notifier_block *nb,
 			       unsigned long event, void *v)
 {
@@ -2810,6 +2849,9 @@ static int __init scp_init(void)
 		scp_init_vcore_request();
 #endif /* SCP_DVFS_INIT_ENABLE */
 
+#if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
+	scp_A_register_notify(&scp_uevent_notifier);
+#endif
 	register_3way_semaphore_notifier(&scp_semaphore_init_notifier);
 
 	return ret;

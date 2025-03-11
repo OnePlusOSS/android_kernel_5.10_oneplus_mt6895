@@ -330,10 +330,23 @@ struct mtk_sensor_static_param {
 	__u32 pixelrate;
 	__u32 cust_pixelrate;
 };
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+enum mtk_mbus_frame_desc_dt_remap_type {
+	MTK_MBUS_FRAME_DESC_REMAP_NONE = 0,
+	MTK_MBUS_FRAME_DESC_REMAP_TO_RAW10,
+	MTK_MBUS_FRAME_DESC_REMAP_TO_RAW12,
+	MTK_MBUS_FRAME_DESC_REMAP_TO_RAW14,
+};
+#endif
+
 struct mtk_mbus_frame_desc_entry_csi2 {
 	u8 channel;
 	u8 data_type;
 	u8 enable;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	u8 dt_remap_to_type;
+#endif
 	u16 hsize;
 	u16 vsize;
 	u16 user_data_desc;
@@ -381,6 +394,29 @@ struct mtk_n_1_mode {
 	__u8 en;
 };
 
+enum FS_SYNC_TYPE {
+	FS_SYNC_TYPE_NONE = 0,
+
+	/* below tags, chose one (default use VSYNC, mutually exclusive) */
+	FS_SYNC_TYPE_VSYNC = 1 << 1,
+	FS_SYNC_TYPE_READOUT_CENTER = 1 << 2,
+
+	/* below tags, chose one (default use LE, mutually exclusive) */
+	FS_SYNC_TYPE_LE = 1 << 3,
+	FS_SYNC_TYPE_SE = 1 << 4,
+
+	/* SA - Async mode */
+	FS_SYNC_TYPE_ASYNC_MODE = 1 << 8,
+};
+
+struct mtk_fs_frame_length_info {
+	/* for stable case, sensor min frame length */
+	__u32 target_min_fl_us;
+
+	/* sensor current frame length value */
+	__u32 out_fl_us;
+};
+
 struct mtk_test_pattern_data {
 	__u32 Channel_R;
 	__u32 Channel_Gr;
@@ -394,6 +430,71 @@ struct mtk_fine_integ_line {
 	__u32 fine_integ_line;
 };
 
+struct mtk_sensor_mode_info {
+	__u32 scenario_id;
+	__u32 mode_exposure_num;
+};
+
+struct mtk_sensor_mode_config_info {
+	__u32 current_scenario_id;
+	__u32 count;
+	struct mtk_sensor_mode_info seamless_scenario_infos[SENSOR_SCENARIO_ID_MAX];
+};
+
+//Renjianlin add for camerasn
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+struct oplus_get_camera_sn
+{
+	int len;
+	char data[40];
+};
+
+enum EEPROM_COMMON_DATA {
+	EEPROM_MODULE_ID = 0,
+	EEPROM_SENSOR_ID,
+	EEPROM_LENS_ID,
+	EEPROM_VCM_ID,
+	EEPROM_MODULE_SN,
+	EEPROM_AF_CODE_MACRO,
+	EEPROM_AF_CODE_INFINITY,
+	EEPROM_AF_CODE_MIDDLE,
+	EEPROM_COMMON_DATA_COUNT
+};
+struct oplus_get_eeprom_common_data
+{
+	char header[EEPROM_COMMON_DATA_COUNT];
+	char data[64];
+};
+
+struct oplus_calc_eeprom_info {
+	int size;
+	__u16 *p_buf;
+};
+
+struct oplus_distortion_data {
+	int size;
+	__u8 *p_buf;
+};
+struct oplus_sensor_setting_info {
+	__u32 scenario_id;
+	struct SENSOR_SETTING_INFO_STRUCT *p_sensor_info;
+};
+
+struct oplus_get_unique_sensorid
+{
+	int size;
+	__u8 *p_buf;
+};
+struct oplus_set_cali_data
+{
+	int size;
+	__u8 *p_buf;
+};
+struct oplus_cloud_otp_info {
+	__u32 otp_type;
+	struct SENSOR_OTP_INFO_STRUCT *p_cloud_info;
+};
+#endif
 /* GET */
 
 #define VIDIOC_MTK_G_DEF_FPS_BY_SCENARIO \
@@ -507,6 +608,40 @@ struct mtk_fine_integ_line {
 #define VIDIOC_MTK_G_MAX_EXPOSURE_LINE \
 	_IOWR('M', BASE_VIDIOC_PRIVATE + 39, struct mtk_max_exp_line)
 
+//Renjianlin add for camerasn
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define VIDIOC_MTK_G_CAMERA_SN \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 40, struct oplus_get_camera_sn)
+
+#define VIDIOC_MTK_G_STEREO_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 41, struct oplus_calc_eeprom_info)
+
+#define VIDIOC_MTK_G_OTP_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 42, struct oplus_calc_eeprom_info)
+
+#define VIDIOC_MTK_G_DISTORTIONPARAMS_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 43, struct oplus_distortion_data)
+#endif
+
+#define VIDIOC_MTK_G_FS_FRAME_LENGTH_INFO \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 44, struct mtk_fs_frame_length_info)
+
+#define VIDIOC_MTK_G_CAMERA_EEPROM_COMMON \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 45, struct oplus_get_eeprom_common_data)
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define VIDIOC_MTK_G_SENSOR_SETTING_INFO \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 46, struct oplus_sensor_setting_info)
+
+#define VIDIOC_MTK_G_UNIQUE_SENSORID \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 47, struct oplus_get_unique_sensorid)
+
+#define VIDIOC_MTK_G_EEPROM_PROBE_STATE \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 48, int)
+
+#define VIDIOC_MTK_G_CLOUD_OTP_INFO \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 49, struct oplus_cloud_otp_info)
+#endif
 /* SET */
 
 #define VIDIOC_MTK_S_VIDEO_FRAMERATE \
@@ -539,4 +674,17 @@ struct mtk_fine_integ_line {
 #define VIDIOC_MTK_S_TG \
 	_IOW('M', BASE_VIDIOC_PRIVATE + 110, int)
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#define VIDIOC_MTK_S_CALIBRATION_EEPROM \
+	_IOW('M', BASE_VIDIOC_PRIVATE + 111, ACDK_SENSOR_ENGMODE_STEREO_STRUCT)
+
+#define VIDIOC_MTK_S_CALI_DATA \
+	_IOWR('M', BASE_VIDIOC_PRIVATE + 112, struct oplus_set_cali_data)
+
+#define VIDIOC_MTK_S_AON_HE_POWER_UP 0x5000
+
+#define VIDIOC_MTK_S_AON_HE_POWER_DOWN 0x5001
+
+#define VIDIOC_MTK_S_AON_HE_QUERY_INFO 0x5002
+#endif
 #endif

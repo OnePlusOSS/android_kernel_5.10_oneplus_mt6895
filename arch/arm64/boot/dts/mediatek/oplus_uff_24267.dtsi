@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+* Copyright (C) 2021-2025 Oplus. All rights reserved.
+*/
+#include <dt-bindings/iio/mt635x-auxadc.h>
+#include <dt-bindings/pinctrl/mt6373-pinfunc.h>
+#include <dt-bindings/pinctrl/mt65xx.h>
+
+/* UFF dts config at 2023.12.14
+ *
+ * fp vendor:
+ *   silead: series_7002(7015)
+ */
+
+/* FINGERPRINT start */
+&spi3 {
+#address-cells = <1>;
+#size-cells = <0>;
+status = "okay";
+oplus_fp: fingerprint@0 {
+		compatible = "oplus,fp_spi";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+		spi-id = <3>;
+		spi-irq = <19>;
+		spi-reg = <11013000>;
+
+		uff,gpio_irq = <&pio 19 0x00>;
+		uff,gpio_reset = <&pio 108 0x00>;
+		uff,gpio_cs = <&pio 43 0x00>;
+		pinctrl-names = "default", "fp_spi_driver", "fp_cs_func";
+		pinctrl-0 = <&gpio_uff_irq_default>, <&gpio_uff_reset_default>;
+		pinctrl-1 = <&gpio_uff_clk_6mA>, <&gpio_uff_mosi_6mA>, <&gpio_uff_miso_6mA>, <&uff_gpio_cs_6mA>;
+		pinctrl-2 = <&gpio_uff_cs_func>;
+
+		//ldo-supply = <&wl2868c_gpio_ext_buck_en1>;
+		//ldo-config = <3000>;
+		//ldo-num = <5>;
+		power-num = <1>;
+		status = "okay";
+		power_source_1 {
+			power-mode = <3>;  //auto power mode. VPH_PWR is shared with TP module, TP will controll this VDD.
+			power-name = "dvdd";
+			power-config = "dvdd-config";
+			delay-time = <0>;
+		};
+	};
+};
+
+&pio{
+gpio_uff_reset_default: gpio_uff_reset_default {
+				pins_cmd_dat {
+					pinmux = <PINMUX_GPIO108__FUNC_GPIO108>;
+					slew-rate = <1>;
+					output-low;
+				};
+			};
+gpio_uff_irq_default: gpio_uff_irq_default {
+				pins_cmd_dat {
+					pinmux = <PINMUX_GPIO19__FUNC_GPIO19>;
+					slew-rate = <0>;
+					bias-pull-down;
+				};
+			};
+gpio_uff_clk_6mA: gpio_uff_clk_6mA {
+				pins_cmd_dat {
+					pinmux = <PINMUX_GPIO42__FUNC_SPI3_CLK>;
+					drive-strength = <1>;
+				};
+			};
+gpio_uff_mosi_6mA: gpio_uff_mosi_6mA {
+				pins_cmd_dat {
+					pinmux = <PINMUX_GPIO44__FUNC_SPI3_MO>;
+					drive-strength = <1>;
+				};
+			};
+gpio_uff_miso_6mA: gpio_uff_miso_6mA {
+				pins_cmd_dat {
+					pinmux = <PINMUX_GPIO45__FUNC_SPI3_MI>;
+					drive-strength = <1>;
+				};
+			};
+uff_gpio_cs_6mA: uff_gpio_cs_6mA {
+					pins_cmd_dat {
+					pinmux = <PINMUX_GPIO43__FUNC_SPI3_CSB>;
+					drive-strength = <1>;
+				};
+			};
+gpio_uff_cs_func: gpio_uff_cs_func {
+					pins_cmd_dat {
+					pinmux = <PINMUX_GPIO43__FUNC_SPI3_CSB>;
+					drive-strength = <1>;
+				};
+			};
+};
+/* FINGERPRINT end */

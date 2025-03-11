@@ -387,6 +387,11 @@ static struct mml_frame_config *frame_config_create(
 	if (!cfg)
 		return ERR_PTR(-ENOMEM);
 	mml_core_init_config(cfg);
+	if (!cfg->wq_done) {
+		mml_err("[drm] fail to alloc wq_done\n");
+		kfree(cfg);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	list_add(&cfg->entry, &ctx->configs);
 	ctx->config_cnt++;
@@ -634,6 +639,7 @@ static void task_frame_done(struct mml_task *task)
 			cfg->run_task_cnt,
 			cfg->done_task_cnt,
 			task->state);
+		task->err = true;
 		kref_put(&task->ref, task_move_to_destroy);
 	} else {
 		/* works fine, safe to move */
@@ -727,8 +733,9 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 	void *cb_param)
 {
 	struct mml_frame_config *cfg;
-	struct mml_task *task;
-	s32 result;
+	struct mml_task *task = NULL;
+	s32 result = -EINVAL;
+
 	u32 i;
 	struct fence_data fence = {0};
 
@@ -893,7 +900,7 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 			      &submit->buffer.src,
 			      "mml_rdma");
 	if (result) {
-		mml_err("[drm]%s get dma buf fail", __func__);
+		mml_err("[drm]%s get src dma buf fail", __func__);
 		goto err_buf_exit;
 	}
 	task->buf.dest_cnt = submit->buffer.dest_cnt;
@@ -902,7 +909,7 @@ s32 mml_drm_submit(struct mml_drm_ctx *ctx, struct mml_submit *submit,
 				      &submit->buffer.dest[i],
 				      "mml_wrot");
 		if (result) {
-			mml_err("[drm]%s get dma buf fail", __func__);
+			mml_err("[drm]%s get dest %u dma buf fail", __func__, i);
 			goto err_buf_exit;
 		}
 	}
@@ -943,7 +950,24 @@ err_unlock_exit:
 	mutex_unlock(&ctx->config_mutex);
 err_buf_exit:
 	mml_trace_end();
-	mml_log("%s fail result %d", __func__, result);
+	mml_log("%s fail result %d task %p", __func__, result, task);
+	if (task) {
+		mutex_lock(&ctx->config_mutex);
+		list_del_init(&task->entry);
+		cfg->await_task_cnt--;
+		if (task->state == MML_TASK_INITIAL) {
+			mml_log("dec config %p and del", cfg);
+			list_del_init(&cfg->entry);
+			ctx->config_cnt--;
+			/* revert racing ref count decrease after done */
+			if (cfg->info.mode == MML_MODE_RACING)
+				atomic_dec(&ctx->racing_cnt);
+		} else
+			mml_log("dec config %p", cfg);
+		mutex_unlock(&ctx->config_mutex);
+		kref_put(&task->ref, task_move_to_destroy);
+		cfg->cfg_ops->put(cfg);
+	}
 	return result;
 }
 EXPORT_SYMBOL_GPL(mml_drm_submit);
@@ -1165,6 +1189,24 @@ static struct mml_drm_ctx *drm_ctx_create(struct mml_dev *mml,
 	ctx->panel_pixel = MML_DEFAULT_PANEL_PX;
 	ctx->wq_config[0] = alloc_ordered_workqueue("mml_work0", WORK_CPU_UNBOUND | WQ_HIGHPRI, 0);
 	ctx->wq_config[1] = alloc_ordered_workqueue("mml_work1", WORK_CPU_UNBOUND | WQ_HIGHPRI, 0);
+
+	if (!ctx->wq_destroy || !ctx->wq_config[0] || !ctx->wq_config[1]) {
+		mml_err("[drm] fail to alloc workqueue\n");
+		if (ctx->wq_destroy) {
+			destroy_workqueue(ctx->wq_destroy);
+			ctx->wq_destroy = NULL;
+		}
+		if (ctx->wq_config[0]) {
+			destroy_workqueue(ctx->wq_config[0]);
+			ctx->wq_config[0] = NULL;
+		}
+		if (ctx->wq_config[1]) {
+			destroy_workqueue(ctx->wq_config[1]);
+			ctx->wq_config[1] = NULL;
+		}
+		kfree(ctx);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	ctx->timeline = mtk_sync_timeline_create("mml_timeline");
 	if (!ctx->timeline)

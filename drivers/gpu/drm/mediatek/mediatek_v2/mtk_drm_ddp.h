@@ -98,6 +98,7 @@ struct mtk_ddp {
 	resource_size_t side_regs_pa;
 	struct mtk_disp_mutex mutex[10];
 	const struct mtk_disp_ddp_data *data;
+	struct mtk_drm_crtc *mtk_crtc[MAX_CRTC];
 	struct cmdq_base *cmdq_base;
 };
 

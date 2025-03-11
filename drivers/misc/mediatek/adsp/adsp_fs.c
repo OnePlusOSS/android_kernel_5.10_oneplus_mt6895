@@ -170,11 +170,50 @@ static inline ssize_t log_enable_store(struct device *dev,
 }
 DEVICE_ATTR_RW(log_enable);
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#define LOAD_MONITOR_MAX_LEN  64
+static inline ssize_t load_monitor_store(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	size_t ret = 0;
+	char cmds[LOAD_MONITOR_MAX_LEN] = {0};
+	struct adsp_priv *pdata = container_of(dev_get_drvdata(dev),
+					struct adsp_priv, mdev);
+
+	/* ipi buf size is 64*/
+	if (!buf || (count > LOAD_MONITOR_MAX_LEN)) {
+		pr_warn("%s(), param buf=%p, count=%lu invalid\n", __func__, buf, count);
+		return -1;
+	}
+	memcpy(cmds, buf, count);
+	cmds[LOAD_MONITOR_MAX_LEN - 1] = '\0';
+
+	if (_adsp_register_feature(pdata->id, SYSTEM_FEATURE_ID, 0) == 0) {
+		if (ADSP_IPI_DONE == adsp_push_message(ADSP_IPI_ADSP_TIMER,
+				(void *)cmds, count, 0, pdata->id)) {
+			pr_info("%s(), set cmd to adsp%d success, cmd:%s\n", __func__, pdata->id, cmds);
+			ret = count;
+		} else {
+			pr_warn("%s(), set cmd to adsp%d failed, cmd:%s\n", __func__, pdata->id, cmds);
+			ret = -1;
+		}
+		_adsp_deregister_feature(pdata->id, SYSTEM_FEATURE_ID, 0);
+	}
+
+	return ret;
+}
+DEVICE_ATTR_WO(load_monitor);
+#endif
+
 static struct attribute *adsp_default_attrs[] = {
 	&dev_attr_dev_dump.attr,
 	&dev_attr_ipi_test.attr,
 	&dev_attr_suspend_cmd.attr,
 	&dev_attr_log_enable.attr,
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	&dev_attr_load_monitor.attr,
+#endif
 	NULL,
 };
 

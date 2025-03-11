@@ -29,3 +29,38 @@ obj-$(CONFIG_PLAT_VERSATILE)	+= versatile/
 obj-y				+= xilinx/
 obj-$(CONFIG_ARCH_ZX)		+= zte/
 obj-$(CONFIG_SOC_KENDRYTE)	+= kendryte/
+#ifdef OPLUS_BUG_STABILITY
+obj-$(CONFIG_OPLUS_SYSTEM_KERNEL)	+= oplus/system/
+#endif /* OPLUS_BUG_STABILITY */
+
+#ifdef OPLUS_DFR_FEATURE
+obj-y += oplus/dfr/
+#endif /* OPLUS_DFR_FEATURE */
+
+#ifdef OPLUS_BOOT_FEATURE
+obj-y += oplus/boot/
+#endif /* OPLUS_BOOT_FEATURE */
+
+#ifdef OPLUS_DFT_FEATURE
+obj-y += oplus/dft/
+#endif /* OPLUS_DFT_FEATURE */
+
+obj-$(CONFIG_UA_KERNEL_CPU_IOCTL) += oplus/uad/
+#ifdef OPLUS_FEATURE_HANS
+obj-$(CONFIG_OPLUS_FEATURE_HANS_GKI)	+= oplus/hans/
+#endif /* OPLUS_FEATURE_HANS */
+
+#ifdef OPLUS_TP_BASIC
+obj-$(CONFIG_OPLUS_DEVICE_IFNO)		+= oplus/device_info/
+
+#ifdef OPLUS_FEATURE_MIDAS_GKI
+obj-$(CONFIG_OPLUS_FEATURE_MIDAS_GKI)	+= oplus/midas/
+#endif /* OPLUS_FEATURE_MIDAS_GKI */
+
+#ifdef OPLUS_FEATURE_MM_FEEDBACK
+obj-$(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)	+= oplus/oplus_mm_fb/
+#endif /* OPLUS_FEATURE_MM_FEEDBACK */
+
+#ifdef OPLUS_FEATURE_STORAGE_IO_METRICS
+obj-y				+= oplus/storage/
+#endif /*OPLUS_FEATURE_STORAGE_IO_METRICS*/

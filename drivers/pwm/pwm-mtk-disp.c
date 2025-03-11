@@ -39,6 +39,7 @@ struct mtk_pwm_data {
 
 	unsigned int bls_debug;
 	u32 bls_debug_mask;
+	unsigned int need_power_on;
 };
 
 struct mtk_disp_pwm {
@@ -74,6 +75,20 @@ static int mtk_disp_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	u64 div, rate;
 	int err;
 
+	if (mdp->data->need_power_on != true) {
+		err = clk_prepare_enable(mdp->clk_main);
+		if (err < 0) {
+			dev_err(chip->dev, "Can't enable mdp->clk_main: %pe\n", ERR_PTR(err));
+			return err;
+		}
+
+		err = clk_prepare_enable(mdp->clk_mm);
+		if (err < 0) {
+			dev_err(chip->dev, "Can't enable mdp->clk_mm: %pe\n", ERR_PTR(err));
+			clk_disable_unprepare(mdp->clk_main);
+			return err;
+		}
+	}
 	/*
 	 * Find period, high_width and clk_div to suit duty_ns and period_ns.
 	 * Calculate proper div value to keep period value in the bound.

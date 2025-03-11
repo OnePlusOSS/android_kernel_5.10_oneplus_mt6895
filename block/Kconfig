@@ -211,6 +211,14 @@ config BLK_INLINE_ENCRYPTION_FALLBACK
 	  by falling back to the kernel crypto API when inline
 	  encryption hardware is not present.
 
+config SCSI_BATCH_UNMAP
+	bool
+	depends on BLOCK
+	default y
+	help
+	  Enabling this feature that it can support unmapping one or more LBA range
+	  in single UNMAP command as SPEC.
+
 menu "Partition Types"
 
 source "block/partitions/Kconfig"
@@ -241,5 +249,14 @@ config BLK_MQ_RDMA
 
 config BLK_PM
 	def_bool BLOCK && PM
+
+config BLOCKIO_UX_OPT
+	bool
+	default y
+	help
+	  Enable Zero block io support for the kernel
+	  Zero-blockio will set the verification of ux bio to kveritydX to
+	  optimize the runnable problem caused by kverityd, and protect the
+	  dm-buf cache when available memory is sufficient
 
 source "block/Kconfig.iosched"

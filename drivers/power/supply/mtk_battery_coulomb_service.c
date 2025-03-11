@@ -439,7 +439,11 @@ static irqreturn_t coulomb_irq(int irq, void *data)
 	struct mtk_battery *gm = data;
 
 	bm_debug("%s\n", __func__);
-	wake_up_gauge_coulomb(gm);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (!gm->disableGM30)
+#endif
+		wake_up_gauge_coulomb(gm);
+
 	return IRQ_HANDLED;
 }
 

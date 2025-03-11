@@ -40,6 +40,7 @@ enum dvfsrc_regs {
 	DVFSRC_RSRV_4,
 	DVFSRC_MD_DDR_FLOOR_REQUEST,
 	DVFSRC_QOS_DDR_REQUEST,
+	DVFSRC_TOUT_NEXT,
 };
 
 static const int mt6779_regs[] = {
@@ -59,6 +60,7 @@ static const int mt6779_regs[] = {
 	[DVSFRC_HRT_REQ_MD_URG] = 0xA88,
 	[DVFSRC_HRT_REQ_MD_BW_0] = 0xA8C,
 	[DVFSRC_HRT_REQ_MD_BW_8] = 0xACC,
+	[DVFSRC_TOUT_NEXT] = 0xf8,
 };
 
 static const int mt6873_regs[] = {
@@ -83,6 +85,7 @@ static const int mt6873_regs[] = {
 	[DVFSRC_95MD_SCEN_BW0] = 0x524,
 	[DVFSRC_95MD_SCEN_BW0_T] = 0x534,
 	[DVFSRC_RSRV_4] = 0x610,
+	[DVFSRC_TOUT_NEXT] = 0xf8,
 };
 
 static const int mt6983_regs[] = {
@@ -109,6 +112,7 @@ static const int mt6983_regs[] = {
 	[DVFSRC_RSRV_4] = 0x290,
 	[DVFSRC_MD_DDR_FLOOR_REQUEST] = 0x5E4,
 	[DVFSRC_QOS_DDR_REQUEST] = 0x5E8,
+	[DVFSRC_TOUT_NEXT] = 0xf8,
 };
 
 enum dvfsrc_spm_regs {
@@ -522,9 +526,10 @@ static char *dvfsrc_dump_reg(struct mtk_dvfsrc *dvfsrc, char *p, u32 size)
 		"INT",
 		dvfsrc_read(dvfsrc, DVFSRC_INT, 0x0));
 
-	p += snprintf(p, buff_end - p, "%-12s: %x\n",
+	p += snprintf(p, buff_end - p, "%-12s: %x,%x\n",
 		"INT_EN",
-		dvfsrc_read(dvfsrc, DVFSRC_INT_EN, 0x0));
+		dvfsrc_read(dvfsrc, DVFSRC_INT_EN, 0x0),
+		dvfsrc_read(dvfsrc, DVFSRC_TOUT_NEXT, 0x0));
 
 	p += snprintf(p, buff_end - p, "%-12s: %d\n",
 		"ISP_HRT",

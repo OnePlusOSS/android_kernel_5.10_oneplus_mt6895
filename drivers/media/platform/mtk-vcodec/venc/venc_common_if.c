@@ -41,34 +41,34 @@ static unsigned int venc_h265_get_level(struct venc_inst *inst,
 {
 	switch (level) {
 	case V4L2_MPEG_VIDEO_HEVC_LEVEL_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 0 : 1;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 2 : 3;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 4 : 5;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 6 : 7;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 8 : 9;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 10 : 11;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 12 : 13;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 14 : 15;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 16 : 17;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 13 : 14;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 15 : 16;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 18 : 19;
-	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6:
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1:
 		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 20 : 21;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 23 : 24;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 25 : 26;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 27 : 28;
+	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6:
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 29 : 30;
 	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_1:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 22 : 23;
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 31 : 32;
 	case V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2:
-		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 24 : 25;
+		return (tier == V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) ? 33 : 34;
 	default:
 		mtk_vcodec_debug(inst, "unsupported level %d", level);
-		return 26;
+		return 25;
 	}
 }
 
@@ -467,6 +467,8 @@ static int venc_set_param(unsigned long handle,
 		inst->vsi->config.qp_control_mode = enc_prm->qp_control_mode;
 		inst->vsi->config.frame_level_qp = enc_prm->framelvl_qp;
 		inst->vsi->config.dummynal = enc_prm->dummynal;
+		inst->vsi->config.cb_qp_offset = enc_prm->cb_qp_offset;
+		inst->vsi->config.cr_qp_offset = enc_prm->cr_qp_offset;
 
 		if (enc_prm->color_desc) {
 			memcpy(&inst->vsi->config.color_desc,
@@ -510,6 +512,9 @@ static int venc_set_param(unsigned long handle,
 	case VENC_SET_PARAM_PREPEND_HEADER:
 		inst->prepend_hdr = 1;
 		ret = vcu_enc_set_param(&inst->vcu_inst, type, enc_prm);
+		// MTK patch ALPS07364559
+		inst->ctx->async_mode = !(inst->vsi->sync_mode);
+		mtk_vcodec_debug(inst, "VENC_SET_PARAM_PREPEND_HEADER: async mode:%d", inst->ctx->async_mode);
 		break;
 	case VENC_SET_PARAM_COLOR_DESC:
 		if (inst->vsi == NULL)

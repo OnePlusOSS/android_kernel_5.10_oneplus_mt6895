@@ -584,21 +584,11 @@ mtk_cam_raw_try_res_ctrl(struct mtk_raw_pipeline *pipeline,
 
 	/*worst case throughput prepare for stagger dynamic switch exposure num*/
 	if (mtk_cam_feature_is_stagger(res_cfg->raw_feature)) {
-		if (mtk_cam_feature_is_2_exposure(res_cfg->raw_feature)) {
-			if (log)
-				dev_info(dev,
-					 "%s:%s:pipe(%d): worst case stagger 2exp prate (0x%x):%lld->%lld\n",
-					 __func__, dbg_str, pipeline->id, res_cfg->raw_feature,
-					 prate, prate * 3);
-			prate = 2 * prate;
-		} else if (mtk_cam_feature_is_3_exposure(res_cfg->raw_feature)) {
-			if (log)
-				dev_info(dev,
-					 "%s:%s:pipe(%d): worst case stagger 3exp prate (0x%x):%lld->%lld\n",
-					 __func__, dbg_str, pipeline->id, res_cfg->raw_feature,
-					 prate, prate * 3);
-			prate = 3 * prate;
-		}
+		dev_info(dev,
+				"%s:%s:pipe(%d): worst case stagger prate (0x%x):%lld->%lld\n",
+				__func__, dbg_str, pipeline->id, res_cfg->raw_feature,
+				prate, 12 * prate / 10);
+		prate = 12 * prate / 10;
 	}
 	mtk_raw_resource_calc(dev_get_drvdata(pipeline->raw->cam_dev),
 			      res_cfg, prate,
@@ -927,6 +917,14 @@ static int mtk_raw_set_ctrl(struct v4l2_ctrl *ctrl)
 			pipeline->feature_pending, pipeline->feature_active);
 		ret = 0;
 		break;
+	case V4L2_CID_MTK_CAM_CAMSYS_VF_RESET:
+		if (mtk_cam_feature_is_ext_isp(pipeline->feature_active))
+			mtk_cam_extisp_vf_reset(pipeline);
+		else
+			dev_info(dev,
+				"%s:pipe(%d) CAMSYS_VF_RESET not supported feature:0x%x\n",
+				__func__, pipeline->id, pipeline->feature_active);
+		break;
 	case V4L2_CID_MTK_CAM_CAMSYS_HW_MODE:
 	{
 		pipeline->hw_mode_pending = *ctrl->p_new.p_s64;
@@ -1093,6 +1091,17 @@ static const struct v4l2_ctrl_config frame_sync_id = {
 	.max = 0x7FFFFFFF,
 	.step = 1,
 	.def = -1,
+};
+
+static const struct v4l2_ctrl_config vf_reset = {
+	.ops = &cam_ctrl_ops,
+	.id = V4L2_CID_MTK_CAM_CAMSYS_VF_RESET,
+	.name = "VF reset",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = 0,
+	.max = 100,
+	.step = 1,
+	.def = 0,
 };
 
 static const struct v4l2_ctrl_config mtk_feature = {
@@ -1416,17 +1425,34 @@ static void reset_reg(struct mtk_raw_device *dev)
 	writel(0, dev->base_inner + REG_CTL_SW_SUB_CTL);
 	writel(0, dev->base + REG_CTL_SW_SUB_CTL);
 
+	writel(0, dev->base + REG_CTL_RAW_INT_EN);
+	writel(0, dev->base + REG_CTL_RAW_INT2_EN);
+	writel(0, dev->base + REG_CTL_RAW_INT6_EN);
+	writel(0, dev->base + REG_CTL_RAW_INT7_EN);
+	writel(0, dev->base_inner + REG_CTL_RAW_INT_EN);
+	writel(0, dev->base_inner + REG_CTL_RAW_INT2_EN);
+	writel(0, dev->base_inner + REG_CTL_RAW_INT6_EN);
+	writel(0, dev->base_inner + REG_CTL_RAW_INT7_EN);
+
 	wmb(); /* make sure committed */
 
-	dev_dbg(dev->dev,
-			 "[%s--] CQ_EN/SW_SUB_CTL/SW_DONE [in] 0x%x/0x%x/0x%x [out] 0x%x/0x%x/0x%x\n",
+	dev_info(dev->dev,
+			 "[%s--] CQ_EN/SW_SUB_CTL/SW_DONE/INT_EN/INT_EN2/INT_EN6/INT_EN7 [in] 0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x [out] 0x%x/0x%x/0x%x/0x%x/0x%x/0x%x/0x%x\n",
 			 __func__,
 			 readl_relaxed(dev->base_inner + REG_CQ_EN),
 			 readl_relaxed(dev->base_inner + REG_CTL_SW_SUB_CTL),
 			 readl_relaxed(dev->base_inner + REG_CTL_SW_PASS1_DONE),
+			 readl_relaxed(dev->base_inner + REG_CTL_RAW_INT_EN),
+			 readl_relaxed(dev->base_inner + REG_CTL_RAW_INT2_EN),
+			 readl_relaxed(dev->base_inner + REG_CTL_RAW_INT6_EN),
+			 readl_relaxed(dev->base_inner + REG_CTL_RAW_INT7_EN),
 			 readl_relaxed(dev->base + REG_CQ_EN),
 			 readl_relaxed(dev->base + REG_CTL_SW_SUB_CTL),
-			 readl_relaxed(dev->base + REG_CTL_SW_PASS1_DONE));
+			 readl_relaxed(dev->base + REG_CTL_SW_PASS1_DONE),
+			 readl_relaxed(dev->base + REG_CTL_RAW_INT_EN),
+			 readl_relaxed(dev->base + REG_CTL_RAW_INT2_EN),
+			 readl_relaxed(dev->base + REG_CTL_RAW_INT6_EN),
+			 readl_relaxed(dev->base + REG_CTL_RAW_INT7_EN));
 }
 
 void dump_aa_info(struct mtk_cam_ctx *ctx,
@@ -1700,7 +1726,11 @@ static void init_dma_threshold(struct mtk_raw_device *dev)
 		mtk_smi_larb_ultra_dis(&dev->larb_pdev->dev, true);
 		mtk_smi_larb_ultra_dis(&yuv_dev->larb_pdev->dev, true);
 	} else {
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		writel_relaxed(RAW_WDMA_PORT, cam_dev->base + raw_urgent);
+#else
 		writel_relaxed(RAW_WDMA_PORT | RAW_RAWIR2_PORT, cam_dev->base + raw_urgent);
+#endif
 		writel_relaxed(YUV_WDMA_PORT, cam_dev->base + yuv_urgent);
 
 		mtk_smi_larb_ultra_dis(&dev->larb_pdev->dev, false);
@@ -1815,6 +1845,45 @@ void subsample_enable(struct mtk_raw_device *dev)
 			readl_relaxed(dev->base + REG_CQ_EN),
 			readl_relaxed(dev->base + REG_CTL_SW_PASS1_DONE));
 }
+void mtk_cam_raw_vf_reset(struct mtk_cam_ctx *ctx,
+	struct mtk_raw_device *dev)
+{
+	int val, chk_val;
+
+	val = readl_relaxed(dev->base + REG_TG_VF_CON);
+	val &= ~TG_VFDATA_EN;
+	writel(val, dev->base + REG_TG_VF_CON);
+	wmb(); /* TBC */
+
+	enable_tg_db(dev, 0);
+	if (readx_poll_timeout(readl, dev->base_inner + REG_TG_VF_CON,
+		chk_val, chk_val == val,
+		1 /* sleep, us */,
+		3000 /* timeout, us*/) < 0) {
+			dev_info(dev->dev, "%s: wait vf off timeout: TG_VF_CON 0x%x\n",
+				 __func__, chk_val);
+	}
+	enable_tg_db(dev, 1);
+	dev_info(dev->dev, "mtk_cam_raw_vf_reset vf_en off");
+
+	val = readl_relaxed(dev->base + REG_TG_VF_CON);
+	val |= TG_VFDATA_EN;
+	writel_relaxed(val, dev->base + REG_TG_VF_CON);
+	wmb(); /* TBC */
+	reset_dma_fbc(dev->dev, dev->base, dev->yuv_base);
+	enable_tg_db(dev, 0);
+	if (readx_poll_timeout(readl, dev->base_inner + REG_TG_VF_CON,
+		chk_val, chk_val == val,
+		1 /* sleep, us */,
+		3000 /* timeout, us*/) < 0) {
+			dev_info(dev->dev, "%s: wait vf on timeout: TG_VF_CON 0x%x\n",
+				 __func__, chk_val);
+	}
+	enable_tg_db(dev, 1);
+	dev_info(dev->dev, "mtk_cam_raw_vf_reset vf_en on");
+
+	dev_info(dev->dev, "mtk_cam_raw_vf_reset");
+}
 
 void initialize(struct mtk_raw_device *dev, int is_slave)
 {
@@ -1841,6 +1910,7 @@ void initialize(struct mtk_raw_device *dev, int is_slave)
 
 	dev->is_slave = is_slave;
 	dev->sof_count = 0;
+	dev->tg_count = 0;
 	dev->vsync_count = 0;
 	dev->sub_sensor_ctrl_en = false;
 	dev->time_shared_busy = 0;
@@ -1984,7 +2054,12 @@ void stream_on(struct mtk_raw_device *dev, int on)
 			fps_ratio = get_fps_ratio(dev);
 			dev_info(dev->dev, "VF on - REG_TG_TIME_STAMP_CNT val:%d fps(30x):%d\n",
 			val, fps_ratio);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			if (mtk_cam_feature_is_stagger(feature) ||
+				mtk_cam_feature_is_ext_isp(feature))
+#else
 			if (mtk_cam_feature_is_stagger(feature))
+#endif
 				writel_relaxed(SCQ_DEADLINE_MS * 3 * 1000 * SCQ_DEFAULT_CLK_RATE /
 				(val * 2) / fps_ratio, dev->base + REG_SCQ_START_PERIOD);
 			else
@@ -2453,6 +2528,7 @@ static irqreturn_t mtk_irq_raw(int irq, void *data)
 	unsigned int frame_idx, frame_idx_inner, fbc_fho_ctl2;
 	unsigned int irq_status, err_status, dmao_done_status, dmai_done_status;
 	unsigned int drop_status, dma_ofl_status, cq_done_status, cq2_done_status;
+	unsigned int tg_cnt;
 	bool wake_thread = 0;
 
 	irq_status	 = readl_relaxed(raw_dev->base + REG_CTL_RAW_INT_STAT);
@@ -2468,7 +2544,8 @@ static irqreturn_t mtk_irq_raw(int irq, void *data)
 
 	fbc_fho_ctl2 =
 		readl_relaxed(REG_FBC_CTL2(raw_dev->base + FBC_R1A_BASE, 1));
-
+	tg_cnt = readl_relaxed(raw_dev->base + REG_TG_INTER_ST);
+	tg_cnt = (raw_dev->tg_count & 0xffffff00) + ((tg_cnt & 0xff000000) >> 24);
 	err_status = irq_status & INT_ST_MASK_CAM_ERR;
 
 	if (unlikely(debug_raw))
@@ -2518,7 +2595,12 @@ static irqreturn_t mtk_irq_raw(int irq, void *data)
 		irq_info.irq_type |= 1 << CAMSYS_IRQ_FRAME_START;
 		raw_dev->sof_count++;
 		raw_dev->cur_vsync_idx = 0;
-		raw_dev->last_sof_time_ns = irq_info.ts_ns;
+		if (tg_cnt < raw_dev->tg_count)
+			raw_dev->tg_count = tg_cnt + BIT(8);
+		else
+			raw_dev->tg_count = tg_cnt;
+ 		raw_dev->last_sof_time_ns = irq_info.ts_ns;
+		irq_info.tg_cnt = raw_dev->tg_count;
 		irq_info.write_cnt = ((fbc_fho_ctl2 & WCNT_BIT_MASK) >> 8) - 1;
 		irq_info.fbc_cnt = (fbc_fho_ctl2 & CNT_BIT_MASK) >> 16;
 	}
@@ -3055,7 +3137,10 @@ static int mtk_raw_sd_subscribe_event(struct v4l2_subdev *subdev,
 		return v4l2_event_subscribe(fh, sub, 0, NULL);
 	case V4L2_EVENT_ESD_RECOVERY:
 		return v4l2_event_subscribe(fh, sub, 0, NULL);
-
+	case V4L2_EVENT_REQUEST_SENSOR_TRIGGER:
+		return v4l2_event_subscribe(fh, sub, 0, NULL);
+	case V4L2_EVENT_EXTISP_CAMSYS_READY:
+		return v4l2_event_subscribe(fh, sub, 0, NULL);
 	default:
 		return -EINVAL;
 	}
@@ -3076,7 +3161,7 @@ static int mtk_raw_available_resource(struct mtk_raw *raw)
 				res_status |= 1 << j;
 		}
 	}
-	dev_dbg(raw->cam_dev, "%s raw_status:0x%x Available Engine:A/B/C:%d/%d/%d\n",
+	dev_info(raw->cam_dev, "%s raw_status:0x%x Available Engine:A/B/C:%d/%d/%d\n",
 		 __func__, res_status,
 			!(res_status & (1 << MTKCAM_SUBDEV_RAW_0)),
 			!(res_status & (1 << MTKCAM_SUBDEV_RAW_1)),
@@ -3303,7 +3388,11 @@ int mtk_cam_raw_select(struct mtk_cam_ctx *ctx,
 			selected = true;
 		}
 	} else if (pipe->res_config.raw_num_used == 2) {
+		#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		for (m = MTKCAM_SUBDEV_RAW_0; m < MTKCAM_SUBDEV_RAW_2; m++) {
+		#else
 		for (m = MTKCAM_SUBDEV_RAW_0; m >= MTKCAM_SUBDEV_RAW_0; m--) {
+		#endif
 			mask = (1 << m) | (1 << (m + 1));
 			if (!(raw_status & mask)) {
 				pipe->enabled_raw |= mask;
@@ -5958,6 +6047,14 @@ static void mtk_raw_pipeline_ctrl_setup(struct mtk_raw_pipeline *pipe)
 	if (ctrl)
 		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE |
 			       V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+	ctrl = v4l2_ctrl_new_custom(ctrl_hdlr, &vf_reset, NULL);
+	if (ctrl)
+		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE |
+			       V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
+	ctrl = v4l2_ctrl_new_custom(ctrl_hdlr, &vf_reset, NULL);
+	if (ctrl)
+		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE |
+			       V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 	ctrl = v4l2_ctrl_new_custom(ctrl_hdlr, &raw_path, NULL);
 	if (ctrl)
 		ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE |
@@ -5995,6 +6092,7 @@ static void mtk_raw_pipeline_ctrl_setup(struct mtk_raw_pipeline *pipe)
 	v4l2_ctrl_new_custom(ctrl_hdlr, &cfg_frame_sync, NULL);
 
 	v4l2_ctrl_new_custom(ctrl_hdlr, &mstream_exposure, NULL);
+
 	pipe->res_config.hwn_limit_max = hwn_limit.def;
 	pipe->res_config.frz_limit = frz_limit.def;
 	pipe->res_config.bin_limit = bin_limit.def;
@@ -6020,7 +6118,7 @@ static int mtk_raw_pipeline_register(unsigned int id, struct device *dev,
 	int ret;
 
 	pipe->id = id;
-	pipe->dynamic_exposure_num_max = 3;
+	pipe->dynamic_exposure_num_max = 1;
 
 	/* Initialize subdev */
 	v4l2_subdev_init(sd, &mtk_raw_subdev_ops);
@@ -6265,7 +6363,7 @@ static int mtk_raw_runtime_suspend(struct device *dev)
 	int i;
 	unsigned int pr_detect_count;
 
-	dev_dbg(dev, "%s:disable clock\n", __func__);
+	dev_info(dev, "%s:disable clock\n", __func__);
 	dev_dbg(dev, "%s:drvdata->default_printk_cnt = %d\n", __func__,
 			drvdata->default_printk_cnt);
 
@@ -6301,7 +6399,7 @@ static int mtk_raw_runtime_resume(struct device *dev)
 	if (pr_detect_count < KERNEL_LOG_MAX)
 		set_detect_count(KERNEL_LOG_MAX);
 
-	dev_dbg(dev, "%s:enable clock\n", __func__);
+	dev_info(dev, "%s:enable clock\n", __func__);
 
 	for (i = 0; i < drvdata->num_clks; i++) {
 		ret = clk_prepare_enable(drvdata->clks[i]);
@@ -6468,7 +6566,7 @@ static int mtk_yuv_of_probe(struct platform_device *pdev,
 	struct device_link *link;
 	struct resource *res;
 	unsigned int i;
-	int irq, clks, larbs, ret;
+	int clks, larbs, ret;
 
 	ret = of_property_read_u32(dev->of_node, "mediatek,cam-id",
 				   &drvdata->id);
@@ -6519,20 +6617,20 @@ static int mtk_yuv_of_probe(struct platform_device *pdev,
 		return PTR_ERR(drvdata->base_inner);
 	}
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
+	drvdata->irq = platform_get_irq(pdev, 0);
+	if (drvdata->irq < 0) {
 		dev_dbg(dev, "failed to get irq\n");
 		return -ENODEV;
 	}
 
-	ret = devm_request_irq(dev, irq, mtk_irq_yuv, 0,
+	ret = devm_request_irq(dev, drvdata->irq, mtk_irq_yuv, 0,
 			       dev_name(dev), drvdata);
 	if (ret) {
-		dev_dbg(dev, "failed to request irq=%d\n", irq);
+		dev_dbg(dev, "failed to request irq=%d\n", drvdata->irq);
 		return ret;
 	}
-	dev_dbg(dev, "registered irq=%d\n", irq);
-
+	disable_irq(drvdata->irq);
+	dev_dbg(dev, "registered irq=%d\n", drvdata->irq);
 
 	clks = of_count_phandle_with_args(pdev->dev.of_node, "clocks",
 			"#clock-cells");
@@ -6649,6 +6747,7 @@ static int mtk_yuv_runtime_suspend(struct device *dev)
 	int i;
 
 	dev_info(dev, "%s:disable clock\n", __func__);
+	disable_irq(drvdata->irq);
 
 	for (i = 0; i < drvdata->num_clks; i++)
 		clk_disable_unprepare(drvdata->clks[i]);
@@ -6662,6 +6761,7 @@ static int mtk_yuv_runtime_resume(struct device *dev)
 	int i, ret;
 
 	dev_info(dev, "%s:enable clock\n", __func__);
+	enable_irq(drvdata->irq);
 
 	for (i = 0; i < drvdata->num_clks; i++) {
 		ret = clk_prepare_enable(drvdata->clks[i]);

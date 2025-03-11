@@ -8,21 +8,33 @@
  *	Yongmyung Lee <ymhungry.lee@samsung.com>
  *	Jinyoung Choi <j-young.choi@samsung.com>
  */
-
 #include <asm/unaligned.h>
 #include <linux/async.h>
-
 #include "ufshcd.h"
 #include "ufshcd-add-info.h"
 #include "ufshpb.h"
 #include "../sd.h"
-
 #define ACTIVATION_THRESHOLD 8 /* 8 IOs */
 #define READ_TO_MS 1000
 #define READ_TO_EXPIRIES 100
 #define POLLING_INTERVAL_MS 200
 #define THROTTLE_MAP_REQ_DEFAULT 1
-
+#ifdef UFS_HPB_LAZY_LOAD
+#undef READ_TO_EXPIRIES
+#undef THROTTLE_MAP_REQ_DEFAULT
+//21 hours to delete unused region
+#define READ_TO_EXPIRIES   (75600)
+#define THROTTLE_MAP_REQ_DEFAULT (16)
+#define SUSPEND_LOAD_CNT   (1)
+#define SCREENOFF_LOAD_CNT  (-1)
+#define NORMALIZATION_THLD  (INT_MAX)
+#endif
+#if defined(UFS_HPB_SHRINK) && defined(CONFIG_ANDROID_VENDOR_HOOKS)
+#include <trace/hooks/ufshcd.h>
+#endif
+#ifdef CONFIG_DEVICE_XCOPY
+#include <linux/blk_types.h>
+#endif
 /* memory management */
 static struct kmem_cache *ufshpb_mctx_cache;
 static mempool_t *ufshpb_mctx_pool;
@@ -30,66 +42,330 @@ static mempool_t *ufshpb_page_pool;
 /* A cache size of 2MB can cache ppn in the 1GB range. */
 static unsigned int ufshpb_host_map_kbytes = 2048;
 static int tot_active_srgn_pages;
-
+#define UFS_HPB_FAULT_INJECTION
+#ifdef UFS_HPB_FAULT_INJECTION
+enum {
+	FAULT_MM_ALLOC,		/* 1 << 0 */
+	FAULT_LRU_REPLACE,	/* 1 << 1 */
+	FAULT_GET_REQ,		/* 1 << 2 */
+	FAULT_GET_REQ_BUSY,	/* 1 << 3 */
+	FAULT_GET_PRE_REQ,	/* 1 << 4 */
+	FAULT_ACTIVE_SRGN,	/* 1 << 5 */
+	FAULT_EXEC_PRE_REQ,	/* 1 << 6 */
+	FAULT_BLK_INS_REQ,	/* 1 << 7 */
+	FAULT_MAX		/* (1 << 8) - 1, enable all */
+};
+const char *ufshpb_fault_name[FAULT_MAX] = {
+	[FAULT_MM_ALLOC] = "mm alloc", /* mem/bio alloc fail */
+	[FAULT_LRU_REPLACE] = "LRU victim", /* cannot get appropriate LRU victim */
+	[FAULT_GET_REQ] = "get blk req", /* blk_get_request fail */
+	[FAULT_GET_REQ_BUSY] = "get blk req", /* blk_get_request fail */
+	[FAULT_GET_PRE_REQ] = "get pre req", /* ufshpb_get_pre_req fail */
+	[FAULT_ACTIVE_SRGN] = "active subregion", /* active subregion fail */
+	[FAULT_EXEC_PRE_REQ] = "exec pre req", /* exec pre req fail */
+	[FAULT_BLK_INS_REQ] = "blk insert", /* blk_insert_cloned_request fail */
+};
+struct ufshpb_inject_info {
+	struct list_head list;
+	int line;
+	unsigned long inject;
+	unsigned long pass;
+};
+struct ufshpb_fault_info {
+	unsigned int inject_ops;
+	unsigned int inject_rate;
+	unsigned int inject_type;
+	struct list_head inject_lists[FAULT_MAX];
+	spinlock_t inject_lock;
+};
+static struct ufshpb_fault_info ufshpb_fi;
+static void ufshpb_init_fault_info(struct ufshpb_fault_info *fi)
+{
+	int i;
+	memset(fi, 0, sizeof(struct ufshpb_fault_info));
+	spin_lock_init(&fi->inject_lock);
+	for (i = 0; i < FAULT_MAX; i++)
+		INIT_LIST_HEAD(&fi->inject_lists[i]);
+}
+static void free_fault_info(struct ufshpb_fault_info *fi)
+{
+	struct ufshpb_inject_info *ii, *next;
+	int i;
+	for (i = 0; i < FAULT_MAX; i++) {
+		list_for_each_entry_safe(ii, next, &fi->inject_lists[i], list) {
+			list_del(&ii->list);
+			kfree(ii);
+		}
+	}
+}
+static void ufshpb_destroy_fault_info(struct ufshpb_fault_info *fi)
+{
+	unsigned long flags;
+	spin_lock_irqsave(&fi->inject_lock, flags);
+	/* make sure no new fault_info is inserted after destroy */
+	fi->inject_rate = 0;
+	fi->inject_type = 0;
+	fi->inject_ops = 0;
+	free_fault_info(fi);
+	spin_unlock_irqrestore(&fi->inject_lock, flags);
+}
+#define IS_FAULT_SET(fi, type) ((fi)->inject_type & (1 << (type)))
+#define show_inject_info(fi, type)				\
+	pr_err("ufshpb: inject %s in %s:%d of %pS\n",		\
+		ufshpb_fault_name[type], __func__, __LINE__,	\
+		__builtin_return_address(0))
+static struct ufshpb_inject_info *find_inject_info(struct ufshpb_fault_info *fi,
+						   int type, int line)
+{
+	struct ufshpb_inject_info *ii;
+	list_for_each_entry(ii, &fi->inject_lists[type], list) {
+		if (ii->line == line)
+			return ii;
+	}
+	ii = kzalloc(sizeof(*ii), GFP_ATOMIC);
+	if (ii) {
+		INIT_LIST_HEAD(&ii->list);
+		ii->line = line;
+		list_add_tail(&ii->list, &fi->inject_lists[type]);
+	}
+	return ii;
+}
+static void stat_inject_info(struct ufshpb_fault_info *fi, int type,
+			     int *hit, int *scanned)
+{
+	struct ufshpb_inject_info *ii;
+	list_for_each_entry(ii, &fi->inject_lists[type], list) {
+		(*scanned)++;
+		if (ii->inject > 0)
+			(*hit)++;
+	}
+}
+static int detail_inject_info(struct ufshpb_fault_info *fi, int type,
+			      char *buf, int size)
+{
+	struct ufshpb_inject_info *ii;
+	int ret = 0;
+	if (list_empty(&fi->inject_lists[type])) {
+		ret = scnprintf(buf, size, "0");
+	} else {
+		list_for_each_entry(ii, &fi->inject_lists[type], list)
+			ret += scnprintf(buf + ret, size - ret, "%d:%lu:%lu ",
+					 ii->line, ii->inject, ii->pass);
+	}
+	ret += scnprintf(buf + ret, size - ret, "\n\n");
+	return ret;
+}
+#define ufshpb_time_to_inject(fi, type) ({				\
+	typeof(fi) __fi = fi;						\
+	struct ufshpb_inject_info *ii;					\
+	unsigned long __flags;						\
+	bool __inject = false;						\
+	int __line = __LINE__;						\
+	/*								\
+	 * If UFS_HPB_FAULT_INJECTION is always enabled, the following	\
+	 * check is needed to minimize the overhead of injection. It is	\
+	 * safe to check inject_rate outside of inject_lock:		\
+	 *  1. if inject_rate is 0 and someone tries to set it to	\
+	 *     nonzero, we may only lost some inject events		\
+	 *  2. if inject_rate is nonzero and someone tries to set it to	\
+	 *     0, inject_rate will be check again under inject_lock	\
+	 */								\
+	if (unlikely(__fi->inject_rate > 0)) {				\
+		spin_lock_irqsave(&__fi->inject_lock, __flags);		\
+		if (!__fi->inject_rate || !IS_FAULT_SET(__fi, type)) {	\
+			/* do nothing */				\
+		} else if (__fi->inject_ops >= __fi->inject_rate) {	\
+			ii = find_inject_info(fi, type, __line);	\
+			if (ii)						\
+				ii->inject++;				\
+			__fi->inject_ops = 0;				\
+			__inject = true;				\
+			show_inject_info(__fi, type);			\
+		} else {						\
+			ii = find_inject_info(fi, type, __line);	\
+			if (ii)						\
+				ii->pass++;				\
+			__fi->inject_ops++;				\
+		}							\
+		spin_unlock_irqrestore(&__fi->inject_lock, __flags);	\
+	}								\
+	__inject;							\
+})
+#define ufshpb_sysfs_injection_attr(__name)				\
+static struct ufshpb_lu *ufshpb_get_hpb_data(struct scsi_device *sdev);	\
+static ssize_t __name##_show(struct device *dev,			\
+			     struct device_attribute *attr, char *buf)	\
+{									\
+	struct ufshpb_fault_info *fi = &ufshpb_fi;			\
+	struct scsi_device *sdev = to_scsi_device(dev);			\
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);		\
+	unsigned long flags;						\
+	int ret;							\
+									\
+	if (!hpb)							\
+		return -ENODEV;						\
+									\
+	spin_lock_irqsave(&fi->inject_lock, flags);			\
+	ret = snprintf(buf, PAGE_SIZE, "%u\n", fi->__name);		\
+	spin_unlock_irqrestore(&fi->inject_lock, flags);		\
+	return ret;							\
+}									\
+									\
+static ssize_t __name##_store(struct device *dev,			\
+			      struct device_attribute *attr,		\
+			      const char *buf, size_t count)		\
+{									\
+	struct ufshpb_fault_info *fi = &ufshpb_fi;			\
+	struct scsi_device *sdev = to_scsi_device(dev);			\
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);		\
+	unsigned long flags;						\
+	unsigned long val;						\
+	int ret;							\
+									\
+	if (!hpb)							\
+		return -ENODEV;						\
+									\
+	ret = kstrtoul(skip_spaces(buf), 0, &val);			\
+	if (ret < 0)							\
+		return ret;						\
+									\
+	spin_lock_irqsave(&fi->inject_lock, flags);			\
+	fi->__name = (unsigned int)val;					\
+	if (!strcmp(#__name, "inject_rate") && val == 0)		\
+		free_fault_info(fi);					\
+	spin_unlock_irqrestore(&fi->inject_lock, flags);		\
+									\
+	return count;							\
+}									\
+									\
+DEVICE_ATTR_RW(__name)
+ufshpb_sysfs_injection_attr(inject_type);
+ufshpb_sysfs_injection_attr(inject_rate);
+static ssize_t inject_result_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct ufshpb_fault_info *fi = &ufshpb_fi;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	unsigned long flags;
+	int i, hit, scanned;
+	int ret = 0;
+	if (!hpb)
+		return -ENODEV;
+	spin_lock_irqsave(&fi->inject_lock, flags);
+	for (i = 0; i < FAULT_MAX; i++) {
+		hit = scanned = 0;
+		stat_inject_info(fi, i, &hit, &scanned);
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+				 "\"%s\" hit:%d scanned:%d\n",
+				 ufshpb_fault_name[i], hit, scanned);
+	}
+	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "\n");
+	for (i = 0; i < FAULT_MAX; i++)
+		ret += detail_inject_info(fi, i, buf + ret, PAGE_SIZE - ret);
+	spin_unlock_irqrestore(&fi->inject_lock, flags);
+	return ret;
+}
+DEVICE_ATTR_RO(inject_result);
+#else /* UFS_HPB_FAULT_INJECTION */
+#define ufshpb_init_fault_info(fi) {}
+#define ufshpb_destroy_fault_info(fi) {}
+#define ufshpb_time_to_inject(fi, type) (false)
+#endif /* !UFS_HPB_FAULT_INJECTION */
+#ifdef UFS_HPB_SHRINK
+/* for memory manage */
+static struct ufs_hba *hpb_hba = NULL;
+static bool hpb_enable = true;
+static struct ufshpb_mm_stat {
+	bool enable;
+	/*  time ms, debounce_time is the cycle of shrinking HPB memory,
+	 *  restore_time is the minimum time to enlarge memory use
+	 *  according to memory load
+	 */
+	int debounce_time;
+	int restore_time;
+	unsigned long last_time;
+	int  curr_level;
+	int  max_level;
+	int  running;
+	spinlock_t lock;
+	void *data;
+} mm_g_stat;
+static int ufshpb_mm_waterline[HPB_MM_LV_CNT] = {0};
+static long ufshpb_page_cnt(void);
+static int ufshpb_get_mm_lv(void);
+static unsigned long ufshpb_shrink(int level, unsigned int desire_mem_mb, bool async);
+static int ufshpb_init_mm_g_stat(void *stat)
+{
+	mm_g_stat.enable = 1;
+	mm_g_stat.debounce_time = 2000; // do shrink debounce time
+	mm_g_stat.restore_time = 60000; //mem scan time to restore mem level
+	mm_g_stat.last_time = 0;
+	mm_g_stat.curr_level = HPB_MM_LV_DEFAULT;
+	mm_g_stat.max_level = HPB_MM_LV_CNT-1;
+	mm_g_stat.running = 0;
+	spin_lock_init(&mm_g_stat.lock);
+	return 0;
+}
+static void ufshpb_deinit_mm_g_stat(void *stat)
+{
+	//reserved static value init, mem free?
+}
+#endif
 static struct workqueue_struct *ufshpb_wq;
-
 static void ufshpb_update_active_info(struct ufshpb_lu *hpb, int rgn_idx,
 				      int srgn_idx);
-
+#ifdef UFS_HPB_LAZY_LOAD
+static void ufshpb_update_inactive_info(struct ufshpb_lu *hpb, int rgn_idx);
+#endif
 static inline struct ufshpb_dev_info *ufs_hba_to_hpb(struct ufs_hba *hba)
 {
 	return &ufs_hba_add_info(hba)->hpb_dev;
 }
-
 bool ufshpb_is_allowed(struct ufs_hba *hba)
 {
 	return !(ufs_hba_to_hpb(hba)->hpb_disabled);
 }
-
 /* HPB version 1.0 is called as legacy version. */
 bool ufshpb_is_legacy(struct ufs_hba *hba)
 {
 	return ufs_hba_to_hpb(hba)->is_legacy;
 }
-
 static struct ufshpb_lu *ufshpb_get_hpb_data(struct scsi_device *sdev)
 {
 	return sdev->hostdata;
 }
-
 static int ufshpb_get_state(struct ufshpb_lu *hpb)
 {
 	return atomic_read(&hpb->hpb_state);
 }
-
 static void ufshpb_set_state(struct ufshpb_lu *hpb, int state)
 {
 	atomic_set(&hpb->hpb_state, state);
 }
-
 static int ufshpb_is_valid_srgn(struct ufshpb_region *rgn,
 				struct ufshpb_subregion *srgn)
 {
 	return rgn->rgn_state != HPB_RGN_INACTIVE &&
 		srgn->srgn_state == HPB_SRGN_VALID;
 }
-
 static bool ufshpb_is_read_cmd(struct scsi_cmnd *cmd)
 {
 	return req_op(cmd->request) == REQ_OP_READ;
 }
-
 static bool ufshpb_is_write_or_discard(struct scsi_cmnd *cmd)
 {
 	return op_is_write(req_op(cmd->request)) ||
 	       op_is_discard(req_op(cmd->request));
 }
-
 static bool ufshpb_is_supported_chunk(struct ufshpb_lu *hpb, int transfer_len)
 {
+#ifndef UFS_HPB_LAZY_LOAD
 	return transfer_len <= hpb->pre_req_max_tr_len;
+#else
+	return transfer_len <= hpb->pre_req_min_tr_len;
+#endif
 }
-
 /*
  * In this driver, WRITE_BUFFER CMD support 36KB (len=9) ~ 1MB (len=256) as
  * default. It is possible to change range of transfer_len through sysfs.
@@ -99,39 +375,36 @@ static inline bool ufshpb_is_required_wb(struct ufshpb_lu *hpb, int len)
 	return len > hpb->pre_req_min_tr_len &&
 	       len <= hpb->pre_req_max_tr_len;
 }
-
 static bool ufshpb_is_general_lun(int lun)
 {
 	return lun < UFS_UPIU_MAX_UNIT_NUM_ID;
 }
-
 static bool ufshpb_is_pinned_region(struct ufshpb_lu *hpb, int rgn_idx)
 {
 	if (hpb->lu_pinned_end != PINNED_NOT_SET &&
 	    rgn_idx >= hpb->lu_pinned_start &&
 	    rgn_idx <= hpb->lu_pinned_end)
 		return true;
-
 	return false;
 }
-
 static void ufshpb_kick_map_work(struct ufshpb_lu *hpb)
 {
 	bool ret = false;
 	unsigned long flags;
-
 	if (ufshpb_get_state(hpb) != HPB_PRESENT)
 		return;
-
 	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+#ifdef UFS_HPB_LAZY_LOAD
+	if (!list_empty(&hpb->lh_inact_rgn))
+		ret = true;
+#else
 	if (!list_empty(&hpb->lh_inact_rgn) || !list_empty(&hpb->lh_act_srgn))
 		ret = true;
+#endif
 	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
-
 	if (ret)
 		queue_work(ufshpb_wq, &hpb->map_work);
 }
-
 static bool ufshpb_is_hpb_rsp_valid(struct ufs_hba *hba,
 				    struct ufshcd_lrb *lrbp,
 				    struct utp_hpb_rsp *rsp_field)
@@ -140,7 +413,6 @@ static bool ufshpb_is_hpb_rsp_valid(struct ufs_hba *hba,
 	if (!(lrbp->ucd_rsp_ptr->header.dword_2 &
 	      UPIU_HEADER_DWORD(0, 2, 0, 0)))
 		return false;
-
 	if (be16_to_cpu(rsp_field->sense_data_len) != DEV_SENSE_SEG_LEN ||
 	    rsp_field->desc_type != DEV_DES_TYPE ||
 	    rsp_field->additional_len != DEV_ADDITIONAL_LEN ||
@@ -150,16 +422,13 @@ static bool ufshpb_is_hpb_rsp_valid(struct ufs_hba *hba,
 	    (rsp_field->hpb_op == HPB_RSP_REQ_REGION_UPDATE &&
 	     !rsp_field->active_rgn_cnt && !rsp_field->inactive_rgn_cnt))
 		return false;
-
 	if (!ufshpb_is_general_lun(rsp_field->lun)) {
 		dev_warn(hba->dev, "ufshpb: lun(%d) not supported\n",
 			 lrbp->lun);
 		return false;
 	}
-
 	return true;
 }
-
 static void ufshpb_iterate_rgn(struct ufshpb_lu *hpb, int rgn_idx, int srgn_idx,
 			       int srgn_offset, int cnt, bool set_dirty)
 {
@@ -168,21 +437,31 @@ static void ufshpb_iterate_rgn(struct ufshpb_lu *hpb, int rgn_idx, int srgn_idx,
 	int set_bit_len;
 	int bitmap_len;
 	unsigned long flags;
-
 next_srgn:
 	rgn = hpb->rgn_tbl + rgn_idx;
 	srgn = rgn->srgn_tbl + srgn_idx;
-
+	//add by 80371496, debug lba overflow
+	if (!srgn) {
+		pr_err("rgn_idx=%d, srgn_idx=%d, max_rgn=%d, ofs=%d, cnt=%d",
+			rgn_idx,srgn_idx,hpb->rgns_per_lu,srgn_offset,cnt);
+		BUG_ON(1);
+	}
 	if (likely(!srgn->is_last))
 		bitmap_len = hpb->entries_per_srgn;
-	else
+	else {
 		bitmap_len = hpb->last_srgn_entries;
-
+		//add by 80371496, debug lba overflow
+		if (srgn_offset + cnt > bitmap_len) {
+			pr_err("HPB rgn_idx=%d, srgn_idx=%d, max_rgn=%d, ofs=%d, cnt=%d",
+			rgn_idx,srgn_idx,hpb->rgns_per_lu,srgn_offset,cnt);
+			WARN_ON(1);
+			return;
+		}
+	}
 	if ((srgn_offset + cnt) > bitmap_len)
 		set_bit_len = bitmap_len - srgn_offset;
 	else
 		set_bit_len = cnt;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	if (rgn->rgn_state != HPB_RGN_INACTIVE) {
 		if (set_dirty) {
@@ -198,14 +477,22 @@ next_srgn:
 		}
 	}
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
-
 	if (hpb->is_hcm && prev_srgn != srgn) {
 		bool activate = false;
-
 		spin_lock(&rgn->rgn_lock);
 		if (set_dirty) {
+#ifdef UFS_HPB_LAZY_LOAD
+			if (srgn->reads > hpb->params.activation_thld) {
+				srgn->reads -= hpb->params.activation_thld;
+				rgn->reads -= hpb->params.activation_thld;
+			} else {
+				rgn->reads -= srgn->reads;
+				srgn->reads = 0;
+			}
+#else
 			rgn->reads -= srgn->reads;
 			srgn->reads = 0;
+#endif
 			set_bit(RGN_FLAG_DIRTY, &rgn->rgn_flags);
 		} else {
 			srgn->reads++;
@@ -214,7 +501,14 @@ next_srgn:
 				activate = true;
 		}
 		spin_unlock(&rgn->rgn_lock);
-
+#ifdef UFS_HPB_LAZY_LOAD
+		//if device reset , mark all rgn need to delete
+		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+		if (test_and_clear_bit(RGN_FLAG_UPDATE, &rgn->rgn_flags)) {
+			ufshpb_update_inactive_info(hpb, rgn_idx);
+		}
+		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+#else
 		if (activate ||
 		    test_and_clear_bit(RGN_FLAG_UPDATE, &rgn->rgn_flags)) {
 			spin_lock_irqsave(&hpb->rsp_list_lock, flags);
@@ -223,21 +517,18 @@ next_srgn:
 			dev_dbg(&hpb->sdev_ufs_lu->sdev_dev,
 				"activate region %d-%d\n", rgn_idx, srgn_idx);
 		}
-
+#endif
 		prev_srgn = srgn;
 	}
-
 	srgn_offset = 0;
 	if (++srgn_idx == hpb->srgns_per_rgn) {
 		srgn_idx = 0;
 		rgn_idx++;
 	}
-
 	cnt -= set_bit_len;
 	if (cnt > 0)
 		goto next_srgn;
 }
-
 static bool ufshpb_test_ppn_dirty(struct ufshpb_lu *hpb, int rgn_idx,
 				  int srgn_idx, int srgn_offset, int cnt)
 {
@@ -245,19 +536,15 @@ static bool ufshpb_test_ppn_dirty(struct ufshpb_lu *hpb, int rgn_idx,
 	struct ufshpb_subregion *srgn;
 	int bitmap_len;
 	int bit_len;
-
 next_srgn:
 	rgn = hpb->rgn_tbl + rgn_idx;
 	srgn = rgn->srgn_tbl + srgn_idx;
-
 	if (likely(!srgn->is_last))
 		bitmap_len = hpb->entries_per_srgn;
 	else
 		bitmap_len = hpb->last_srgn_entries;
-
 	if (!ufshpb_is_valid_srgn(rgn, srgn))
 		return true;
-
 	/*
 	 * If the region state is active, mctx must be allocated.
 	 * In this case, check whether the region is evicted or
@@ -269,34 +556,27 @@ next_srgn:
 			srgn->rgn_idx, srgn->srgn_idx);
 		return true;
 	}
-
 	if ((srgn_offset + cnt) > bitmap_len)
 		bit_len = bitmap_len - srgn_offset;
 	else
 		bit_len = cnt;
-
 	if (find_next_bit(srgn->mctx->ppn_dirty, bit_len + srgn_offset,
 			  srgn_offset) < bit_len + srgn_offset)
 		return true;
-
 	srgn_offset = 0;
 	if (++srgn_idx == hpb->srgns_per_rgn) {
 		srgn_idx = 0;
 		rgn_idx++;
 	}
-
 	cnt -= bit_len;
 	if (cnt > 0)
 		goto next_srgn;
-
 	return false;
 }
-
 static inline bool is_rgn_dirty(struct ufshpb_region *rgn)
 {
 	return test_bit(RGN_FLAG_DIRTY, &rgn->rgn_flags);
 }
-
 static int ufshpb_fill_ppn_from_page(struct ufshpb_lu *hpb,
 				     struct ufshpb_map_ctx *mctx, int pos,
 				     int len, __be64 *ppn_buf)
@@ -304,40 +584,32 @@ static int ufshpb_fill_ppn_from_page(struct ufshpb_lu *hpb,
 	struct page *page;
 	int index, offset;
 	int copied;
-
 	index = pos / (PAGE_SIZE / HPB_ENTRY_SIZE);
 	offset = pos % (PAGE_SIZE / HPB_ENTRY_SIZE);
-
 	if ((offset + len) <= (PAGE_SIZE / HPB_ENTRY_SIZE))
 		copied = len;
 	else
 		copied = (PAGE_SIZE / HPB_ENTRY_SIZE) - offset;
-
 	page = mctx->m_page[index];
 	if (unlikely(!page)) {
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
 			"error. cannot find page in mctx\n");
 		return -ENOMEM;
 	}
-
 	memcpy(ppn_buf, page_address(page) + (offset * HPB_ENTRY_SIZE),
 	       copied * HPB_ENTRY_SIZE);
-
 	return copied;
 }
-
 static void
 ufshpb_get_pos_from_lpn(struct ufshpb_lu *hpb, unsigned long lpn, int *rgn_idx,
 			int *srgn_idx, int *offset)
 {
 	int rgn_offset;
-
 	*rgn_idx = lpn >> hpb->entries_per_rgn_shift;
 	rgn_offset = lpn & hpb->entries_per_rgn_mask;
 	*srgn_idx = rgn_offset >> hpb->entries_per_srgn_shift;
 	*offset = rgn_offset & hpb->entries_per_srgn_mask;
 }
-
 static void
 ufshpb_set_hpb_read_to_upiu(struct ufs_hba *hba, struct ufshpb_lu *hpb,
 			    struct ufshcd_lrb *lrbp, u32 lpn, __be64 ppn,
@@ -346,56 +618,46 @@ ufshpb_set_hpb_read_to_upiu(struct ufs_hba *hba, struct ufshpb_lu *hpb,
 	unsigned char *cdb = lrbp->cmd->cmnd;
 	__be64 ppn_tmp = ppn;
 	cdb[0] = UFSHPB_READ;
-
 	if (hba->dev_quirks & UFS_DEVICE_QUIRK_SWAP_L2P_ENTRY_FOR_HPB_READ)
 		ppn_tmp = swab64(ppn);
-
 	/* ppn value is stored as big-endian in the host memory */
 	memcpy(&cdb[6], &ppn_tmp, sizeof(__be64));
 	cdb[14] = transfer_len;
 	cdb[15] = read_id;
-
 	lrbp->cmd->cmd_len = UFS_CDB_SIZE;
 }
-
 static inline void ufshpb_set_write_buf_cmd(unsigned char *cdb,
 					    unsigned long lpn, unsigned int len,
 					    int read_id)
 {
 	cdb[0] = UFSHPB_WRITE_BUFFER;
 	cdb[1] = UFSHPB_WRITE_BUFFER_PREFETCH_ID;
-
 	put_unaligned_be32(lpn, &cdb[2]);
 	cdb[6] = read_id;
 	put_unaligned_be16(len * HPB_ENTRY_SIZE, &cdb[7]);
-
 	cdb[9] = 0x00;	/* Control = 0x00 */
 }
-
 static struct ufshpb_req *ufshpb_get_pre_req(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_req *pre_req;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_GET_PRE_REQ))
+		return NULL;
 	if (hpb->num_inflight_pre_req >= hpb->throttle_pre_req) {
-		dev_info(&hpb->sdev_ufs_lu->sdev_dev,
+		dev_info_ratelimited(&hpb->sdev_ufs_lu->sdev_dev,
 			 "pre_req throttle. inflight %d throttle %d",
 			 hpb->num_inflight_pre_req, hpb->throttle_pre_req);
 		return NULL;
 	}
-
 	pre_req = list_first_entry_or_null(&hpb->lh_pre_req_free,
 					   struct ufshpb_req, list_req);
 	if (!pre_req) {
 		dev_info(&hpb->sdev_ufs_lu->sdev_dev, "There is no pre_req");
 		return NULL;
 	}
-
 	list_del_init(&pre_req->list_req);
 	hpb->num_inflight_pre_req++;
-
 	return pre_req;
 }
-
 static inline void ufshpb_put_pre_req(struct ufshpb_lu *hpb,
 				      struct ufshpb_req *pre_req)
 {
@@ -404,17 +666,16 @@ static inline void ufshpb_put_pre_req(struct ufshpb_lu *hpb,
 	list_add_tail(&pre_req->list_req, &hpb->lh_pre_req_free);
 	hpb->num_inflight_pre_req--;
 }
-
 static void ufshpb_pre_req_compl_fn(struct request *req, blk_status_t error)
 {
 	struct ufshpb_req *pre_req = (struct ufshpb_req *)req->end_io_data;
 	struct ufshpb_lu *hpb = pre_req->hpb;
 	unsigned long flags;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_EXEC_PRE_REQ))
+		error = BLK_STS_IOERR;
 	if (error) {
 		struct scsi_cmnd *cmd = blk_mq_rq_to_pdu(req);
 		struct scsi_sense_hdr sshdr;
-
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev, "block status %d", error);
 		scsi_command_normalize_sense(cmd, &sshdr);
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
@@ -426,13 +687,11 @@ static void ufshpb_pre_req_compl_fn(struct request *req, blk_status_t error)
 			sshdr.byte4, sshdr.byte5,
 			sshdr.byte6, sshdr.additional_length);
 	}
-
 	blk_mq_free_request(req);
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	ufshpb_put_pre_req(pre_req->hpb, pre_req);
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 }
-
 static int ufshpb_prep_entry(struct ufshpb_req *pre_req, struct page *page)
 {
 	struct ufshpb_lu *hpb = pre_req->hpb;
@@ -444,51 +703,38 @@ static int ufshpb_prep_entry(struct ufshpb_req *pre_req, struct page *page)
 	unsigned long lpn = pre_req->wb.lpn;
 	int rgn_idx, srgn_idx, srgn_offset;
 	unsigned long flags;
-
 	addr = page_address(page);
 	ufshpb_get_pos_from_lpn(hpb, lpn, &rgn_idx, &srgn_idx, &srgn_offset);
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
-
 next_offset:
 	rgn = hpb->rgn_tbl + rgn_idx;
 	srgn = rgn->srgn_tbl + srgn_idx;
-
 	if (!ufshpb_is_valid_srgn(rgn, srgn))
 		goto mctx_error;
-
 	if (!srgn->mctx)
 		goto mctx_error;
-
 	copied = ufshpb_fill_ppn_from_page(hpb, srgn->mctx, srgn_offset,
 					   pre_req->wb.len - offset,
 					   &addr[offset]);
-
 	if (copied < 0)
 		goto mctx_error;
-
 	offset += copied;
 	srgn_offset += copied;
-
 	if (srgn_offset == hpb->entries_per_srgn) {
 		srgn_offset = 0;
-
 		if (++srgn_idx == hpb->srgns_per_rgn) {
 			srgn_idx = 0;
 			rgn_idx++;
 		}
 	}
-
 	if (offset < pre_req->wb.len)
 		goto next_offset;
-
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 	return 0;
 mctx_error:
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 	return -ENOMEM;
 }
-
 static int ufshpb_pre_req_add_bio_page(struct ufshpb_lu *hpb,
 				       struct request_queue *q,
 				       struct ufshpb_req *pre_req)
@@ -496,15 +742,11 @@ static int ufshpb_pre_req_add_bio_page(struct ufshpb_lu *hpb,
 	struct page *page = pre_req->wb.m_page;
 	struct bio *bio = pre_req->bio;
 	int entries_bytes, ret;
-
 	if (!page)
 		return -ENOMEM;
-
 	if (ufshpb_prep_entry(pre_req, page))
 		return -ENOMEM;
-
 	entries_bytes = pre_req->wb.len * sizeof(__be64);
-
 	ret = bio_add_pc_page(q, bio, page, entries_bytes, 0);
 	if (ret != entries_bytes) {
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
@@ -513,14 +755,12 @@ static int ufshpb_pre_req_add_bio_page(struct ufshpb_lu *hpb,
 	}
 	return 0;
 }
-
 static inline int ufshpb_get_read_id(struct ufshpb_lu *hpb)
 {
 	if (++hpb->cur_read_id >= MAX_HPB_READ_ID)
 		hpb->cur_read_id = 1;
 	return hpb->cur_read_id;
 }
-
 static int ufshpb_execute_pre_req(struct ufshpb_lu *hpb, struct scsi_cmnd *cmd,
 				  struct ufshpb_req *pre_req, int read_id)
 {
@@ -529,7 +769,6 @@ static int ufshpb_execute_pre_req(struct ufshpb_lu *hpb, struct scsi_cmnd *cmd,
 	struct request *req;
 	struct scsi_request *rq;
 	struct bio *bio = pre_req->bio;
-
 	pre_req->hpb = hpb;
 	pre_req->wb.lpn = sectors_to_logical(cmd->device,
 					     blk_rq_pos(cmd->request));
@@ -537,31 +776,25 @@ static int ufshpb_execute_pre_req(struct ufshpb_lu *hpb, struct scsi_cmnd *cmd,
 					     blk_rq_sectors(cmd->request));
 	if (ufshpb_pre_req_add_bio_page(hpb, q, pre_req))
 		return -ENOMEM;
-
 	req = pre_req->req;
-
 	/* 1. request setup */
 	blk_rq_append_bio(req, &bio);
 	req->rq_disk = NULL;
 	req->end_io_data = (void *)pre_req;
 	req->end_io = ufshpb_pre_req_compl_fn;
-
 	/* 2. scsi_request setup */
 	rq = scsi_req(req);
 	rq->retries = 1;
-
 	ufshpb_set_write_buf_cmd(rq->cmd, pre_req->wb.lpn, pre_req->wb.len,
 				 read_id);
 	rq->cmd_len = scsi_command_size(rq->cmd);
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_BLK_INS_REQ))
+		return -EAGAIN;
 	if (blk_insert_cloned_request(q, req) != BLK_STS_OK)
 		return -EAGAIN;
-
 	hpb->stats.pre_req_cnt++;
-
 	return 0;
 }
-
 static int ufshpb_issue_pre_req(struct ufshpb_lu *hpb, struct scsi_cmnd *cmd,
 				int *read_id)
 {
@@ -570,12 +803,12 @@ static int ufshpb_issue_pre_req(struct ufshpb_lu *hpb, struct scsi_cmnd *cmd,
 	unsigned long flags;
 	int _read_id;
 	int ret = 0;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_GET_REQ))
+		return -EAGAIN;
 	req = blk_get_request(cmd->device->request_queue,
 			      REQ_OP_SCSI_OUT | REQ_SYNC, BLK_MQ_REQ_NOWAIT);
 	if (IS_ERR(req))
 		return -EAGAIN;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	pre_req = ufshpb_get_pre_req(hpb);
 	if (!pre_req) {
@@ -584,15 +817,11 @@ static int ufshpb_issue_pre_req(struct ufshpb_lu *hpb, struct scsi_cmnd *cmd,
 	}
 	_read_id = ufshpb_get_read_id(hpb);
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
-
 	pre_req->req = req;
-
 	ret = ufshpb_execute_pre_req(hpb, cmd, pre_req, _read_id);
 	if (ret)
 		goto free_pre_req;
-
 	*read_id = _read_id;
-
 	return ret;
 free_pre_req:
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
@@ -602,7 +831,6 @@ unlock_out:
 	blk_put_request(req);
 	return ret;
 }
-
 /*
  * This function will set up HPB read command using host-side L2P map data.
  */
@@ -612,6 +840,13 @@ int ufshpb_prep(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	struct ufshpb_region *rgn;
 	struct ufshpb_subregion *srgn;
 	struct scsi_cmnd *cmd = lrbp->cmd;
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	struct bio *bio;
+#endif
+#ifdef CONFIG_DEVICE_XCOPY
+	struct blk_copy_payload *payload;
+	int i;
+#endif
 	u32 lpn;
 	__be64 ppn;
 	unsigned long flags;
@@ -634,12 +869,19 @@ int ufshpb_prep(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 
 	if (blk_rq_is_scsi(cmd->request) ||
 	    (!ufshpb_is_write_or_discard(cmd) &&
+#ifdef CONFIG_DEVICE_XCOPY
+		 !op_is_copy(req_op(cmd->request)) &&
+#endif		
 	     !ufshpb_is_read_cmd(cmd)))
 		return 0;
 
 	transfer_len = sectors_to_logical(cmd->device,
 					  blk_rq_sectors(cmd->request));
+#ifndef CONFIG_DEVICE_XCOPY					  
 	if (unlikely(!transfer_len))
+#else
+	if (unlikely(!transfer_len) && !op_is_copy(req_op(cmd->request)))
+#endif	
 		return 0;
 
 	lpn = sectors_to_logical(cmd->device, blk_rq_pos(cmd->request));
@@ -648,11 +890,56 @@ int ufshpb_prep(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	srgn = rgn->srgn_tbl + srgn_idx;
 
 	/* If command type is WRITE or DISCARD, set bitmap as drity */
+#ifndef CONFIG_SCSI_BATCH_UNMAP
 	if (ufshpb_is_write_or_discard(cmd)) {
 		ufshpb_iterate_rgn(hpb, rgn_idx, srgn_idx, srgn_offset,
 				   transfer_len, true);
 		return 0;
 	}
+#else
+	if (unlikely(op_is_discard(req_op(cmd->request)))) {
+		__rq_for_each_bio(bio, cmd->request) {
+			lpn = sectors_to_logical(cmd->device, bio->bi_iter.bi_sector);
+			transfer_len = sectors_to_logical(cmd->device, bio_sectors(bio));
+			ufshpb_get_pos_from_lpn(hpb, lpn, &rgn_idx, &srgn_idx, &srgn_offset);
+			ufshpb_iterate_rgn(hpb, rgn_idx, srgn_idx, srgn_offset,
+				   transfer_len, true);
+		}
+		return 0;
+	}
+	if (op_is_write(req_op(cmd->request))) {
+		ufshpb_iterate_rgn(hpb, rgn_idx, srgn_idx, srgn_offset,
+				   transfer_len, true);
+		return 0;
+	}
+#endif
+
+#ifdef CONFIG_DEVICE_XCOPY
+	if (unlikely(op_is_copy(req_op(cmd->request)))) {
+		/*xcopy copy src to dest, one lBA*/
+		transfer_len = 1;
+		payload = cmd->request->bio->bi_private;
+		for(i = 0; i < BLK_MAX_COPY_RANGE; i++)
+		{
+			if (payload->src_addr[i] || payload->dst_addr[i]) {
+				lpn = payload->src_addr[i];
+				ufshpb_get_pos_from_lpn(hpb, lpn, &rgn_idx, &srgn_idx, &srgn_offset);
+				if (!ufshpb_test_ppn_dirty(hpb, rgn_idx, srgn_idx, srgn_offset,
+				   transfer_len))
+					ufshpb_iterate_rgn(hpb, rgn_idx, srgn_idx, srgn_offset,
+						transfer_len, true);
+				lpn = payload->dst_addr[i];
+				ufshpb_get_pos_from_lpn(hpb, lpn, &rgn_idx, &srgn_idx, &srgn_offset);
+				if (!ufshpb_test_ppn_dirty(hpb, rgn_idx, srgn_idx, srgn_offset,
+				   transfer_len))
+					ufshpb_iterate_rgn(hpb, rgn_idx, srgn_idx, srgn_offset,
+						transfer_len, true);
+			} else
+				break;
+		}
+		return 0;
+	}
+#endif
 
 	if (!ufshpb_is_supported_chunk(hpb, transfer_len))
 		return 0;
@@ -666,20 +953,25 @@ int ufshpb_prep(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 		 */
 		ufshpb_iterate_rgn(hpb, rgn_idx, srgn_idx, srgn_offset,
 				   transfer_len, false);
-
 		/* keep those counters normalized */
+#ifdef UFS_HPB_LAZY_LOAD
+		if (rgn->reads > hpb->params.normalization_thld)
+#else
 		if (rgn->reads > hpb->entries_per_srgn)
+#endif
 			schedule_work(&hpb->ufshpb_normalization_work);
 	}
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	if (ufshpb_test_ppn_dirty(hpb, rgn_idx, srgn_idx, srgn_offset,
 				   transfer_len)) {
 		hpb->stats.miss_cnt++;
+#ifdef UFS_HPB_SHRINK
+		if (transfer_len == 1)
+			hpb->stats.miss4k_cnt++;
+#endif
 		spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 		return 0;
 	}
-
 	err = ufshpb_fill_ppn_from_page(hpb, srgn->mctx, srgn_offset, 1, &ppn);
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 	if (unlikely(err < 0)) {
@@ -692,31 +984,32 @@ int ufshpb_prep(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 		dev_err(hba->dev, "get ppn failed. err %d\n", err);
 		return err;
 	}
-
 	if (!ufshpb_is_legacy(hba) &&
 	    ufshpb_is_required_wb(hpb, transfer_len)) {
 		err = ufshpb_issue_pre_req(hpb, cmd, &read_id);
 		if (err) {
 			unsigned long timeout;
-
 			timeout = cmd->jiffies_at_alloc + msecs_to_jiffies(
 				  hpb->params.requeue_timeout_ms);
-
 			if (time_before(jiffies, timeout))
 				return -EAGAIN;
-
 			hpb->stats.miss_cnt++;
+#ifdef UFS_HPB_SHRINK
+			if (transfer_len == 1)
+				hpb->stats.miss4k_cnt++;
+#endif
 			return 0;
 		}
 	}
-
 	ufshpb_set_hpb_read_to_upiu(hba, hpb, lrbp, lpn, ppn, transfer_len,
 				    read_id);
-
 	hpb->stats.hit_cnt++;
+#ifdef UFS_HPB_SHRINK
+	if (transfer_len == 1)
+		hpb->stats.hit4k_cnt++;
+#endif
 	return 0;
 }
-
 static struct ufshpb_req *ufshpb_get_req(struct ufshpb_lu *hpb,
 					 int rgn_idx, enum req_opf dir,
 					 bool atomic)
@@ -724,154 +1017,136 @@ static struct ufshpb_req *ufshpb_get_req(struct ufshpb_lu *hpb,
 	struct ufshpb_req *rq;
 	struct request *req;
 	int retries = HPB_MAP_REQ_RETRIES;
-
+	blk_mq_req_flags_t blk_flags = 0;
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		return NULL;
 	rq = kmem_cache_alloc(hpb->map_req_cache, GFP_KERNEL);
 	if (!rq)
 		return NULL;
-
+#ifdef UFS_HPB_LAZY_LOAD
+	if (dir == REQ_OP_SCSI_IN)
+		blk_flags |= BLK_MQ_REQ_PM;
+#endif
 retry:
-	req = blk_get_request(hpb->sdev_ufs_lu->request_queue, dir,
-			      BLK_MQ_REQ_NOWAIT);
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_GET_REQ))
+		req = ERR_PTR(-EWOULDBLOCK);
+	else if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_GET_REQ_BUSY))
+		req = ERR_PTR(-EBUSY);
+	else
+		req = blk_get_request(hpb->sdev_ufs_lu->request_queue, dir,
+			      BLK_MQ_REQ_NOWAIT | blk_flags);
 	if (!atomic && (PTR_ERR(req) == -EWOULDBLOCK) && (--retries > 0)) {
 		usleep_range(3000, 3100);
 		goto retry;
 	}
-
-	if (IS_ERR(req))
+	if (IS_ERR(req)) {
+		pr_err("%s can't get req",__func__);
 		goto free_rq;
-
+	}
 	rq->hpb = hpb;
 	rq->req = req;
 	rq->rb.rgn_idx = rgn_idx;
-
 	return rq;
-
 free_rq:
 	kmem_cache_free(hpb->map_req_cache, rq);
 	return NULL;
 }
-
 static void ufshpb_put_req(struct ufshpb_lu *hpb, struct ufshpb_req *rq)
 {
 	blk_put_request(rq->req);
 	kmem_cache_free(hpb->map_req_cache, rq);
 }
-
 static struct ufshpb_req *ufshpb_get_map_req(struct ufshpb_lu *hpb,
 					     struct ufshpb_subregion *srgn)
 {
 	struct ufshpb_req *map_req;
 	struct bio *bio;
 	unsigned long flags;
-
 	if (hpb->is_hcm &&
 	    hpb->num_inflight_map_req >= hpb->params.inflight_map_req) {
-		dev_info(&hpb->sdev_ufs_lu->sdev_dev,
+		dev_info_ratelimited(&hpb->sdev_ufs_lu->sdev_dev,
 			 "map_req throttle. inflight %d throttle %d",
 			 hpb->num_inflight_map_req,
 			 hpb->params.inflight_map_req);
 		return NULL;
 	}
-
 	map_req = ufshpb_get_req(hpb, srgn->rgn_idx, REQ_OP_SCSI_IN, false);
 	if (!map_req)
 		return NULL;
-
-	bio = bio_alloc(GFP_KERNEL, hpb->pages_per_srgn);
-	if (!bio) {
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC)) {
 		ufshpb_put_req(hpb, map_req);
 		return NULL;
 	}
-
+	bio = bio_alloc(GFP_KERNEL, hpb->pages_per_srgn);
+	if (!bio) {
+		pr_err("%s can't alloc bio",__func__);
+		ufshpb_put_req(hpb, map_req);
+		return NULL;
+	}
 	map_req->bio = bio;
-
 	map_req->rb.srgn_idx = srgn->srgn_idx;
 	map_req->rb.mctx = srgn->mctx;
-
 	spin_lock_irqsave(&hpb->param_lock, flags);
 	hpb->num_inflight_map_req++;
 	spin_unlock_irqrestore(&hpb->param_lock, flags);
-
 	return map_req;
 }
-
 static void ufshpb_put_map_req(struct ufshpb_lu *hpb,
 			       struct ufshpb_req *map_req)
 {
 	unsigned long flags;
-
 	bio_put(map_req->bio);
 	ufshpb_put_req(hpb, map_req);
-
 	spin_lock_irqsave(&hpb->param_lock, flags);
 	hpb->num_inflight_map_req--;
 	spin_unlock_irqrestore(&hpb->param_lock, flags);
 }
-
 static int ufshpb_clear_dirty_bitmap(struct ufshpb_lu *hpb,
 				     struct ufshpb_subregion *srgn)
 {
 	struct ufshpb_region *rgn;
 	u32 num_entries = hpb->entries_per_srgn;
-
 	if (!srgn->mctx) {
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
 			"no mctx in region %d subregion %d.\n",
 			srgn->rgn_idx, srgn->srgn_idx);
 		return -1;
 	}
-
 	if (unlikely(srgn->is_last))
 		num_entries = hpb->last_srgn_entries;
-
 	bitmap_zero(srgn->mctx->ppn_dirty, num_entries);
-
 	rgn = hpb->rgn_tbl + srgn->rgn_idx;
 	clear_bit(RGN_FLAG_DIRTY, &rgn->rgn_flags);
-
 	return 0;
 }
-
 static void ufshpb_update_active_info(struct ufshpb_lu *hpb, int rgn_idx,
 				      int srgn_idx)
 {
 	struct ufshpb_region *rgn;
 	struct ufshpb_subregion *srgn;
-
 	rgn = hpb->rgn_tbl + rgn_idx;
 	srgn = rgn->srgn_tbl + srgn_idx;
-
 	list_del_init(&rgn->list_inact_rgn);
-
 	if (list_empty(&srgn->list_act_srgn))
 		list_add_tail(&srgn->list_act_srgn, &hpb->lh_act_srgn);
-
 	hpb->stats.rb_active_cnt++;
 }
-
 static void ufshpb_update_inactive_info(struct ufshpb_lu *hpb, int rgn_idx)
 {
 	struct ufshpb_region *rgn;
 	struct ufshpb_subregion *srgn;
 	int srgn_idx;
-
 	rgn = hpb->rgn_tbl + rgn_idx;
-
 	for_each_sub_region(rgn, srgn_idx, srgn)
 		list_del_init(&srgn->list_act_srgn);
-
 	if (list_empty(&rgn->list_inact_rgn))
 		list_add_tail(&rgn->list_inact_rgn, &hpb->lh_inact_rgn);
-
 	hpb->stats.rb_inactive_cnt++;
 }
-
 static void ufshpb_activate_subregion(struct ufshpb_lu *hpb,
 				      struct ufshpb_subregion *srgn)
 {
 	struct ufshpb_region *rgn;
-
 	/*
 	 * If there is no mctx in subregion
 	 * after I/O progress for HPB_READ_BUFFER, the region to which the
@@ -882,12 +1157,12 @@ static void ufshpb_activate_subregion(struct ufshpb_lu *hpb,
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
 			"no mctx in region %d subregion %d.\n",
 			srgn->rgn_idx, srgn->srgn_idx);
-		srgn->srgn_state = HPB_SRGN_INVALID;
+		srgn->srgn_state = HPB_SRGN_UNUSED;
 		return;
 	}
-
 	rgn = hpb->rgn_tbl + srgn->rgn_idx;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_ACTIVE_SRGN))
+		rgn->rgn_state = HPB_RGN_INACTIVE;
 	if (unlikely(rgn->rgn_state == HPB_RGN_INACTIVE)) {
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
 			"region %d subregion %d evicted\n",
@@ -897,32 +1172,25 @@ static void ufshpb_activate_subregion(struct ufshpb_lu *hpb,
 	}
 	srgn->srgn_state = HPB_SRGN_VALID;
 }
-
 static void ufshpb_umap_req_compl_fn(struct request *req, blk_status_t error)
 {
 	struct ufshpb_req *umap_req = (struct ufshpb_req *)req->end_io_data;
-
 	ufshpb_put_req(umap_req->hpb, umap_req);
 }
-
 static void ufshpb_map_req_compl_fn(struct request *req, blk_status_t error)
 {
 	struct ufshpb_req *map_req = (struct ufshpb_req *) req->end_io_data;
 	struct ufshpb_lu *hpb = map_req->hpb;
 	struct ufshpb_subregion *srgn;
 	unsigned long flags;
-
 	srgn = hpb->rgn_tbl[map_req->rb.rgn_idx].srgn_tbl +
 		map_req->rb.srgn_idx;
-
 	ufshpb_clear_dirty_bitmap(hpb, srgn);
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	ufshpb_activate_subregion(hpb, srgn);
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
-
 	ufshpb_put_map_req(map_req->hpb, map_req);
 }
-
 static void ufshpb_set_unmap_cmd(unsigned char *cdb, struct ufshpb_region *rgn)
 {
 	cdb[0] = UFSHPB_WRITE_BUFFER;
@@ -932,39 +1200,36 @@ static void ufshpb_set_unmap_cmd(unsigned char *cdb, struct ufshpb_region *rgn)
 		put_unaligned_be16(rgn->rgn_idx, &cdb[2]);
 	cdb[9] = 0x00;
 }
-
 static void ufshpb_set_read_buf_cmd(unsigned char *cdb, int rgn_idx,
 				    int srgn_idx, int srgn_mem_size)
 {
 	cdb[0] = UFSHPB_READ_BUFFER;
 	cdb[1] = UFSHPB_READ_BUFFER_ID;
-
 	put_unaligned_be16(rgn_idx, &cdb[2]);
 	put_unaligned_be16(srgn_idx, &cdb[4]);
 	put_unaligned_be24(srgn_mem_size, &cdb[6]);
-
 	cdb[9] = 0x00;
 }
-
 static void ufshpb_execute_umap_req(struct ufshpb_lu *hpb,
 				   struct ufshpb_req *umap_req,
 				   struct ufshpb_region *rgn)
 {
 	struct request *req;
 	struct scsi_request *rq;
-
 	req = umap_req->req;
 	req->timeout = 0;
 	req->end_io_data = (void *)umap_req;
 	rq = scsi_req(req);
 	ufshpb_set_unmap_cmd(rq->cmd, rgn);
 	rq->cmd_len = HPB_WRITE_BUFFER_CMD_LENGTH;
-
+#ifdef UFS_HPB_SHRINK
+	//add unmap req to tail for performance
+	blk_execute_rq_nowait(req->q, NULL, req, 0, ufshpb_umap_req_compl_fn);
+#else
 	blk_execute_rq_nowait(req->q, NULL, req, 1, ufshpb_umap_req_compl_fn);
-
+#endif
 	hpb->stats.umap_req_cnt++;
 }
-
 static int ufshpb_execute_map_req(struct ufshpb_lu *hpb,
 				  struct ufshpb_req *map_req, bool last)
 {
@@ -974,7 +1239,6 @@ static int ufshpb_execute_map_req(struct ufshpb_lu *hpb,
 	int mem_size = hpb->srgn_mem_size;
 	int ret = 0;
 	int i;
-
 	q = hpb->sdev_ufs_lu->request_queue;
 	for (i = 0; i < hpb->pages_per_srgn; i++) {
 		ret = bio_add_pc_page(q, map_req->bio, map_req->rb.mctx->m_page[i],
@@ -986,51 +1250,48 @@ static int ufshpb_execute_map_req(struct ufshpb_lu *hpb,
 			return ret;
 		}
 	}
-
 	req = map_req->req;
-
 	blk_rq_append_bio(req, &map_req->bio);
-
 	req->end_io_data = map_req;
-
 	rq = scsi_req(req);
-
 	if (unlikely(last))
 		mem_size = hpb->last_srgn_entries * HPB_ENTRY_SIZE;
-
 	ufshpb_set_read_buf_cmd(rq->cmd, map_req->rb.rgn_idx,
 				map_req->rb.srgn_idx, mem_size);
 	rq->cmd_len = HPB_READ_BUFFER_CMD_LENGTH;
-
 	blk_execute_rq_nowait(q, NULL, req, 1, ufshpb_map_req_compl_fn);
-
 	hpb->stats.map_req_cnt++;
 	return 0;
 }
-
 static struct ufshpb_map_ctx *ufshpb_get_map_ctx(struct ufshpb_lu *hpb,
 						 bool last)
 {
 	struct ufshpb_map_ctx *mctx;
 	u32 num_entries = hpb->entries_per_srgn;
 	int i, j;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		return NULL;
 	mctx = mempool_alloc(ufshpb_mctx_pool, GFP_KERNEL);
 	if (!mctx)
 		return NULL;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		goto release_mctx;
 	mctx->m_page = kmem_cache_alloc(hpb->m_page_cache, GFP_KERNEL);
 	if (!mctx->m_page)
 		goto release_mctx;
-
 	if (unlikely(last))
 		num_entries = hpb->last_srgn_entries;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		goto release_m_page;
 	mctx->ppn_dirty = bitmap_zalloc(num_entries, GFP_KERNEL);
 	if (!mctx->ppn_dirty)
 		goto release_m_page;
-
 	for (i = 0; i < hpb->pages_per_srgn; i++) {
+		if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC)) {
+			for (j = 0; j < i; j++)
+				mempool_free(mctx->m_page[j], ufshpb_page_pool);
+			goto release_ppn_dirty;
+		}
 		mctx->m_page[i] = mempool_alloc(ufshpb_page_pool, GFP_KERNEL);
 		if (!mctx->m_page[i]) {
 			for (j = 0; j < i; j++)
@@ -1039,9 +1300,7 @@ static struct ufshpb_map_ctx *ufshpb_get_map_ctx(struct ufshpb_lu *hpb,
 		}
 		clear_page(page_address(mctx->m_page[i]));
 	}
-
 	return mctx;
-
 release_ppn_dirty:
 	bitmap_free(mctx->ppn_dirty);
 release_m_page:
@@ -1050,33 +1309,26 @@ release_mctx:
 	mempool_free(mctx, ufshpb_mctx_pool);
 	return NULL;
 }
-
 static void ufshpb_put_map_ctx(struct ufshpb_lu *hpb,
 			       struct ufshpb_map_ctx *mctx)
 {
 	int i;
-
 	for (i = 0; i < hpb->pages_per_srgn; i++)
 		mempool_free(mctx->m_page[i], ufshpb_page_pool);
-
 	bitmap_free(mctx->ppn_dirty);
 	kmem_cache_free(hpb->m_page_cache, mctx->m_page);
 	mempool_free(mctx, ufshpb_mctx_pool);
 }
-
 static int ufshpb_check_srgns_issue_state(struct ufshpb_lu *hpb,
 					  struct ufshpb_region *rgn)
 {
 	struct ufshpb_subregion *srgn;
 	int srgn_idx;
-
 	for_each_sub_region(rgn, srgn_idx, srgn)
 		if (srgn->srgn_state == HPB_SRGN_ISSUED)
 			return -EPERM;
-
 	return 0;
 }
-
 static void ufshpb_read_to_handler(struct work_struct *work)
 {
 	struct ufshpb_lu *hpb = container_of(work, struct ufshpb_lu,
@@ -1085,17 +1337,17 @@ static void ufshpb_read_to_handler(struct work_struct *work)
 	struct ufshpb_region *rgn, *next_rgn;
 	unsigned long flags;
 	unsigned int poll;
+#ifdef 	UFS_HPB_LAZY_LOAD
+	struct ufshpb_subregion *srgn;
+	int srgn_idx;
+#endif
 	LIST_HEAD(expired_list);
-
 	if (test_and_set_bit(TIMEOUT_WORK_RUNNING, &hpb->work_data_bits))
 		return;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
-
 	list_for_each_entry_safe(rgn, next_rgn, &lru_info->lh_lru_rgn,
 				 list_lru_rgn) {
 		bool timedout = ktime_after(ktime_get(), rgn->read_timeout);
-
 		if (timedout) {
 			rgn->read_timeout_expiries--;
 			if (is_rgn_dirty(rgn) ||
@@ -1106,26 +1358,27 @@ static void ufshpb_read_to_handler(struct work_struct *work)
 						hpb->params.read_timeout_ms);
 		}
 	}
-
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
-
 	list_for_each_entry_safe(rgn, next_rgn, &expired_list,
 				 list_expired_rgn) {
 		list_del_init(&rgn->list_expired_rgn);
+#ifdef	UFS_HPB_LAZY_LOAD
+		spin_lock(&rgn->rgn_lock);
+		rgn->reads = 0;
+		for_each_sub_region(rgn, srgn_idx, srgn)
+			srgn->reads = 0;
+		spin_unlock(&rgn->rgn_lock);
+#endif
 		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 		ufshpb_update_inactive_info(hpb, rgn->rgn_idx);
 		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 	}
-
 	ufshpb_kick_map_work(hpb);
-
 	clear_bit(TIMEOUT_WORK_RUNNING, &hpb->work_data_bits);
-
 	poll = hpb->params.timeout_polling_interval_ms;
 	schedule_delayed_work(&hpb->ufshpb_read_to_work,
 			      msecs_to_jiffies(poll));
 }
-
 static void ufshpb_add_lru_info(struct victim_select_info *lru_info,
 				struct ufshpb_region *rgn)
 {
@@ -1140,18 +1393,17 @@ static void ufshpb_add_lru_info(struct victim_select_info *lru_info,
 			rgn->hpb->params.read_timeout_expiries;
 	}
 }
-
 static void ufshpb_hit_lru_info(struct victim_select_info *lru_info,
 				struct ufshpb_region *rgn)
 {
 	list_move_tail(&rgn->list_lru_rgn, &lru_info->lh_lru_rgn);
 }
-
 static struct ufshpb_region *ufshpb_victim_lru_info(struct ufshpb_lu *hpb)
 {
 	struct victim_select_info *lru_info = &hpb->lru_info;
 	struct ufshpb_region *rgn, *victim_rgn = NULL;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_LRU_REPLACE))
+		return NULL;
 	list_for_each_entry(rgn, &lru_info->lh_lru_rgn, list_lru_rgn) {
 		if (!rgn) {
 			dev_err(&hpb->sdev_ufs_lu->sdev_dev,
@@ -1161,7 +1413,6 @@ static struct ufshpb_region *ufshpb_victim_lru_info(struct ufshpb_lu *hpb)
 		}
 		if (ufshpb_check_srgns_issue_state(hpb, rgn))
 			continue;
-
 		/*
 		 * in host control mode, verify that the exiting region
 		 * has less reads
@@ -1169,14 +1420,11 @@ static struct ufshpb_region *ufshpb_victim_lru_info(struct ufshpb_lu *hpb)
 		if (hpb->is_hcm &&
 		    rgn->reads > hpb->params.eviction_thld_exit)
 			continue;
-
 		victim_rgn = rgn;
 		break;
 	}
-
 	return victim_rgn;
 }
-
 static void ufshpb_cleanup_lru_info(struct victim_select_info *lru_info,
 				    struct ufshpb_region *rgn)
 {
@@ -1184,7 +1432,6 @@ static void ufshpb_cleanup_lru_info(struct victim_select_info *lru_info,
 	rgn->rgn_state = HPB_RGN_INACTIVE;
 	atomic_dec(&lru_info->active_cnt);
 }
-
 static void ufshpb_purge_active_subregion(struct ufshpb_lu *hpb,
 					  struct ufshpb_subregion *srgn)
 {
@@ -1192,58 +1439,63 @@ static void ufshpb_purge_active_subregion(struct ufshpb_lu *hpb,
 		ufshpb_put_map_ctx(hpb, srgn->mctx);
 		srgn->srgn_state = HPB_SRGN_UNUSED;
 		srgn->mctx = NULL;
+#ifndef UFS_HPB_LAZY_LOAD
+		/*  Add by 80371496:
+		 *  New srgn table can't be loaded until System IOs stall for enough time.
+		 *  So clear it after inactive. If use LAZY_LOAD, reads are used to calculate
+		 *  calculate the top heat area, no need clear.
+		 */
+		srgn->reads = 0;
+#endif
 	}
 }
-
 static int ufshpb_issue_umap_req(struct ufshpb_lu *hpb,
 				 struct ufshpb_region *rgn,
 				 bool atomic)
 {
 	struct ufshpb_req *umap_req;
 	int rgn_idx = rgn ? rgn->rgn_idx : 0;
-
 	umap_req = ufshpb_get_req(hpb, rgn_idx, REQ_OP_SCSI_OUT, atomic);
 	if (!umap_req)
 		return -ENOMEM;
-
 	ufshpb_execute_umap_req(hpb, umap_req, rgn);
-
 	return 0;
 }
-
+#ifndef UFS_HPB_SHRINK
 static int ufshpb_issue_umap_single_req(struct ufshpb_lu *hpb,
 					struct ufshpb_region *rgn)
 {
 	return ufshpb_issue_umap_req(hpb, rgn, true);
 }
-
+#endif
 static int ufshpb_issue_umap_all_req(struct ufshpb_lu *hpb)
 {
 	return ufshpb_issue_umap_req(hpb, NULL, false);
 }
-
 static void __ufshpb_evict_region(struct ufshpb_lu *hpb,
 				 struct ufshpb_region *rgn)
 {
 	struct victim_select_info *lru_info;
 	struct ufshpb_subregion *srgn;
 	int srgn_idx;
-
 	lru_info = &hpb->lru_info;
-
 	dev_dbg(&hpb->sdev_ufs_lu->sdev_dev, "evict region %d\n", rgn->rgn_idx);
-
 	ufshpb_cleanup_lru_info(lru_info, rgn);
-
 	for_each_sub_region(rgn, srgn_idx, srgn)
 		ufshpb_purge_active_subregion(hpb, srgn);
+#ifndef UFS_HPB_LAZY_LOAD
+	/*  Add by 80371496:
+	 *  New srgn table can't be loaded until System IOs stall for enough time.
+	 *  So clear it after inactive. If use LAZY_LOAD, reads are used to calculate
+	 *  calculate the top heat area, no need clear.
+	 */
+	rgn->reads = 0;
+#endif
 }
-
 static int ufshpb_evict_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 {
 	unsigned long flags;
 	int ret = 0;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	if (rgn->rgn_state == HPB_RGN_PINNED) {
 		dev_warn(&hpb->sdev_ufs_lu->sdev_dev,
@@ -1256,7 +1508,7 @@ static int ufshpb_evict_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 			ret = -EBUSY;
 			goto out;
 		}
-
+#ifndef UFS_HPB_SHRINK
 		if (hpb->is_hcm) {
 			spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 			ret = ufshpb_issue_umap_single_req(hpb, rgn);
@@ -1264,14 +1516,13 @@ static int ufshpb_evict_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 			if (ret)
 				goto out;
 		}
-
+#endif
 		__ufshpb_evict_region(hpb, rgn);
 	}
 out:
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 	return ret;
 }
-
 static int ufshpb_issue_map_req(struct ufshpb_lu *hpb,
 				struct ufshpb_region *rgn,
 				struct ufshpb_subregion *srgn)
@@ -1282,24 +1533,21 @@ static int ufshpb_issue_map_req(struct ufshpb_lu *hpb,
 	int err = -EAGAIN;
 	bool alloc_required = false;
 	enum HPB_SRGN_STATE state = HPB_SRGN_INVALID;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
-
 	if (ufshpb_get_state(hpb) != HPB_PRESENT) {
 		dev_notice(&hpb->sdev_ufs_lu->sdev_dev,
 			   "%s: ufshpb state is not PRESENT\n", __func__);
 		goto unlock_out;
 	}
-
 	if ((rgn->rgn_state == HPB_RGN_INACTIVE) &&
 	    (srgn->srgn_state == HPB_SRGN_INVALID)) {
 		err = 0;
+		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
+			   "%s: ufshpb_issue_map_req is not PRESENT\n", __func__);
 		goto unlock_out;
 	}
-
 	if (srgn->srgn_state == HPB_SRGN_UNUSED)
 		alloc_required = true;
-
 	/*
 	 * If the subregion is already ISSUED state,
 	 * a specific event (e.g., GC or wear-leveling, etc.) occurs in
@@ -1310,10 +1558,8 @@ static int ufshpb_issue_map_req(struct ufshpb_lu *hpb,
 	 */
 	if (srgn->srgn_state == HPB_SRGN_ISSUED)
 		goto unlock_out;
-
 	srgn->srgn_state = HPB_SRGN_ISSUED;
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
-
 	if (alloc_required) {
 		srgn->mctx = ufshpb_get_map_ctx(hpb, srgn->is_last);
 		if (!srgn->mctx) {
@@ -1324,21 +1570,17 @@ static int ufshpb_issue_map_req(struct ufshpb_lu *hpb,
 			goto change_srgn_state;
 		}
 	}
-
 	map_req = ufshpb_get_map_req(hpb, srgn);
 	if (!map_req)
 		goto change_srgn_state;
-
-
 	ret = ufshpb_execute_map_req(hpb, map_req, srgn->is_last);
 	if (ret) {
 		dev_err(&hpb->sdev_ufs_lu->sdev_dev,
-			   "%s: issue map_req failed: %d, region %d - %d\n",
+			   "%s: failed: %d, region%d srgn%d\n",
 			   __func__, ret, srgn->rgn_idx, srgn->srgn_idx);
 		goto free_map_req;
 	}
 	return 0;
-
 free_map_req:
 	ufshpb_put_map_req(hpb, map_req);
 change_srgn_state:
@@ -1348,14 +1590,29 @@ unlock_out:
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 	return err;
 }
-
+static void ufshpb_mm_scan_lv(struct ufshpb_lu *hpb)
+{
+	unsigned long flags;
+	int level = ufshpb_get_mm_lv();
+	spin_lock_irqsave(&mm_g_stat.lock, flags);
+	if (!mm_g_stat.running && time_after(jiffies,
+		mm_g_stat.last_time + msecs_to_jiffies(mm_g_stat.restore_time))) {
+		// only restore lower lv
+		if (level < mm_g_stat.curr_level) {
+			mm_g_stat.curr_level = level;
+#ifdef UFS_HPB_SHRINK_DEBUG
+			pr_warn("%s restore lv=%d",__func__,level);
+#endif
+		}
+	}
+	spin_unlock_irqrestore(&mm_g_stat.lock, flags);
+}
 static int ufshpb_add_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 {
 	struct ufshpb_region *victim_rgn = NULL;
 	struct victim_select_info *lru_info = &hpb->lru_info;
 	unsigned long flags;
 	int ret = 0;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
 	/*
 	 * If region belongs to lru_list, just move the region
@@ -1366,8 +1623,22 @@ static int ufshpb_add_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 		ufshpb_hit_lru_info(lru_info, rgn);
 		goto out;
 	}
-
 	if (rgn->rgn_state == HPB_RGN_INACTIVE) {
+#ifdef UFS_HPB_SHRINK
+		if (hpb->is_hcm && mm_g_stat.enable) {
+			ufshpb_mm_scan_lv(hpb);
+			if (atomic_read(&lru_info->active_cnt) >=
+				hpb->mm_rgn_cnt[mm_g_stat.curr_level]) {
+#ifdef UFS_HPB_SHRINK_DEBUG
+				dev_warn(&hpb->sdev_ufs_lu->sdev_dev,
+					"hpb reach mm rgn cnt[lv%d](%d),\n",mm_g_stat.curr_level,
+						hpb->mm_rgn_cnt[mm_g_stat.curr_level]);
+#endif
+				ret = -ENOMEM;
+				goto out;
+			}
+		}
+#endif
 		if (atomic_read(&lru_info->active_cnt) ==
 		    lru_info->max_lru_active_cnt) {
 			/*
@@ -1387,7 +1658,6 @@ static int ufshpb_add_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 				ret = -EACCES;
 				goto out;
 			}
-
 			victim_rgn = ufshpb_victim_lru_info(hpb);
 			if (!victim_rgn) {
 				dev_warn(&hpb->sdev_ufs_lu->sdev_dev,
@@ -1396,12 +1666,11 @@ static int ufshpb_add_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 				ret = -ENOMEM;
 				goto out;
 			}
-
 			dev_dbg(&hpb->sdev_ufs_lu->sdev_dev,
 				"LRU full (%d), choose victim %d\n",
 				atomic_read(&lru_info->active_cnt),
 				victim_rgn->rgn_idx);
-
+#ifndef UFS_HPB_SHRINK
 			if (hpb->is_hcm) {
 				spin_unlock_irqrestore(&hpb->rgn_state_lock,
 						       flags);
@@ -1412,10 +1681,9 @@ static int ufshpb_add_region(struct ufshpb_lu *hpb, struct ufshpb_region *rgn)
 				if (ret)
 					goto out;
 			}
-
+#endif
 			__ufshpb_evict_region(hpb, victim_rgn);
 		}
-
 		/*
 		 * When a region is added to lru_info list_head,
 		 * it is guaranteed that the subregion has been
@@ -1428,14 +1696,12 @@ out:
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 	return ret;
 }
-
 static void ufshpb_rsp_req_region_update(struct ufshpb_lu *hpb,
 					 struct utp_hpb_rsp *rsp_field)
 {
 	struct ufshpb_region *rgn;
 	struct ufshpb_subregion *srgn;
 	int i, rgn_i, srgn_i;
-
 	BUILD_BUG_ON(sizeof(struct ufshpb_active_field) != HPB_ACT_FIELD_SIZE);
 	/*
 	 * If the active region and the inactive region are the same,
@@ -1448,7 +1714,6 @@ static void ufshpb_rsp_req_region_update(struct ufshpb_lu *hpb,
 			be16_to_cpu(rsp_field->hpb_active_field[i].active_rgn);
 		srgn_i =
 			be16_to_cpu(rsp_field->hpb_active_field[i].active_srgn);
-
 		rgn = hpb->rgn_tbl + rgn_i;
 		if (hpb->is_hcm &&
 		    (rgn->rgn_state != HPB_RGN_ACTIVE || is_rgn_dirty(rgn))) {
@@ -1460,23 +1725,24 @@ static void ufshpb_rsp_req_region_update(struct ufshpb_lu *hpb,
 			 */
 			continue;
 		}
-
 		dev_dbg(&hpb->sdev_ufs_lu->sdev_dev,
 			"activate(%d) region %d - %d\n", i, rgn_i, srgn_i);
-
+#ifdef UFS_HPB_LAZY_LOAD
+		if (!hpb->is_hcm) {
+#endif
 		spin_lock(&hpb->rsp_list_lock);
 		ufshpb_update_active_info(hpb, rgn_i, srgn_i);
 		spin_unlock(&hpb->rsp_list_lock);
-
+#ifdef UFS_HPB_LAZY_LOAD
+		}
+#endif
 		srgn = rgn->srgn_tbl + srgn_i;
-
 		/* blocking HPB_READ */
 		spin_lock(&hpb->rgn_state_lock);
 		if (srgn->srgn_state == HPB_SRGN_VALID)
 			srgn->srgn_state = HPB_SRGN_INVALID;
 		spin_unlock(&hpb->rgn_state_lock);
 	}
-
 	if (hpb->is_hcm) {
 		/*
 		 * in host control mode the device is not allowed to inactivate
@@ -1484,18 +1750,14 @@ static void ufshpb_rsp_req_region_update(struct ufshpb_lu *hpb,
 		 */
 		goto out;
 	}
-
 	for (i = 0; i < rsp_field->inactive_rgn_cnt; i++) {
 		rgn_i = be16_to_cpu(rsp_field->hpb_inactive_field[i]);
 		dev_dbg(&hpb->sdev_ufs_lu->sdev_dev,
 			"inactivate(%d) region %d\n", i, rgn_i);
-
 		spin_lock(&hpb->rsp_list_lock);
 		ufshpb_update_inactive_info(hpb, rgn_i);
 		spin_unlock(&hpb->rsp_list_lock);
-
 		rgn = hpb->rgn_tbl + rgn_i;
-
 		spin_lock(&hpb->rgn_state_lock);
 		if (rgn->rgn_state != HPB_RGN_INACTIVE) {
 			for (srgn_i = 0; srgn_i < rgn->srgn_cnt; srgn_i++) {
@@ -1506,30 +1768,22 @@ static void ufshpb_rsp_req_region_update(struct ufshpb_lu *hpb,
 		}
 		spin_unlock(&hpb->rgn_state_lock);
 	}
-
 out:
 	dev_dbg(&hpb->sdev_ufs_lu->sdev_dev, "Noti: #ACT %u #INACT %u\n",
 		rsp_field->active_rgn_cnt, rsp_field->inactive_rgn_cnt);
-
 	if (ufshpb_get_state(hpb) == HPB_PRESENT)
 		queue_work(ufshpb_wq, &hpb->map_work);
 }
-
 static void ufshpb_dev_reset_handler(struct ufshpb_lu *hpb)
 {
 	struct victim_select_info *lru_info = &hpb->lru_info;
 	struct ufshpb_region *rgn;
 	unsigned long flags;
-
 	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
-
 	list_for_each_entry(rgn, &lru_info->lh_lru_rgn, list_lru_rgn)
 		set_bit(RGN_FLAG_UPDATE, &rgn->rgn_flags);
-
 	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
 }
-
-
 /*
  * This function will parse recommended active subregion information in sense
  * data field of response UPIU with SAM_STAT_GOOD state.
@@ -1539,33 +1793,25 @@ void ufshpb_rsp_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(lrbp->cmd->device);
 	struct utp_hpb_rsp *rsp_field = &lrbp->ucd_rsp_ptr->hr;
 	int data_seg_len;
-
 	if (unlikely(lrbp->lun != rsp_field->lun)) {
 		struct scsi_device *sdev;
 		bool found = false;
-
 		__shost_for_each_device(sdev, hba->host) {
 			hpb = ufshpb_get_hpb_data(sdev);
-
 			if (!hpb)
 				continue;
-
 			if (rsp_field->lun == hpb->lun) {
 				found = true;
 				break;
 			}
 		}
-
 		if (!found)
 			return;
 	}
-
 	if (!hpb)
 		return;
-
 	if (ufshpb_get_state(hpb) == HPB_INIT)
 		return;
-
 	if ((ufshpb_get_state(hpb) != HPB_PRESENT) &&
 	    (ufshpb_get_state(hpb) != HPB_SUSPEND)) {
 		dev_notice(&hpb->sdev_ufs_lu->sdev_dev,
@@ -1573,26 +1819,19 @@ void ufshpb_rsp_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 			   __func__);
 		return;
 	}
-
 	data_seg_len = be32_to_cpu(lrbp->ucd_rsp_ptr->header.dword_2)
 		& MASK_RSP_UPIU_DATA_SEG_LEN;
-
 	/* To flush remained rsp_list, we queue the map_work task */
 	if (!data_seg_len) {
 		if (!ufshpb_is_general_lun(hpb->lun))
 			return;
-
 		ufshpb_kick_map_work(hpb);
 		return;
 	}
-
 	BUILD_BUG_ON(sizeof(struct utp_hpb_rsp) != UTP_HPB_RSP_SIZE);
-
 	if (!ufshpb_is_hpb_rsp_valid(hba, lrbp, rsp_field))
 		return;
-
 	hpb->stats.rb_noti_cnt++;
-
 	switch (rsp_field->hpb_op) {
 	case HPB_RSP_REQ_REGION_UPDATE:
 		if (data_seg_len != DEV_DATA_SEG_LEN)
@@ -1604,18 +1843,14 @@ void ufshpb_rsp_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	case HPB_RSP_DEV_RESET:
 		dev_warn(&hpb->sdev_ufs_lu->sdev_dev,
 			 "UFS device lost HPB information during PM.\n");
-
 		if (hpb->is_hcm) {
 			struct scsi_device *sdev;
-
 			__shost_for_each_device(sdev, hba->host) {
 				struct ufshpb_lu *h = sdev->hostdata;
-
 				if (h)
 					ufshpb_dev_reset_handler(h);
 			}
 		}
-
 		break;
 	default:
 		dev_notice(&hpb->sdev_ufs_lu->sdev_dev,
@@ -1624,64 +1859,96 @@ void ufshpb_rsp_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 		break;
 	}
 }
-
 static void ufshpb_add_active_list(struct ufshpb_lu *hpb,
 				   struct ufshpb_region *rgn,
 				   struct ufshpb_subregion *srgn)
 {
 	if (!list_empty(&rgn->list_inact_rgn))
 		return;
-
 	if (!list_empty(&srgn->list_act_srgn)) {
 		list_move(&srgn->list_act_srgn, &hpb->lh_act_srgn);
 		return;
 	}
-
 	list_add(&srgn->list_act_srgn, &hpb->lh_act_srgn);
 }
-
 static void ufshpb_add_pending_evict_list(struct ufshpb_lu *hpb,
 					  struct ufshpb_region *rgn,
 					  struct list_head *pending_list)
 {
 	struct ufshpb_subregion *srgn;
 	int srgn_idx;
-
 	if (!list_empty(&rgn->list_inact_rgn))
 		return;
-
 	for_each_sub_region(rgn, srgn_idx, srgn)
 		if (!list_empty(&srgn->list_act_srgn))
 			return;
-
 	list_add_tail(&rgn->list_inact_rgn, pending_list);
 }
-
+#ifdef UFS_HPB_LAZY_LOAD
+static int ufshpb_load_srgns(struct ufshpb_lu *hpb)
+{
+	struct ufshpb_region *rgn;
+	struct ufshpb_subregion *srgn;
+	int ret = 0, cnt = 0;
+	unsigned long flags;
+	if (ufshpb_get_state(hpb) == HPB_INIT)
+		return ret;
+	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+	while ((srgn = list_first_entry_or_null(&hpb->lh_act_srgn,
+			struct ufshpb_subregion, list_act_srgn))) {
+		list_del_init(&srgn->list_act_srgn);
+		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+		rgn = hpb->rgn_tbl + srgn->rgn_idx;
+		ret = ufshpb_add_region(hpb, rgn);
+		if (ret) {
+			dev_err(&hpb->sdev_ufs_lu->sdev_dev,
+			    "can't add rgn, ret %d, region %d - %d\n",
+			    ret, rgn->rgn_idx, srgn->srgn_idx);
+			spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+			continue;
+		}
+		ret = ufshpb_issue_map_req(hpb, rgn, srgn);
+		if (ret) {
+			//dev_err(&hpb->sdev_ufs_lu->sdev_dev,
+			//    "issue map_req failed. ret %d, rgn%d-srgn%d\n",
+			//    ret, rgn->rgn_idx, srgn->srgn_idx);
+			msleep(1);
+			spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+			ufshpb_add_active_list(hpb, rgn, srgn);
+			continue;
+		}
+		cnt++;
+		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+	}
+	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+	return cnt;
+}
+#else
 static void ufshpb_run_active_subregion_list(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_region *rgn;
 	struct ufshpb_subregion *srgn;
 	unsigned long flags;
 	int ret = 0;
-
 	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 	while ((srgn = list_first_entry_or_null(&hpb->lh_act_srgn,
 						struct ufshpb_subregion,
 						list_act_srgn))) {
+#ifdef UFS_HPB_SHRINK
+		if (ufshpb_get_state(hpb) == HPB_INIT)
+			break;
+#endif
 		if (ufshpb_get_state(hpb) == HPB_SUSPEND)
 			break;
-
 		list_del_init(&srgn->list_act_srgn);
 		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
-
 		rgn = hpb->rgn_tbl + srgn->rgn_idx;
 		ret = ufshpb_add_region(hpb, rgn);
 		if (ret)
 			goto active_failed;
-
 		ret = ufshpb_issue_map_req(hpb, rgn, srgn);
 		if (ret) {
-			dev_err(&hpb->sdev_ufs_lu->sdev_dev,
+			dev_err_ratelimited(&hpb->sdev_ufs_lu->sdev_dev,
 			    "issue map_req failed. ret %d, region %d - %d\n",
 			    ret, rgn->rgn_idx, srgn->srgn_idx);
 			goto active_failed;
@@ -1690,91 +1957,88 @@ static void ufshpb_run_active_subregion_list(struct ufshpb_lu *hpb)
 	}
 	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 	return;
-
 active_failed:
-	dev_err(&hpb->sdev_ufs_lu->sdev_dev, "failed to activate region %d - %d, will retry\n",
+	dev_err_ratelimited(&hpb->sdev_ufs_lu->sdev_dev, "failed to activate region %d - %d, will retry\n",
 		   rgn->rgn_idx, srgn->srgn_idx);
 	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 	ufshpb_add_active_list(hpb, rgn, srgn);
 	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 }
-
+#endif
 static void ufshpb_run_inactive_region_list(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_region *rgn;
 	unsigned long flags;
 	int ret;
+#ifdef UFS_HPB_SHRINK
+	enum HPB_RGN_STATE rgn_state;
+#endif
 	LIST_HEAD(pending_list);
-
 	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 	while ((rgn = list_first_entry_or_null(&hpb->lh_inact_rgn,
 					       struct ufshpb_region,
 					       list_inact_rgn))) {
 		if (ufshpb_get_state(hpb) == HPB_SUSPEND)
 			break;
-
 		list_del_init(&rgn->list_inact_rgn);
+#ifdef UFS_HPB_SHRINK
+		rgn_state = rgn->rgn_state;
+		rgn->rgn_state = HPB_RGN_ISSUED;
+#endif
 		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
-
 		ret = ufshpb_evict_region(hpb, rgn);
 		if (ret) {
 			spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+#ifdef UFS_HPB_SHRINK
+			rgn->rgn_state = rgn_state;
+#endif
 			ufshpb_add_pending_evict_list(hpb, rgn, &pending_list);
 			spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 		}
-
 		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 	}
-
 	list_splice(&pending_list, &hpb->lh_inact_rgn);
 	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 }
-
 static void ufshpb_normalization_work_handler(struct work_struct *work)
 {
 	struct ufshpb_lu *hpb = container_of(work, struct ufshpb_lu,
 					     ufshpb_normalization_work);
 	int rgn_idx;
+	unsigned long flags;
 	u8 factor = hpb->params.normalization_factor;
-
 	for (rgn_idx = 0; rgn_idx < hpb->rgns_per_lu; rgn_idx++) {
 		struct ufshpb_region *rgn = hpb->rgn_tbl + rgn_idx;
 		int srgn_idx;
-
 		spin_lock(&rgn->rgn_lock);
 		rgn->reads = 0;
 		for (srgn_idx = 0; srgn_idx < hpb->srgns_per_rgn; srgn_idx++) {
 			struct ufshpb_subregion *srgn = rgn->srgn_tbl + srgn_idx;
-
 			srgn->reads >>= factor;
 			rgn->reads += srgn->reads;
 		}
 		spin_unlock(&rgn->rgn_lock);
-
 		if (rgn->rgn_state != HPB_RGN_ACTIVE || rgn->reads)
 			continue;
-
 		/* if region is active but has no reads - inactivate it */
-		spin_lock(&hpb->rsp_list_lock);
+		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
 		ufshpb_update_inactive_info(hpb, rgn->rgn_idx);
-		spin_unlock(&hpb->rsp_list_lock);
+		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 	}
 }
-
 static void ufshpb_map_work_handler(struct work_struct *work)
 {
 	struct ufshpb_lu *hpb = container_of(work, struct ufshpb_lu, map_work);
-
 	if (ufshpb_get_state(hpb) != HPB_PRESENT) {
 		dev_notice(&hpb->sdev_ufs_lu->sdev_dev,
 			   "%s: ufshpb state is not PRESENT\n", __func__);
 		return;
 	}
-
 	ufshpb_run_inactive_region_list(hpb);
+#ifndef UFS_HPB_LAZY_LOAD
 	ufshpb_run_active_subregion_list(hpb);
+#endif
 }
-
 /*
  * this function doesn't need to hold lock due to be called in init.
  * (rgn_state_lock, rsp_list_lock, etc..)
@@ -1786,7 +2050,6 @@ static int ufshpb_init_pinned_active_region(struct ufs_hba *hba,
 	struct ufshpb_subregion *srgn;
 	int srgn_idx, i;
 	int err = 0;
-
 	for_each_sub_region(rgn, srgn_idx, srgn) {
 		srgn->mctx = ufshpb_get_map_ctx(hpb, srgn->is_last);
 		srgn->srgn_state = HPB_SRGN_INVALID;
@@ -1796,13 +2059,10 @@ static int ufshpb_init_pinned_active_region(struct ufs_hba *hba,
 				"alloc mctx for pinned region failed\n");
 			goto release;
 		}
-
 		list_add_tail(&srgn->list_act_srgn, &hpb->lh_act_srgn);
 	}
-
 	rgn->rgn_state = HPB_RGN_PINNED;
 	return 0;
-
 release:
 	for (i = 0; i < srgn_idx; i++) {
 		srgn = rgn->srgn_tbl + i;
@@ -1810,37 +2070,76 @@ release:
 	}
 	return err;
 }
-
 static void ufshpb_init_subregion_tbl(struct ufshpb_lu *hpb,
 				      struct ufshpb_region *rgn, bool last)
 {
 	int srgn_idx;
 	struct ufshpb_subregion *srgn;
-
 	for_each_sub_region(rgn, srgn_idx, srgn) {
 		INIT_LIST_HEAD(&srgn->list_act_srgn);
-
 		srgn->rgn_idx = rgn->rgn_idx;
 		srgn->srgn_idx = srgn_idx;
 		srgn->srgn_state = HPB_SRGN_UNUSED;
 	}
-
 	if (unlikely(last && hpb->last_srgn_entries))
 		srgn->is_last = true;
 }
-
 static int ufshpb_alloc_subregion_tbl(struct ufshpb_lu *hpb,
 				      struct ufshpb_region *rgn, int srgn_cnt)
 {
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		return -ENOMEM;
 	rgn->srgn_tbl = kvcalloc(srgn_cnt, sizeof(struct ufshpb_subregion),
 				 GFP_KERNEL);
 	if (!rgn->srgn_tbl)
 		return -ENOMEM;
-
 	rgn->srgn_cnt = srgn_cnt;
 	return 0;
 }
-
+#ifdef UFS_HPB_SHRINK
+//Testing proves that HPB with a capacity lower than 500M will reduce the performance
+#define LOWEST_WATERMARK_PAGES (128000)
+/*
+ *  If enable mm_g_stat.enable, hpb lu max active rgn cnt limit to
+ *  mm_rgn_cnt[], allowing the system get more memory.
+ */
+static void ufshpb_lu_mm_parameter_init(struct ufshpb_lu *hpb)
+{
+	int i;
+	long watermark_pages;
+	long hpb_pages;
+	struct sysinfo si;
+	si_meminfo(&si);
+	/* Keep hpb size always < max(1/8 availmem, hpb_mem * 4) */
+	watermark_pages = max_t(typeof(si.totalram),
+		(si.totalram >> HPB_MM_TRIGGER_FACTOR),(tot_active_srgn_pages << 2));
+	ufshpb_mm_waterline[0] = watermark_pages > LOWEST_WATERMARK_PAGES ?
+						watermark_pages : LOWEST_WATERMARK_PAGES;
+	for(i = 1; i < HPB_MM_LV_URGENT; i++) {
+		ufshpb_mm_waterline[i] = ufshpb_mm_waterline[i-1] >> 1;
+		if (ufshpb_mm_waterline[i] < LOWEST_WATERMARK_PAGES) {
+			ufshpb_mm_waterline[i] = LOWEST_WATERMARK_PAGES;
+			break;
+		}
+	}
+	/* Init stage, level0 does not reduce memory */
+	hpb->mm_rgn_cnt[0] = hpb->lru_info.max_lru_active_cnt;
+	for (i = 1; i < HPB_MM_LV_URGENT; i++) {
+		hpb->mm_rgn_cnt[i] = hpb->mm_rgn_cnt[i-1] >> 1;
+		hpb_pages = hpb->mm_rgn_cnt[i] * hpb->srgns_per_rgn * hpb->pages_per_srgn;
+		WARN_ON(hpb_pages > ufshpb_mm_waterline[i]);
+		if (ufshpb_mm_waterline[i] <= LOWEST_WATERMARK_PAGES) {
+			hpb->mm_rgn_cnt[i] = 0;
+			break;
+		}
+		if (ufshpb_mm_waterline[i] > LOWEST_WATERMARK_PAGES &&
+				ufshpb_mm_waterline[i] - hpb_pages < LOWEST_WATERMARK_PAGES) {
+			hpb_pages = ufshpb_mm_waterline[i] - LOWEST_WATERMARK_PAGES;
+			hpb->mm_rgn_cnt[i] = hpb_pages/(hpb->srgns_per_rgn * hpb->pages_per_srgn);
+		}
+	}
+}
+#endif
 static void ufshpb_lu_parameter_init(struct ufs_hba *hba,
 				     struct ufshpb_lu *hpb,
 				     struct ufshpb_dev_info *hpb_dev_info,
@@ -1848,95 +2147,78 @@ static void ufshpb_lu_parameter_init(struct ufs_hba *hba,
 {
 	u32 entries_per_rgn;
 	u64 rgn_mem_size, tmp;
-
 	/* for pre_req */
 	hpb->pre_req_min_tr_len = hpb_dev_info->max_hpb_single_cmd + 1;
-
 	if (ufshpb_is_legacy(hba))
 		hpb->pre_req_max_tr_len = HPB_LEGACY_CHUNK_HIGH;
 	else
 		hpb->pre_req_max_tr_len = HPB_MULTI_CHUNK_HIGH;
-
-
 	hpb->cur_read_id = 0;
-
 	hpb->lu_pinned_start = hpb_lu_info->pinned_start;
 	hpb->lu_pinned_end = hpb_lu_info->num_pinned ?
 		(hpb_lu_info->pinned_start + hpb_lu_info->num_pinned - 1)
 		: PINNED_NOT_SET;
 	hpb->lru_info.max_lru_active_cnt =
 		hpb_lu_info->max_active_rgns - hpb_lu_info->num_pinned;
-
 	rgn_mem_size = (1ULL << hpb_dev_info->rgn_size) * HPB_RGN_SIZE_UNIT
 			* HPB_ENTRY_SIZE;
 	do_div(rgn_mem_size, HPB_ENTRY_BLOCK_SIZE);
 	hpb->srgn_mem_size = (1ULL << hpb_dev_info->srgn_size)
 		* HPB_RGN_SIZE_UNIT / HPB_ENTRY_BLOCK_SIZE * HPB_ENTRY_SIZE;
-
 	tmp = rgn_mem_size;
 	do_div(tmp, HPB_ENTRY_SIZE);
 	entries_per_rgn = (u32)tmp;
 	hpb->entries_per_rgn_shift = ilog2(entries_per_rgn);
 	hpb->entries_per_rgn_mask = entries_per_rgn - 1;
-
 	hpb->entries_per_srgn = hpb->srgn_mem_size / HPB_ENTRY_SIZE;
 	hpb->entries_per_srgn_shift = ilog2(hpb->entries_per_srgn);
 	hpb->entries_per_srgn_mask = hpb->entries_per_srgn - 1;
-
 	tmp = rgn_mem_size;
 	do_div(tmp, hpb->srgn_mem_size);
 	hpb->srgns_per_rgn = (int)tmp;
-
 	hpb->rgns_per_lu = DIV_ROUND_UP(hpb_lu_info->num_blocks,
 				entries_per_rgn);
 	hpb->srgns_per_lu = DIV_ROUND_UP(hpb_lu_info->num_blocks,
 				(hpb->srgn_mem_size / HPB_ENTRY_SIZE));
 	hpb->last_srgn_entries = hpb_lu_info->num_blocks
 				 % (hpb->srgn_mem_size / HPB_ENTRY_SIZE);
-
 	hpb->pages_per_srgn = DIV_ROUND_UP(hpb->srgn_mem_size, PAGE_SIZE);
-
 	if (hpb_dev_info->control_mode == HPB_HOST_CONTROL)
 		hpb->is_hcm = true;
+#ifdef UFS_HPB_SHRINK
+	ufshpb_lu_mm_parameter_init(hpb);
+#endif
 }
-
 static int ufshpb_alloc_region_tbl(struct ufs_hba *hba, struct ufshpb_lu *hpb)
 {
 	struct ufshpb_region *rgn_table, *rgn;
 	int rgn_idx, i;
 	int ret = 0;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		return -ENOMEM;
 	rgn_table = kvcalloc(hpb->rgns_per_lu, sizeof(struct ufshpb_region),
 			    GFP_KERNEL);
 	if (!rgn_table)
 		return -ENOMEM;
-
 	hpb->rgn_tbl = rgn_table;
-
 	for (rgn_idx = 0; rgn_idx < hpb->rgns_per_lu; rgn_idx++) {
 		int srgn_cnt = hpb->srgns_per_rgn;
 		bool last_srgn = false;
-
 		rgn = rgn_table + rgn_idx;
 		rgn->rgn_idx = rgn_idx;
-
 		spin_lock_init(&rgn->rgn_lock);
-
 		INIT_LIST_HEAD(&rgn->list_inact_rgn);
 		INIT_LIST_HEAD(&rgn->list_lru_rgn);
 		INIT_LIST_HEAD(&rgn->list_expired_rgn);
-
 		if (rgn_idx == hpb->rgns_per_lu - 1) {
 			srgn_cnt = ((hpb->srgns_per_lu - 1) %
 				    hpb->srgns_per_rgn) + 1;
 			last_srgn = true;
 		}
-
 		ret = ufshpb_alloc_subregion_tbl(hpb, rgn, srgn_cnt);
 		if (ret)
 			goto release_srgn_table;
 		ufshpb_init_subregion_tbl(hpb, rgn, last_srgn);
-
 		if (ufshpb_is_pinned_region(hpb, rgn_idx)) {
 			ret = ufshpb_init_pinned_active_region(hba, hpb, rgn);
 			if (ret)
@@ -1944,13 +2226,10 @@ static int ufshpb_alloc_region_tbl(struct ufs_hba *hba, struct ufshpb_lu *hpb)
 		} else {
 			rgn->rgn_state = HPB_RGN_INACTIVE;
 		}
-
 		rgn->rgn_flags = 0;
 		rgn->hpb = hpb;
 	}
-
 	return 0;
-
 release_srgn_table:
 	for (i = 0; i < rgn_idx; i++) {
 		rgn = rgn_table + i;
@@ -1959,40 +2238,31 @@ release_srgn_table:
 	kvfree(rgn_table);
 	return ret;
 }
-
 static void ufshpb_destroy_subregion_tbl(struct ufshpb_lu *hpb,
 					 struct ufshpb_region *rgn)
 {
 	int srgn_idx;
 	struct ufshpb_subregion *srgn;
-
 	for_each_sub_region(rgn, srgn_idx, srgn)
 		if (srgn->srgn_state != HPB_SRGN_UNUSED) {
 			srgn->srgn_state = HPB_SRGN_UNUSED;
 			ufshpb_put_map_ctx(hpb, srgn->mctx);
 		}
 }
-
 static void ufshpb_destroy_region_tbl(struct ufshpb_lu *hpb)
 {
 	int rgn_idx;
-
 	for (rgn_idx = 0; rgn_idx < hpb->rgns_per_lu; rgn_idx++) {
 		struct ufshpb_region *rgn;
-
 		rgn = hpb->rgn_tbl + rgn_idx;
 		if (rgn->rgn_state != HPB_RGN_INACTIVE) {
 			rgn->rgn_state = HPB_RGN_INACTIVE;
-
 			ufshpb_destroy_subregion_tbl(hpb, rgn);
 		}
-
 		kvfree(rgn->srgn_tbl);
 	}
-
 	kvfree(hpb->rgn_tbl);
 }
-
 /* SYSFS functions */
 #define ufshpb_sysfs_attr_show_func(__name)				\
 static ssize_t __name##_show(struct device *dev,			\
@@ -2008,7 +2278,7 @@ static ssize_t __name##_show(struct device *dev,			\
 }									\
 \
 static DEVICE_ATTR_RO(__name)
-
+#ifndef UFS_HPB_SHRINK
 ufshpb_sysfs_attr_show_func(hit_cnt);
 ufshpb_sysfs_attr_show_func(miss_cnt);
 ufshpb_sysfs_attr_show_func(rb_noti_cnt);
@@ -2016,7 +2286,187 @@ ufshpb_sysfs_attr_show_func(rb_active_cnt);
 ufshpb_sysfs_attr_show_func(rb_inactive_cnt);
 ufshpb_sysfs_attr_show_func(map_req_cnt);
 ufshpb_sysfs_attr_show_func(umap_req_cnt);
-
+#else
+#define ufshpb_sysfs_attr_rw_func(__name)				\
+static ssize_t __name##_show(struct device *dev,			\
+	struct device_attribute *attr, char *buf)			\
+{									\
+	struct scsi_device *sdev = to_scsi_device(dev);			\
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);		\
+									\
+	if (!hpb)							\
+		return -ENODEV;						\
+									\
+	return sysfs_emit(buf, "%llu\n", hpb->stats.__name);		\
+}									\
+\
+static ssize_t __name##_store(struct device *dev,		\
+				      struct device_attribute *attr,		\
+				      const char *buf, size_t count)			\
+{									\
+	struct scsi_device *sdev = to_scsi_device(dev);			\
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);		\
+														\
+	if (!hpb)		\
+		return -ENODEV;		\
+								\
+	sscanf(buf, "%llu", &hpb->stats.__name); \
+								\
+	return count;		\
+}									\
+static DEVICE_ATTR_RW(__name)
+ufshpb_sysfs_attr_rw_func(hit_cnt);
+ufshpb_sysfs_attr_rw_func(miss_cnt);
+ufshpb_sysfs_attr_rw_func(rb_noti_cnt);
+ufshpb_sysfs_attr_rw_func(rb_active_cnt);
+ufshpb_sysfs_attr_rw_func(rb_inactive_cnt);
+ufshpb_sysfs_attr_rw_func(map_req_cnt);
+ufshpb_sysfs_attr_rw_func(umap_req_cnt);
+ufshpb_sysfs_attr_rw_func(hit4k_cnt);
+ufshpb_sysfs_attr_rw_func(miss4k_cnt);
+ufshpb_sysfs_attr_rw_func(read4k_cnt);
+ufshpb_sysfs_attr_rw_func(read4k_total_us);
+#endif
+#ifdef UFS_HPB_SHRINK
+static ssize_t mm_pages_used_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	int ret;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	ret = sysfs_emit(buf, "%d\n", ufshpb_page_cnt());
+	return ret;
+}
+static ssize_t all_srgn_status_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	struct ufshpb_region *rgn , *next_rgn;
+	struct ufshpb_subregion *srgn, *next_srgn;
+	int rgn_idx, srgn_idx;
+	unsigned long flags;
+	if (!hpb)
+		return -ENODEV;
+	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
+	for (rgn_idx = 0; rgn_idx < hpb->rgns_per_lu; rgn_idx++) {
+		rgn = hpb->rgn_tbl + rgn_idx;
+		for_each_sub_region(rgn, srgn_idx, srgn)
+			pr_info("r-%d:%d s-%d:%d rs=%d",rgn_idx, rgn->rgn_state, srgn_idx, srgn->srgn_state, srgn->reads);
+	}
+	list_for_each_entry_safe(rgn, next_rgn, &hpb->lru_info.lh_lru_rgn,
+				 list_lru_rgn) {
+		if(rgn)
+			pr_info("lru act rgn=%d",rgn->rgn_idx);
+	}
+	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
+	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+	list_for_each_entry_safe(srgn, next_srgn, &hpb->lh_act_srgn,
+				 list_act_srgn) {
+		pr_info("act rgn=%d",srgn->rgn_idx);
+	}
+	list_for_each_entry_safe(rgn, next_rgn, &hpb->lh_inact_rgn,
+				 list_inact_rgn) {
+		pr_info("inact rgn=%d",srgn->rgn_idx);
+	}
+	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+	return sysfs_emit(buf, "check kernel log\n");
+}
+static ssize_t mm_lv_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%d\n", mm_g_stat.curr_level);
+}
+static ssize_t mm_enable_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	int ret;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	ret = snprintf(buf, PAGE_SIZE, "%d\n",
+				mm_g_stat.enable);
+	return ret;
+}
+static ssize_t mm_enable_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	int enable;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	if (sscanf(buf, "%d", &enable) == 1)
+		mm_g_stat.enable = enable > 0;
+	return count;
+}
+static ssize_t hpb_enable_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	int ret;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	//need ufs driver runtime/system resume to take effect
+	ret = snprintf(buf, PAGE_SIZE, "%d\n", hpb_enable);
+	return ret;
+}
+static int ufshpb_evict_one_lru_region(struct ufshpb_lu *hpb, bool async);
+static void ufshpb_cancel_jobs(struct ufshpb_lu *hpb);
+static ssize_t hpb_enable_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	bool enable;
+	int ret, input;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	if (sscanf(buf, "%d", &input) == 1)
+		enable = input > 0;
+	else
+		return -EINVAL;
+	if (enable == hpb_enable)
+		return count;
+	pm_runtime_get_sync(hpb_hba->dev);
+	hpb_enable = enable;
+	if (hpb_enable) {
+		ufshpb_set_state(hpb, HPB_PRESENT);
+		ufshpb_kick_map_work(hpb);
+		if (hpb->is_hcm) {
+			unsigned int poll =
+				hpb->params.timeout_polling_interval_ms;
+			schedule_delayed_work(&hpb->ufshpb_read_to_work,
+				msecs_to_jiffies(poll));
+		}
+	} else {
+		ufshpb_set_state(hpb, HPB_INIT);
+		ufshpb_cancel_jobs(hpb);
+		while (atomic_read(&hpb->lru_info.active_cnt))
+			ret = ufshpb_evict_one_lru_region(hpb, false);
+	}
+	pm_runtime_put_sync(hpb_hba->dev);
+	return count;
+}
+ufshpb_sysfs_attr_rw_func(mm_done_cnt);
+ufshpb_sysfs_attr_rw_func(mm_drgn_cnt);
+ufshpb_sysfs_attr_rw_func(suspend_cnt);
+static DEVICE_ATTR_RO(mm_lv);
+static DEVICE_ATTR_RO(mm_pages_used);
+static DEVICE_ATTR_RO(all_srgn_status);
+static DEVICE_ATTR_RW(mm_enable);
+static DEVICE_ATTR_RW(hpb_enable);
+#endif
 static struct attribute *hpb_dev_stat_attrs[] = {
 	&dev_attr_hit_cnt.attr,
 	&dev_attr_miss_cnt.attr,
@@ -2025,14 +2475,31 @@ static struct attribute *hpb_dev_stat_attrs[] = {
 	&dev_attr_rb_inactive_cnt.attr,
 	&dev_attr_map_req_cnt.attr,
 	&dev_attr_umap_req_cnt.attr,
+#ifdef UFS_HPB_SHRINK
+	&dev_attr_mm_done_cnt.attr,
+	&dev_attr_mm_drgn_cnt.attr,
+	&dev_attr_suspend_cnt.attr,
+	&dev_attr_mm_lv.attr,
+	&dev_attr_mm_pages_used.attr,
+	&dev_attr_all_srgn_status.attr,
+	&dev_attr_mm_enable.attr,
+	&dev_attr_hpb_enable.attr,
+	&dev_attr_hit4k_cnt.attr,
+	&dev_attr_miss4k_cnt.attr,
+	&dev_attr_read4k_total_us.attr,
+	&dev_attr_read4k_cnt.attr,
+#endif
+#ifdef UFS_HPB_FAULT_INJECTION
+	&dev_attr_inject_type.attr,
+	&dev_attr_inject_rate.attr,
+	&dev_attr_inject_result.attr,
+#endif
 	NULL,
 };
-
 struct attribute_group ufs_sysfs_hpb_stat_group = {
 	.name = "hpb_stats",
 	.attrs = hpb_dev_stat_attrs,
 };
-
 /* SYSFS functions */
 #define ufshpb_sysfs_param_show_func(__name)				\
 static ssize_t __name##_show(struct device *dev,			\
@@ -2046,7 +2513,6 @@ static ssize_t __name##_show(struct device *dev,			\
 									\
 	return sysfs_emit(buf, "%d\n", hpb->params.__name);		\
 }
-
 ufshpb_sysfs_param_show_func(requeue_timeout_ms);
 static ssize_t
 requeue_timeout_ms_store(struct device *dev, struct device_attribute *attr,
@@ -2055,22 +2521,16 @@ requeue_timeout_ms_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val < 0)
 		return -EINVAL;
-
 	hpb->params.requeue_timeout_ms = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(requeue_timeout_ms);
-
 ufshpb_sysfs_param_show_func(activation_thld);
 static ssize_t
 activation_thld_store(struct device *dev, struct device_attribute *attr,
@@ -2079,25 +2539,18 @@ activation_thld_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val <= 0)
 		return -EINVAL;
-
 	hpb->params.activation_thld = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(activation_thld);
-
 ufshpb_sysfs_param_show_func(normalization_factor);
 static ssize_t
 normalization_factor_store(struct device *dev, struct device_attribute *attr,
@@ -2106,25 +2559,18 @@ normalization_factor_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val <= 0 || val > ilog2(hpb->entries_per_srgn))
 		return -EINVAL;
-
 	hpb->params.normalization_factor = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(normalization_factor);
-
 ufshpb_sysfs_param_show_func(eviction_thld_enter);
 static ssize_t
 eviction_thld_enter_store(struct device *dev, struct device_attribute *attr,
@@ -2133,25 +2579,18 @@ eviction_thld_enter_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val <= hpb->params.eviction_thld_exit)
 		return -EINVAL;
-
 	hpb->params.eviction_thld_enter = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(eviction_thld_enter);
-
 ufshpb_sysfs_param_show_func(eviction_thld_exit);
 static ssize_t
 eviction_thld_exit_store(struct device *dev, struct device_attribute *attr,
@@ -2160,25 +2599,18 @@ eviction_thld_exit_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val <= hpb->params.activation_thld)
 		return -EINVAL;
-
 	hpb->params.eviction_thld_exit = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(eviction_thld_exit);
-
 ufshpb_sysfs_param_show_func(read_timeout_ms);
 static ssize_t
 read_timeout_ms_store(struct device *dev, struct device_attribute *attr,
@@ -2187,26 +2619,19 @@ read_timeout_ms_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	/* read_timeout >> timeout_polling_interval */
 	if (val < hpb->params.timeout_polling_interval_ms * 2)
 		return -EINVAL;
-
 	hpb->params.read_timeout_ms = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(read_timeout_ms);
-
 ufshpb_sysfs_param_show_func(read_timeout_expiries);
 static ssize_t
 read_timeout_expiries_store(struct device *dev, struct device_attribute *attr,
@@ -2215,25 +2640,18 @@ read_timeout_expiries_store(struct device *dev, struct device_attribute *attr,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val <= 0)
 		return -EINVAL;
-
 	hpb->params.read_timeout_expiries = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(read_timeout_expiries);
-
 ufshpb_sysfs_param_show_func(timeout_polling_interval_ms);
 static ssize_t
 timeout_polling_interval_ms_store(struct device *dev,
@@ -2243,26 +2661,19 @@ timeout_polling_interval_ms_store(struct device *dev,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	/* timeout_polling_interval << read_timeout */
 	if (val <= 0 || val > hpb->params.read_timeout_ms / 2)
 		return -EINVAL;
-
 	hpb->params.timeout_polling_interval_ms = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(timeout_polling_interval_ms);
-
 ufshpb_sysfs_param_show_func(inflight_map_req);
 static ssize_t inflight_map_req_store(struct device *dev,
 				      struct device_attribute *attr,
@@ -2271,30 +2682,408 @@ static ssize_t inflight_map_req_store(struct device *dev,
 	struct scsi_device *sdev = to_scsi_device(dev);
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
 	int val;
-
 	if (!hpb)
 		return -ENODEV;
-
 	if (!hpb->is_hcm)
 		return -EOPNOTSUPP;
-
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
-
 	if (val <= 0 || val > hpb->sdev_ufs_lu->queue_depth - 1)
 		return -EINVAL;
-
 	hpb->params.inflight_map_req = val;
-
 	return count;
 }
 static DEVICE_ATTR_RW(inflight_map_req);
-
-
+#ifdef UFS_HPB_SHRINK
+static ssize_t mm_rgn_reserved_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	int len, i;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	len = scnprintf(buf, PAGE_SIZE, "rgn_cnt_lv: srgns_per_rgn=%d,pages_per_srgn=%d\n",
+		hpb->srgns_per_rgn, hpb->pages_per_srgn);
+	for (i = 0; i < HPB_MM_LV_CNT; i++) {
+		if (len + 30 < PAGE_SIZE)
+			len += scnprintf(buf + len, PAGE_SIZE - len, "lv%d = %d\n",
+				i, hpb->mm_rgn_cnt[i]);
+	}
+	return len;
+}
+//  in:  i mm_rgn_reserved -> hpb->mm_rgn_cnt[i] = mm_rgn_reserved
+static ssize_t mm_rgn_reserved_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	int mm_rgn_reserved;
+	int i;
+	if (!hpb)
+		return -ENODEV;
+	if ((sscanf(buf, "%d %d", &i, &mm_rgn_reserved)) == 2) {
+		if (i >= HPB_MM_LV_CNT) {
+			pr_err("%s: set value invalid!",__func__);
+			return -EINVAL;
+		} else
+			hpb->mm_rgn_cnt[i] = mm_rgn_reserved;
+	}
+	return count;
+}
+static ssize_t mm_waterline_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	int len, i;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	len = scnprintf(buf, PAGE_SIZE, "pages_lv: \n");
+	for (i = 0; i < HPB_MM_LV_CNT; i++) {
+		if (len + 30 < PAGE_SIZE)
+			len += scnprintf(buf + len, PAGE_SIZE - len, "lv%d = %d pages\n",
+				i, ufshpb_mm_waterline[i]);
+	}
+	return len;
+}
+static ssize_t mm_waterline_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	int i, mm_waterline;
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	if ((sscanf(buf, "%d %d", &i, &mm_waterline)) == 2) {
+		if (i >= HPB_MM_LV_CNT) {
+			pr_err("%s: set value invalid!",__func__);
+			return  -EINVAL;
+                } else
+			ufshpb_mm_waterline[i] = mm_waterline;
+	}
+	return count;
+}
+//show last osense cmd
+static ssize_t mm_cmd_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "echo level|maxlevel|value > mm_cmd, interval is %d ms\n",
+			mm_g_stat.debounce_time);
+}
+#ifdef UFS_HPB_SHRINK_UT
+static unsigned long long test_size1 = 0xffffffff;
+static unsigned long long test_size2 = 0xffffffff;
+#endif
+static ssize_t mm_cmd_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	unsigned int level, max_level, desire_mem_mb, available_pages, shrink_pages;
+	if (!hpb)
+		return -ENODEV;
+	if ((sscanf(buf, "%u|%u|%u", &level, &max_level,
+		    &desire_mem_mb)) == 3) {
+		if (level > max_level) {
+			pr_err("%s err: level%d >max_level%d",__func__, level, max_level);
+			return -EINVAL;
+		}
+		available_pages = si_mem_available();
+#ifdef UFS_HPB_SHRINK_UT
+		if (test_size2 != 0xffffffff)
+			available_pages = test_size2;
+#endif
+		if ((available_pages >> 8) < desire_mem_mb) {
+			shrink_pages = (desire_mem_mb << 8) - available_pages;
+			pr_info("% lv %d, reduce %u pages",level * HPB_MM_LV_URGENT / max_level, shrink_pages);
+			ufshpb_shrink(level * HPB_MM_LV_URGENT / max_level, shrink_pages, false);
+		}
+	}
+	return count;
+}
+static ssize_t mm_restore_time_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%d", &mm_g_stat.restore_time);
+	return count;
+}
+static ssize_t mm_restore_time_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%d\n", mm_g_stat.restore_time);
+}
+static ssize_t mm_debounce_time_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%d", &mm_g_stat.debounce_time);
+	return count;
+}
+static ssize_t mm_debounce_time_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%d\n", mm_g_stat.debounce_time);
+}
+#ifdef UFS_HPB_LAZY_LOAD
+static ssize_t load_srgn_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	int  i, start = -1, end = -1;
+	struct ufshpb_region *rgn;
+	struct ufshpb_subregion *srgn;
+	int rgn_idx, srgn_idx;
+	unsigned long flags;
+	int load;
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%d-%d", &start, &end);
+	if (start < 0 || start > end || end >= hpb->lru_info.max_lru_active_cnt)
+		return -EINVAL;
+	for (i = start; i <= end; i++) {
+		rgn_idx = i / hpb->srgns_per_rgn;
+		srgn_idx = i % hpb->srgns_per_rgn;
+		rgn = hpb->rgn_tbl + rgn_idx;
+		srgn = rgn->srgn_tbl + srgn_idx;
+		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+		if (srgn->srgn_state == HPB_SRGN_UNUSED ||
+				srgn->srgn_state == HPB_SRGN_INVALID)
+			ufshpb_update_active_info(hpb, rgn_idx, srgn_idx);
+		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+	}
+	pm_runtime_get_sync(hpb_hba->dev);
+	load = ufshpb_load_srgns(hpb);
+	pm_runtime_put_sync(hpb_hba->dev);
+	return count;
+}
+int get_top_srgns(unsigned int *srgns, int total,
+		unsigned int *top_srgn_ids, int cnt, int threshold)
+{
+	int i, j, tmp, index = 0;
+	for(i = 0; i < cnt; i++) {
+		tmp = 0;
+		for(j = 0; j < total; j++)
+			if (tmp <= srgns[j]) {
+				tmp = srgns[j];
+				index = j;
+			}
+		if (unlikely(tmp < threshold))
+			break;
+		top_srgn_ids[i] = index;
+		srgns[index] = 0;
+	}
+	return i;
+}
+static int load_top_srgn(struct ufshpb_lu *hpb, int cnt)
+{
+	struct ufshpb_region *rgn;
+	struct ufshpb_subregion *srgn;
+	int rgn_idx, srgn_idx, i = 0, load;
+	unsigned int *srgns, *top_srgn_ids;
+	unsigned long flags;
+	int total_srgns = hpb->srgns_per_rgn * hpb->rgns_per_lu;
+	if (cnt <= 0) {
+		pr_err("%s err: load cnt = %d", cnt);
+		return cnt;
+	}
+	srgns = vzalloc(sizeof(int) * total_srgns);
+	if (!srgns)
+		return -ENOMEM;
+	top_srgn_ids = vzalloc(sizeof(int) * cnt);
+	if (!top_srgn_ids) {
+		vfree(srgns);
+		return -ENOMEM;
+	}
+	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
+	for (rgn_idx = 0; rgn_idx < hpb->rgns_per_lu; rgn_idx++) {
+		rgn = hpb->rgn_tbl + rgn_idx;
+		for_each_sub_region(rgn, srgn_idx, srgn) {
+			if (srgn->srgn_state == HPB_SRGN_UNUSED ||
+				srgn->srgn_state == HPB_SRGN_INVALID)
+				srgns[rgn_idx] = srgn->reads;
+			pr_debug("srgn%d r=%d",rgn_idx, srgns[rgn_idx]);
+		}
+	}
+	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
+	load = get_top_srgns(srgns, total_srgns, top_srgn_ids, cnt,
+				hpb->params.activation_thld);
+	spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+	for (i = 0; i < load; i++) {
+		rgn_idx = top_srgn_ids[i] / hpb->srgns_per_rgn;
+		srgn_idx = top_srgn_ids[i] % hpb->srgns_per_rgn;
+		pr_debug("top: rgn%d srgn=%d",rgn_idx, srgn_idx);
+		ufshpb_update_active_info(hpb, rgn_idx, srgn_idx);
+	}
+	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+	load = ufshpb_load_srgns(hpb);
+	vfree(srgns);
+	vfree(top_srgn_ids);
+	return load;
+}
+static ssize_t load_top_srgn_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	int cnt = 0;
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%d", &cnt);
+	if (cnt < 0 || cnt >= hpb->lru_info.max_lru_active_cnt)
+		return -EINVAL;
+	if (hpb->params.screenoff_load_cnt >= 0)
+		cnt = hpb->params.screenoff_load_cnt;
+	if (cnt) {
+		pm_runtime_get_sync(hpb_hba->dev);
+		load_top_srgn(hpb, cnt);
+		pm_runtime_put_sync(hpb_hba->dev);
+	}
+	return count;
+}
+static ssize_t suspend_load_cnt_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	int cnt = 0;
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%d", &cnt);
+	if (cnt < 0 || cnt >= hpb->lru_info.max_lru_active_cnt)
+		return -EINVAL;
+	hpb->params.suspend_load_cnt = cnt;
+	return count;
+}
+static ssize_t suspend_load_cnt_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%u\n", hpb->params.suspend_load_cnt);
+}
+static ssize_t screenoff_load_cnt_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	int cnt = 0;
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%d", &cnt);
+	if (cnt >= hpb->lru_info.max_lru_active_cnt)
+		return -EINVAL;
+	hpb->params.screenoff_load_cnt = cnt;
+	return count;
+}
+static ssize_t screenoff_load_cnt_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%d\n", hpb->params.screenoff_load_cnt);
+}
+#endif
+#ifdef UFS_HPB_SHRINK_UT
+static ssize_t mm_shrinker_ut_pages_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%llu", &test_size1);
+	return count;
+}
+static ssize_t mm_shrinker_ut_pages_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%llu Pages\n", test_size1);
+}
+static ssize_t mm_cmd_ut_pages_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	sscanf(buf, "%llu", &test_size2);
+	return count;
+}
+static ssize_t mm_cmd_ut_pages_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct scsi_device *sdev = to_scsi_device(dev);
+	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return -ENODEV;
+	return sysfs_emit(buf, "%llu pages\n", test_size2);
+}
+#endif
+static DEVICE_ATTR_RW(mm_waterline);
+static DEVICE_ATTR_RW(mm_rgn_reserved);
+static DEVICE_ATTR_RW(mm_cmd);
+static DEVICE_ATTR_RW(mm_restore_time);
+static DEVICE_ATTR_RW(mm_debounce_time);
+#ifdef UFS_HPB_LAZY_LOAD
+static DEVICE_ATTR_RW(suspend_load_cnt);
+static DEVICE_ATTR_RW(screenoff_load_cnt);
+static DEVICE_ATTR_WO(load_srgn);
+static DEVICE_ATTR_WO(load_top_srgn);
+#endif
+#ifdef UFS_HPB_SHRINK_UT
+static DEVICE_ATTR_RW(mm_cmd_ut_pages);
+static DEVICE_ATTR_RW(mm_shrinker_ut_pages);
+#endif
+#endif
 static void ufshpb_hcm_param_init(struct ufshpb_lu *hpb)
 {
 	hpb->params.activation_thld = ACTIVATION_THRESHOLD;
 	hpb->params.normalization_factor = 1;
+#ifdef UFS_HPB_LAZY_LOAD
+	hpb->params.normalization_thld = NORMALIZATION_THLD;
+	hpb->params.suspend_load_cnt = SUSPEND_LOAD_CNT;
+	hpb->params.screenoff_load_cnt = SCREENOFF_LOAD_CNT;
+#endif
 	hpb->params.eviction_thld_enter = (ACTIVATION_THRESHOLD << 5);
 	hpb->params.eviction_thld_exit = (ACTIVATION_THRESHOLD << 4);
 	hpb->params.read_timeout_ms = READ_TO_MS;
@@ -2302,7 +3091,6 @@ static void ufshpb_hcm_param_init(struct ufshpb_lu *hpb)
 	hpb->params.timeout_polling_interval_ms = POLLING_INTERVAL_MS;
 	hpb->params.inflight_map_req = THROTTLE_MAP_REQ_DEFAULT;
 }
-
 static struct attribute *hpb_dev_param_attrs[] = {
 	&dev_attr_requeue_timeout_ms.attr,
 	&dev_attr_activation_thld.attr,
@@ -2313,47 +3101,60 @@ static struct attribute *hpb_dev_param_attrs[] = {
 	&dev_attr_read_timeout_expiries.attr,
 	&dev_attr_timeout_polling_interval_ms.attr,
 	&dev_attr_inflight_map_req.attr,
+#ifdef UFS_HPB_SHRINK
+	&dev_attr_mm_waterline.attr,
+	&dev_attr_mm_rgn_reserved.attr,
+	&dev_attr_mm_cmd.attr,
+	&dev_attr_mm_restore_time.attr,
+	&dev_attr_mm_debounce_time.attr,
+#ifdef UFS_HPB_LAZY_LOAD
+	&dev_attr_load_srgn.attr,
+	&dev_attr_load_top_srgn.attr,
+	&dev_attr_suspend_load_cnt.attr,
+	&dev_attr_screenoff_load_cnt.attr,
+#endif
+#ifdef UFS_HPB_SHRINK_UT
+	&dev_attr_mm_cmd_ut_pages.attr,
+	&dev_attr_mm_shrinker_ut_pages.attr,
+#endif
+#endif
 	NULL,
 };
-
 struct attribute_group ufs_sysfs_hpb_param_group = {
 	.name = "hpb_params",
 	.attrs = hpb_dev_param_attrs,
 };
-
 static int ufshpb_pre_req_mempool_init(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_req *pre_req = NULL, *t;
 	int qd = hpb->sdev_ufs_lu->queue_depth / 2;
 	int i;
-
 	INIT_LIST_HEAD(&hpb->lh_pre_req_free);
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC)) {
+		hpb->pre_req = NULL;
+		goto release_mem;
+	}
 	hpb->pre_req = kcalloc(qd, sizeof(struct ufshpb_req), GFP_KERNEL);
 	hpb->throttle_pre_req = qd;
 	hpb->num_inflight_pre_req = 0;
-
 	if (!hpb->pre_req)
 		goto release_mem;
-
 	for (i = 0; i < qd; i++) {
 		pre_req = hpb->pre_req + i;
 		INIT_LIST_HEAD(&pre_req->list_req);
 		pre_req->req = NULL;
-
+		if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+			goto release_mem;
 		pre_req->bio = bio_alloc(GFP_KERNEL, 1);
 		if (!pre_req->bio)
 			goto release_mem;
-
 		pre_req->wb.m_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
 		if (!pre_req->wb.m_page) {
 			bio_put(pre_req->bio);
 			goto release_mem;
 		}
-
 		list_add_tail(&pre_req->list_req, &hpb->lh_pre_req_free);
 	}
-
 	return 0;
 release_mem:
 	list_for_each_entry_safe(pre_req, t, &hpb->lh_pre_req_free, list_req) {
@@ -2361,16 +3162,13 @@ release_mem:
 		bio_put(pre_req->bio);
 		__free_page(pre_req->wb.m_page);
 	}
-
 	kfree(hpb->pre_req);
 	return -ENOMEM;
 }
-
 static void ufshpb_pre_req_mempool_destroy(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_req *pre_req = NULL;
 	int i;
-
 	for (i = 0; i < hpb->throttle_pre_req; i++) {
 		pre_req = hpb->pre_req + i;
 		bio_put(hpb->pre_req[i].bio);
@@ -2378,10 +3176,8 @@ static void ufshpb_pre_req_mempool_destroy(struct ufshpb_lu *hpb)
 			__free_page(hpb->pre_req[i].wb.m_page);
 		list_del_init(&pre_req->list_req);
 	}
-
 	kfree(hpb->pre_req);
 }
-
 static void ufshpb_stat_init(struct ufshpb_lu *hpb)
 {
 	hpb->stats.hit_cnt = 0;
@@ -2391,28 +3187,28 @@ static void ufshpb_stat_init(struct ufshpb_lu *hpb)
 	hpb->stats.rb_inactive_cnt = 0;
 	hpb->stats.map_req_cnt = 0;
 	hpb->stats.umap_req_cnt = 0;
+#ifdef UFS_HPB_SHRINK
+	hpb->stats.mm_done_cnt = 0;
+	hpb->stats.mm_drgn_cnt = 0;
+	hpb->stats.suspend_cnt = 0;
+#endif
 }
-
 static void ufshpb_param_init(struct ufshpb_lu *hpb)
 {
 	hpb->params.requeue_timeout_ms = HPB_REQUEUE_TIME_MS;
 	if (hpb->is_hcm)
 		ufshpb_hcm_param_init(hpb);
 }
-
 static int ufshpb_lu_hpb_init(struct ufs_hba *hba, struct ufshpb_lu *hpb)
 {
 	int ret;
-
 	spin_lock_init(&hpb->rgn_state_lock);
 	spin_lock_init(&hpb->rsp_list_lock);
 	spin_lock_init(&hpb->param_lock);
-
 	INIT_LIST_HEAD(&hpb->lru_info.lh_lru_rgn);
 	INIT_LIST_HEAD(&hpb->lh_act_srgn);
 	INIT_LIST_HEAD(&hpb->lh_inact_rgn);
 	INIT_LIST_HEAD(&hpb->list_hpb_lu);
-
 	INIT_WORK(&hpb->map_work, ufshpb_map_work_handler);
 	if (hpb->is_hcm) {
 		INIT_WORK(&hpb->ufshpb_normalization_work,
@@ -2420,7 +3216,6 @@ static int ufshpb_lu_hpb_init(struct ufs_hba *hba, struct ufshpb_lu *hpb)
 		INIT_DELAYED_WORK(&hpb->ufshpb_read_to_work,
 				  ufshpb_read_to_handler);
 	}
-
 	hpb->map_req_cache = kmem_cache_create("ufshpb_req_cache",
 			  sizeof(struct ufshpb_req), 0, 0, NULL);
 	if (!hpb->map_req_cache) {
@@ -2428,7 +3223,6 @@ static int ufshpb_lu_hpb_init(struct ufs_hba *hba, struct ufshpb_lu *hpb)
 			hpb->lun);
 		return -ENOMEM;
 	}
-
 	hpb->m_page_cache = kmem_cache_create("ufshpb_m_page_cache",
 			  sizeof(struct page *) * hpb->pages_per_srgn,
 			  0, 0, NULL);
@@ -2438,31 +3232,24 @@ static int ufshpb_lu_hpb_init(struct ufs_hba *hba, struct ufshpb_lu *hpb)
 		ret = -ENOMEM;
 		goto release_req_cache;
 	}
-
 	ret = ufshpb_pre_req_mempool_init(hpb);
 	if (ret) {
 		dev_err(hba->dev, "ufshpb(%d) pre_req_mempool init fail",
 			hpb->lun);
 		goto release_m_page_cache;
 	}
-
 	ret = ufshpb_alloc_region_tbl(hba, hpb);
 	if (ret)
 		goto release_pre_req_mempool;
-
 	ufshpb_stat_init(hpb);
 	ufshpb_param_init(hpb);
-
 	if (hpb->is_hcm) {
 		unsigned int poll;
-
 		poll = hpb->params.timeout_polling_interval_ms;
 		schedule_delayed_work(&hpb->ufshpb_read_to_work,
 				      msecs_to_jiffies(poll));
 	}
-
 	return 0;
-
 release_pre_req_mempool:
 	ufshpb_pre_req_mempool_destroy(hpb);
 release_m_page_cache:
@@ -2471,7 +3258,6 @@ release_req_cache:
 	kmem_cache_destroy(hpb->map_req_cache);
 	return ret;
 }
-
 static struct ufshpb_lu *
 ufshpb_alloc_hpb_lu(struct ufs_hba *hba, struct scsi_device *sdev,
 		    struct ufshpb_dev_info *hpb_dev_info,
@@ -2479,36 +3265,30 @@ ufshpb_alloc_hpb_lu(struct ufs_hba *hba, struct scsi_device *sdev,
 {
 	struct ufshpb_lu *hpb;
 	int ret;
-
+	if (ufshpb_time_to_inject(&ufshpb_fi, FAULT_MM_ALLOC))
+		return NULL;
 	hpb = kzalloc(sizeof(struct ufshpb_lu), GFP_KERNEL);
 	if (!hpb)
 		return NULL;
-
 	hpb->lun = sdev->lun;
 	hpb->sdev_ufs_lu = sdev;
-
 	ufshpb_lu_parameter_init(hba, hpb, hpb_dev_info, hpb_lu_info);
-
 	ret = ufshpb_lu_hpb_init(hba, hpb);
 	if (ret) {
 		dev_err(hba->dev, "hpb lu init failed. ret %d", ret);
 		goto release_hpb;
 	}
-
 	sdev->hostdata = hpb;
 	return hpb;
-
 release_hpb:
 	kfree(hpb);
 	return NULL;
 }
-
 static void ufshpb_discard_rsp_lists(struct ufshpb_lu *hpb)
 {
 	struct ufshpb_region *rgn, *next_rgn;
 	struct ufshpb_subregion *srgn, *next_srgn;
 	unsigned long flags;
-
 	/*
 	 * If the device reset occurred, the remained HPB region information
 	 * may be stale. Therefore, by dicarding the lists of HPB response
@@ -2518,13 +3298,11 @@ static void ufshpb_discard_rsp_lists(struct ufshpb_lu *hpb)
 	list_for_each_entry_safe(rgn, next_rgn, &hpb->lh_inact_rgn,
 				 list_inact_rgn)
 		list_del_init(&rgn->list_inact_rgn);
-
 	list_for_each_entry_safe(srgn, next_srgn, &hpb->lh_act_srgn,
 				 list_act_srgn)
 		list_del_init(&srgn->list_act_srgn);
 	spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
 }
-
 static void ufshpb_cancel_jobs(struct ufshpb_lu *hpb)
 {
 	if (hpb->is_hcm) {
@@ -2533,33 +3311,27 @@ static void ufshpb_cancel_jobs(struct ufshpb_lu *hpb)
 	}
 	cancel_work_sync(&hpb->map_work);
 }
-
 static bool ufshpb_check_hpb_reset_query(struct ufs_hba *hba)
 {
 	int err = 0;
 	bool flag_res = true;
 	int try;
-
 	/* wait for the device to complete HPB reset query */
 	for (try = 0; try < HPB_RESET_REQ_RETRIES; try++) {
 		dev_dbg(hba->dev,
 			"%s start flag reset polling %d times\n",
 			__func__, try);
-
 		/* Poll fHpbReset flag to be cleared */
 		err = ufshcd_query_flag(hba, UPIU_QUERY_OPCODE_READ_FLAG,
 				QUERY_FLAG_IDN_HPB_RESET, 0, &flag_res);
-
 		if (err) {
 			dev_err(hba->dev,
 				"%s reading fHpbReset flag failed with error %d\n",
 				__func__, err);
 			return flag_res;
 		}
-
 		if (!flag_res)
 			goto out;
-
 		usleep_range(1000, 1100);
 	}
 	if (flag_res) {
@@ -2570,34 +3342,27 @@ static bool ufshpb_check_hpb_reset_query(struct ufs_hba *hba)
 out:
 	return flag_res;
 }
-
 void ufshpb_reset(struct ufs_hba *hba)
 {
 	struct ufshpb_lu *hpb;
 	struct scsi_device *sdev;
-
 	shost_for_each_device(sdev, hba->host) {
 		hpb = ufshpb_get_hpb_data(sdev);
 		if (!hpb)
 			continue;
-
 		if (ufshpb_get_state(hpb) != HPB_RESET)
 			continue;
-
 		ufshpb_set_state(hpb, HPB_PRESENT);
 	}
 }
-
 void ufshpb_reset_host(struct ufs_hba *hba)
 {
 	struct ufshpb_lu *hpb;
 	struct scsi_device *sdev;
-
 	shost_for_each_device(sdev, hba->host) {
 		hpb = ufshpb_get_hpb_data(sdev);
 		if (!hpb)
 			continue;
-
 		if (ufshpb_get_state(hpb) != HPB_PRESENT)
 			continue;
 		ufshpb_set_state(hpb, HPB_RESET);
@@ -2605,34 +3370,34 @@ void ufshpb_reset_host(struct ufs_hba *hba)
 		ufshpb_discard_rsp_lists(hpb);
 	}
 }
-
 void ufshpb_suspend(struct ufs_hba *hba)
 {
 	struct ufshpb_lu *hpb;
 	struct scsi_device *sdev;
-
 	shost_for_each_device(sdev, hba->host) {
 		hpb = ufshpb_get_hpb_data(sdev);
 		if (!hpb)
 			continue;
-
 		if (ufshpb_get_state(hpb) != HPB_PRESENT)
 			continue;
+#ifdef	UFS_HPB_LAZY_LOAD
+		if (hpb->params.suspend_load_cnt) {
+			load_top_srgn(hpb, hpb->params.suspend_load_cnt);
+			hpb->stats.suspend_cnt++;
+		}
+#endif
 		ufshpb_set_state(hpb, HPB_SUSPEND);
 		ufshpb_cancel_jobs(hpb);
 	}
 }
-
 void ufshpb_resume(struct ufs_hba *hba)
 {
 	struct ufshpb_lu *hpb;
 	struct scsi_device *sdev;
-
 	shost_for_each_device(sdev, hba->host) {
 		hpb = ufshpb_get_hpb_data(sdev);
 		if (!hpb)
 			continue;
-
 		if ((ufshpb_get_state(hpb) != HPB_PRESENT) &&
 		    (ufshpb_get_state(hpb) != HPB_SUSPEND))
 			continue;
@@ -2641,13 +3406,11 @@ void ufshpb_resume(struct ufs_hba *hba)
 		if (hpb->is_hcm) {
 			unsigned int poll =
 				hpb->params.timeout_polling_interval_ms;
-
 			schedule_delayed_work(&hpb->ufshpb_read_to_work,
 				msecs_to_jiffies(poll));
 		}
 	}
 }
-
 static int ufshpb_get_lu_info(struct ufs_hba *hba, int lun,
 			      struct ufshpb_lu_info *hpb_lu_info)
 {
@@ -2656,26 +3419,21 @@ static int ufshpb_get_lu_info(struct ufs_hba *hba, int lun,
 	int size;
 	int ret;
 	char desc_buf[QUERY_DESC_MAX_SIZE];
-
 	ufshcd_map_desc_id_to_length(hba, QUERY_DESC_IDN_UNIT, &size);
-
 	pm_runtime_get_sync(hba->dev);
 	ret = ufshcd_query_descriptor_retry(hba, UPIU_QUERY_OPCODE_READ_DESC,
 					    QUERY_DESC_IDN_UNIT, lun, 0,
 					    desc_buf, &size);
 	pm_runtime_put_sync(hba->dev);
-
 	if (ret) {
 		dev_err(hba->dev,
 			"%s: idn: %d lun: %d  query request failed",
 			__func__, QUERY_DESC_IDN_UNIT, lun);
 		return ret;
 	}
-
 	lu_enable = desc_buf[UNIT_DESC_PARAM_LU_ENABLE];
 	if (lu_enable != LU_ENABLED_HPB_FUNC)
 		return -ENODEV;
-
 	max_active_rgns = get_unaligned_be16(
 			desc_buf + UNIT_DESC_PARAM_HPB_LU_MAX_ACTIVE_RGNS);
 	if (!max_active_rgns) {
@@ -2683,7 +3441,6 @@ static int ufshpb_get_lu_info(struct ufs_hba *hba, int lun,
 			"lun %d wrong number of max active regions\n", lun);
 		return -ENODEV;
 	}
-
 	hpb_lu_info->num_blocks = get_unaligned_be64(
 			desc_buf + UNIT_DESC_PARAM_LOGICAL_BLK_COUNT);
 	hpb_lu_info->pinned_start = get_unaligned_be16(
@@ -2691,60 +3448,44 @@ static int ufshpb_get_lu_info(struct ufs_hba *hba, int lun,
 	hpb_lu_info->num_pinned = get_unaligned_be16(
 			desc_buf + UNIT_DESC_PARAM_HPB_NUM_PIN_RGNS);
 	hpb_lu_info->max_active_rgns = max_active_rgns;
-
 	return 0;
 }
-
 void ufshpb_destroy_lu(struct ufs_hba *hba, struct scsi_device *sdev)
 {
 	struct ufshpb_lu *hpb = ufshpb_get_hpb_data(sdev);
-
 	if (!hpb)
 		return;
-
 	ufshpb_set_state(hpb, HPB_FAILED);
-
 	sdev = hpb->sdev_ufs_lu;
 	sdev->hostdata = NULL;
-
 	ufshpb_cancel_jobs(hpb);
-
 	ufshpb_pre_req_mempool_destroy(hpb);
 	ufshpb_destroy_region_tbl(hpb);
-
 	kmem_cache_destroy(hpb->map_req_cache);
 	kmem_cache_destroy(hpb->m_page_cache);
-
 	list_del_init(&hpb->list_hpb_lu);
-
 	kfree(hpb);
 }
-
 static void ufshpb_hpb_lu_prepared(struct ufs_hba *hba)
 {
 	int pool_size;
 	struct ufshpb_lu *hpb;
 	struct scsi_device *sdev;
 	bool init_success;
-
 	if (tot_active_srgn_pages == 0) {
 		ufshpb_remove(hba);
 		return;
 	}
-
 	init_success = !ufshpb_check_hpb_reset_query(hba);
-
 	pool_size = PAGE_ALIGN(ufshpb_host_map_kbytes * 1024) / PAGE_SIZE;
 	if (pool_size > tot_active_srgn_pages) {
 		mempool_resize(ufshpb_mctx_pool, tot_active_srgn_pages);
 		mempool_resize(ufshpb_page_pool, tot_active_srgn_pages);
 	}
-
 	shost_for_each_device(sdev, hba->host) {
 		hpb = ufshpb_get_hpb_data(sdev);
 		if (!hpb)
 			continue;
-
 		if (init_success) {
 			ufshpb_set_state(hpb, HPB_PRESENT);
 			if ((hpb->lu_pinned_end - hpb->lu_pinned_start) > 0)
@@ -2756,43 +3497,262 @@ static void ufshpb_hpb_lu_prepared(struct ufs_hba *hba)
 			ufshpb_destroy_lu(hba, sdev);
 		}
 	}
-
 	if (!init_success)
 		ufshpb_remove(hba);
 }
-
+#ifdef UFS_HPB_SHRINK
+static void ufshpb_android_vh_ufs_compl_command(void *data, struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
+{
+	struct scsi_device *sdev;
+	struct ufshpb_lu *hpb;
+	if (!lrbp->cmd)
+		return;;
+	sdev = lrbp->cmd->device;
+	hpb = ufshpb_get_hpb_data(sdev);
+	if (!hpb)
+		return;
+	if (lrbp->cmd->cmnd[0] == READ_10 || lrbp->cmd->cmnd[0] == READ_16 || lrbp->cmd->cmnd[0] == UFSHPB_READ) {
+		// stat 4k read for HPB
+		if (blk_rq_sectors(lrbp->cmd->request) == 8) {
+			hpb->stats.read4k_cnt++;
+			hpb->stats.read4k_total_us += ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp);
+		}
+	}
+}
+#endif
 void ufshpb_init_hpb_lu(struct ufs_hba *hba, struct scsi_device *sdev)
 {
 	struct ufshpb_lu *hpb;
 	int ret;
 	struct ufshpb_lu_info hpb_lu_info = { 0 };
 	int lun = sdev->lun;
-
 	if (lun >= hba->dev_info.max_lu_supported)
 		goto out;
-
 	ret = ufshpb_get_lu_info(hba, lun, &hpb_lu_info);
 	if (ret)
 		goto out;
-
 	hpb = ufshpb_alloc_hpb_lu(hba, sdev, ufs_hba_to_hpb(hba), &hpb_lu_info);
 	if (!hpb)
 		goto out;
-
 	tot_active_srgn_pages += hpb_lu_info.max_active_rgns *
 			hpb->srgns_per_rgn * hpb->pages_per_srgn;
-
 out:
 	/* All LUs are initialized */
 	if (atomic_dec_and_test(&ufs_hba_to_hpb(hba)->slave_conf_cnt))
 		ufshpb_hpb_lu_prepared(hba);
 }
-
+#ifdef UFS_HPB_SHRINK
+static inline struct ufshpb_region *ufshpb_select_victim_rgn(struct ufshpb_lu *hpb)
+{
+	struct victim_select_info *lru_info = &hpb->lru_info;
+	struct ufshpb_region *rgn, *victim_rgn = NULL;
+	list_for_each_entry(rgn, &lru_info->lh_lru_rgn, list_lru_rgn) {
+		if (!rgn) {
+			dev_err(&hpb->sdev_ufs_lu->sdev_dev,
+				"%s: no region allocated\n",
+				__func__);
+			return NULL;
+		}
+		if (ufshpb_check_srgns_issue_state(hpb, rgn))
+			continue;
+		victim_rgn = rgn;
+		break;
+	}
+	return victim_rgn;
+}
+//free one lru region all active subregions. return free_pages.
+static int ufshpb_evict_one_lru_region(struct ufshpb_lu *hpb, bool async)
+{
+	struct ufshpb_region *victim_rgn = NULL;
+	struct ufshpb_subregion *srgn;
+	int srgn_idx;
+	unsigned long flags;
+	int ret;
+	unsigned long free_pages = 0;
+	enum HPB_RGN_STATE rgn_state;
+	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
+	victim_rgn = ufshpb_select_victim_rgn(hpb);
+	if (victim_rgn) {
+		for_each_sub_region(victim_rgn, srgn_idx, srgn) {
+			if (srgn->srgn_state != HPB_SRGN_UNUSED)
+				free_pages += hpb->pages_per_srgn;
+		}
+		spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
+		spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+		if (victim_rgn->rgn_state == HPB_RGN_ISSUED) {
+			spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+			return free_pages;
+		}
+		if (!list_empty(&victim_rgn->list_inact_rgn))
+			list_del_init(&victim_rgn->list_inact_rgn);
+		rgn_state = victim_rgn->rgn_state;
+		victim_rgn->rgn_state = HPB_RGN_ISSUED;
+		spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+		ret = ufshpb_evict_region(hpb, victim_rgn);
+		if (ret) {
+			free_pages = 0;
+			spin_lock_irqsave(&hpb->rsp_list_lock, flags);
+			victim_rgn->rgn_state = rgn_state;
+			ufshpb_update_inactive_info(hpb, victim_rgn->rgn_idx);
+			spin_unlock_irqrestore(&hpb->rsp_list_lock, flags);
+		}
+	} else {
+		spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
+		dev_info(&hpb->sdev_ufs_lu->sdev_dev, "lu%d no victim_rgn\n", hpb->lun);
+	}
+	return free_pages;
+}
+static unsigned long ufshpb_mem_free(struct ufshpb_lu *hpb, struct ufshpb_shrink_pkg *pkg)
+{
+	int i, pages;
+	int avail_rgn_cnt, del_rgn_cnt, cur_active_rgn_cnt;
+	int freed = 0;
+	int level = pkg->level;
+	if (unlikely(level >= HPB_MM_LV_CNT)) {
+		dev_err(&hpb->sdev_ufs_lu->sdev_dev,"hpb_lu%d mm level exceeded!", hpb->lun);
+		return 0;
+	}
+	avail_rgn_cnt = hpb->mm_rgn_cnt[level];
+	if (avail_rgn_cnt > hpb->lru_info.max_lru_active_cnt)
+		dev_err(&hpb->sdev_ufs_lu->sdev_dev,"hpb_lu%d avail_rgn_cnt exceeded!", hpb->lun);
+	cur_active_rgn_cnt = atomic_read(&hpb->lru_info.active_cnt);
+	del_rgn_cnt = cur_active_rgn_cnt - avail_rgn_cnt;
+	if (del_rgn_cnt <= 0)
+		return 0;
+	for (i = 0; i < del_rgn_cnt; i++) {
+		pages = ufshpb_evict_one_lru_region(hpb, false);
+		freed += pages;
+		hpb->stats.mm_drgn_cnt++;
+		/* no region to free*/
+		if (pkg->pages && freed >= pkg->pages)
+			break;
+	}
+	pkg->pages = pkg->pages > freed ? pkg->pages -= freed : 0;
+	return freed;
+}
+static int ufshpb_get_mm_lv()
+{
+	unsigned long available_pages;
+	int level;
+	available_pages = si_mem_available();
+#ifdef UFS_HPB_SHRINK_UT
+    if (test_size1 != 0xffffffff) {
+		available_pages = test_size1;
+	}
+#endif
+	for (level = mm_g_stat.max_level; level > 0; level--) {
+		if (available_pages < ufshpb_mm_waterline[level])
+			break;
+	}
+	return level;
+}
+static void ufshpb_do_shrink(void *data, async_cookie_t cookie)
+{
+	struct ufs_hba *hba = hpb_hba;
+	struct scsi_device *sdev;
+	struct ufshpb_lu *hpb;
+	struct ufshpb_shrink_pkg *pkg = (struct ufshpb_shrink_pkg *)(data);
+	unsigned long flags;
+	int pages = 0;
+	if (!mm_g_stat.enable) {
+		dev_err(hba->dev,"%s mm not enable",__func__);
+	}
+	spin_lock_irqsave(&mm_g_stat.lock, flags);
+	if (!mm_g_stat.running && (time_after(jiffies,
+			mm_g_stat.last_time + msecs_to_jiffies(mm_g_stat.debounce_time))
+			|| pkg->level > mm_g_stat.curr_level) ) {
+		mm_g_stat.last_time = jiffies;
+		mm_g_stat.running = 1;
+		mm_g_stat.curr_level = pkg->level;
+	} else
+		dev_dbg(hba->dev,"Avoid %s in debounce_time(%d ms) %d->%d",__func__,
+		mm_g_stat.debounce_time, mm_g_stat.curr_level, pkg->level);
+	spin_unlock_irqrestore(&mm_g_stat.lock, flags);
+	__shost_for_each_device(sdev, hba->host) {
+		hpb = ufshpb_get_hpb_data(sdev);
+		if (hpb) {
+			pages += ufshpb_mem_free(hpb, pkg);
+			hpb->stats.mm_done_cnt++;
+		}
+		if (pkg->pages && pages >= pkg->pages)
+			break;
+	}
+	if (!completion_done(&pkg->done))
+             complete(&pkg->done);
+	spin_lock_irqsave(&mm_g_stat.lock, flags);
+	mm_g_stat.running = 0;
+	spin_unlock_irqrestore(&mm_g_stat.lock, flags);
+}
+static unsigned long ufshpb_shrink(int level, unsigned int desire_pages, bool async)
+{
+	struct ufshpb_shrink_pkg pkg = {.level = level, .pages = desire_pages};
+	init_completion(&pkg.done);
+	if (async) {
+		async_schedule(ufshpb_do_shrink,&pkg); // TBD
+		wait_for_completion_timeout(&pkg.done, msecs_to_jiffies(2000));
+	} else
+		ufshpb_do_shrink(&pkg, 0);
+	return pkg.pages;
+}
+static unsigned long ufshpb_shrinker_scan(struct shrinker *s,
+					  struct shrink_control *sc)
+{
+	int level;
+	level = ufshpb_get_mm_lv();
+	return ufshpb_shrink(level, 0, false);
+}
+// calc page cnt what can be freed in one lu.
+static inline int ufshpb_lu_page_cnt(struct ufshpb_lu *hpb)
+{
+	struct ufshpb_region *rgn;
+	struct ufshpb_subregion *srgn;
+	int rgn_idx, srgn_idx;
+	int pages = 0;
+	unsigned long flags;
+	spin_lock_irqsave(&hpb->rgn_state_lock, flags);
+	for (rgn_idx = 0; rgn_idx < hpb->rgns_per_lu; rgn_idx++) {
+		rgn = hpb->rgn_tbl + rgn_idx;
+		if (rgn->rgn_state == HPB_RGN_ACTIVE) {
+			for_each_sub_region(rgn, srgn_idx, srgn) {
+				if (srgn->srgn_state != HPB_SRGN_UNUSED)
+					pages += hpb->pages_per_srgn;
+			}
+		}
+	}
+	spin_unlock_irqrestore(&hpb->rgn_state_lock, flags);
+	return pages;
+}
+static long ufshpb_page_cnt()
+{
+	struct ufs_hba *hba = hpb_hba;
+	struct scsi_device *sdev;
+	struct ufshpb_lu *hpb;
+	unsigned long pages = 0;
+	__shost_for_each_device(sdev, hba->host) {
+		hpb = ufshpb_get_hpb_data(sdev);
+		if (!hpb)
+			continue;
+		pages += ufshpb_lu_page_cnt(hpb);
+	}
+	return pages;
+}
+static unsigned long ufshpb_shrinker_count(struct shrinker *s,
+				  struct shrink_control *sc)
+{
+	if (!mm_g_stat.enable)
+		return 0;
+	return ufshpb_page_cnt();
+}
+static struct shrinker ufshpb_shrinker = {
+	.scan_objects = ufshpb_shrinker_scan,
+	.count_objects = ufshpb_shrinker_count,
+	.seeks = DEFAULT_SEEKS,
+};
+#endif
 static int ufshpb_init_mem_wq(struct ufs_hba *hba)
 {
 	int ret;
 	unsigned int pool_size;
-
 	ufshpb_mctx_cache = kmem_cache_create("ufshpb_mctx_cache",
 					sizeof(struct ufshpb_map_ctx),
 					0, 0, NULL);
@@ -2800,11 +3760,9 @@ static int ufshpb_init_mem_wq(struct ufs_hba *hba)
 		dev_err(hba->dev, "ufshpb: cannot init mctx cache\n");
 		return -ENOMEM;
 	}
-
 	pool_size = PAGE_ALIGN(ufshpb_host_map_kbytes * 1024) / PAGE_SIZE;
 	dev_info(hba->dev, "%s:%d ufshpb_host_map_kbytes %u pool_size %u\n",
 	       __func__, __LINE__, ufshpb_host_map_kbytes, pool_size);
-
 	ufshpb_mctx_pool = mempool_create_slab_pool(pool_size,
 						    ufshpb_mctx_cache);
 	if (!ufshpb_mctx_pool) {
@@ -2812,14 +3770,12 @@ static int ufshpb_init_mem_wq(struct ufs_hba *hba)
 		ret = -ENOMEM;
 		goto release_mctx_cache;
 	}
-
 	ufshpb_page_pool = mempool_create_page_pool(pool_size, 0);
 	if (!ufshpb_page_pool) {
 		dev_err(hba->dev, "ufshpb: cannot init page pool\n");
 		ret = -ENOMEM;
 		goto release_mctx_pool;
 	}
-
 	ufshpb_wq = alloc_workqueue("ufshpb-wq",
 					WQ_UNBOUND | WQ_MEM_RECLAIM, 0);
 	if (!ufshpb_wq) {
@@ -2827,9 +3783,7 @@ static int ufshpb_init_mem_wq(struct ufs_hba *hba)
 		ret = -ENOMEM;
 		goto release_page_pool;
 	}
-
 	return 0;
-
 release_page_pool:
 	mempool_destroy(ufshpb_page_pool);
 release_mctx_pool:
@@ -2838,25 +3792,21 @@ release_mctx_cache:
 	kmem_cache_destroy(ufshpb_mctx_cache);
 	return ret;
 }
-
 void ufshpb_get_geo_info(struct ufs_hba *hba, u8 *geo_buf)
 {
 	struct ufshpb_dev_info *hpb_info = ufs_hba_to_hpb(hba);
 	int max_active_rgns = 0;
 	int hpb_num_lu;
-
 	hpb_num_lu = geo_buf[GEOMETRY_DESC_PARAM_HPB_NUMBER_LU];
 	if (hpb_num_lu == 0) {
 		dev_err(hba->dev, "No HPB LU supported\n");
 		hpb_info->hpb_disabled = true;
 		return;
 	}
-
 	hpb_info->rgn_size = geo_buf[GEOMETRY_DESC_PARAM_HPB_REGION_SIZE];
 	hpb_info->srgn_size = geo_buf[GEOMETRY_DESC_PARAM_HPB_SUBREGION_SIZE];
 	max_active_rgns = get_unaligned_be16(geo_buf +
 			  GEOMETRY_DESC_PARAM_HPB_MAX_ACTIVE_REGS);
-
 	if (hpb_info->rgn_size == 0 || hpb_info->srgn_size == 0 ||
 	    max_active_rgns == 0) {
 		dev_err(hba->dev, "No HPB supported device\n");
@@ -2864,16 +3814,13 @@ void ufshpb_get_geo_info(struct ufs_hba *hba, u8 *geo_buf)
 		return;
 	}
 }
-
 void ufshpb_get_dev_info(struct ufs_hba *hba, u8 *desc_buf)
 {
 	struct ufshpb_dev_info *hpb_dev_info = ufs_hba_to_hpb(hba);
 	int version, ret;
 	u32 max_hpb_single_cmd = HPB_MULTI_CHUNK_LOW;
-
 	hpb_dev_info->control_mode = desc_buf[DEVICE_DESC_PARAM_HPB_CONTROL];
-
-	version = get_unaligned_be16(desc_buf + DEVICE_DESC_PARAM_HPB_VER);
+	version = get_unaligned_be16(desc_buf + DEVICE_DESC_PARAM_HPB_VER) & HPB_MAJOR_VERSION_MASK;
 	if ((version != HPB_SUPPORT_VERSION) &&
 	    (version != HPB_SUPPORT_LEGACY_VERSION)) {
 		dev_err(hba->dev, "%s: HPB %x version is not supported.\n",
@@ -2881,41 +3828,33 @@ void ufshpb_get_dev_info(struct ufs_hba *hba, u8 *desc_buf)
 		hpb_dev_info->hpb_disabled = true;
 		return;
 	}
-
 	if (version == HPB_SUPPORT_LEGACY_VERSION)
 		hpb_dev_info->is_legacy = true;
-
 	pm_runtime_get_sync(hba->dev);
 	ret = ufshcd_query_attr_retry(hba, UPIU_QUERY_OPCODE_READ_ATTR,
 		QUERY_ATTR_IDN_MAX_HPB_SINGLE_CMD, 0, 0, &max_hpb_single_cmd);
 	pm_runtime_put_sync(hba->dev);
-
 	if (ret)
 		dev_err(hba->dev, "%s: idn: read max size of single hpb cmd query request failed",
 			__func__);
 	hpb_dev_info->max_hpb_single_cmd = max_hpb_single_cmd;
-
 	/*
 	 * Get the number of user logical unit to check whether all
 	 * scsi_device finish initialization
 	 */
 	hpb_dev_info->num_lu = desc_buf[DEVICE_DESC_PARAM_NUM_LU];
 }
-
 void ufshpb_init(struct ufs_hba *hba)
 {
 	struct ufshpb_dev_info *hpb_dev_info = ufs_hba_to_hpb(hba);
 	int try;
 	int ret;
-
 	if (!ufshpb_is_allowed(hba) || !hba->dev_info.hpb_enabled)
 		return;
-
 	if (ufshpb_init_mem_wq(hba)) {
 		hpb_dev_info->hpb_disabled = true;
 		return;
 	}
-
 	atomic_set(&hpb_dev_info->slave_conf_cnt, hpb_dev_info->num_lu);
 	tot_active_srgn_pages = 0;
 	/* issue HPB reset query */
@@ -2925,17 +3864,27 @@ void ufshpb_init(struct ufs_hba *hba)
 		if (!ret)
 			break;
 	}
+	ufshpb_init_fault_info(&ufshpb_fi);
+#ifdef UFS_HPB_SHRINK
+	hpb_hba = hba;
+	ufshpb_init_mm_g_stat(&mm_g_stat);
+	register_shrinker(&ufshpb_shrinker);
+	register_trace_android_vh_ufs_compl_command(ufshpb_android_vh_ufs_compl_command, NULL);
+#endif
 }
-
 void ufshpb_remove(struct ufs_hba *hba)
 {
+	ufshpb_destroy_fault_info(&ufshpb_fi);
+#ifdef UFS_HPB_SHRINK
+	unregister_shrinker(&ufshpb_shrinker);
+	ufshpb_deinit_mm_g_stat(&mm_g_stat);
+#endif
 	mempool_destroy(ufshpb_page_pool);
 	mempool_destroy(ufshpb_mctx_pool);
 	kmem_cache_destroy(ufshpb_mctx_cache);
-
 	destroy_workqueue(ufshpb_wq);
 }
-
 module_param(ufshpb_host_map_kbytes, uint, 0644);
 MODULE_PARM_DESC(ufshpb_host_map_kbytes,
 	"ufshpb host mapping memory kilo-bytes for ufshpb memory-pool");
+

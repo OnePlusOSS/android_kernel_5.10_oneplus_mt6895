@@ -113,6 +113,9 @@ struct head_dts_data {
 	unsigned int moisture_comp_vth;
 	unsigned int moisture_comp_vref2;
 	unsigned int moisture_use_ext_res;
+	/* 2024/8/9, add for supporting type-c headphone detect bypass */
+	unsigned int headset_eint0_disable;
+	unsigned int pull_high_impedance;
 };
 
 enum {

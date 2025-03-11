@@ -451,6 +451,8 @@ struct venc_vcu_config {
 	__u32 highquality;
 	__u32 dummynal;
 	__u32 slbc_addr;
+	__s32 cb_qp_offset;
+	__s32 cr_qp_offset;
 };
 
 /**

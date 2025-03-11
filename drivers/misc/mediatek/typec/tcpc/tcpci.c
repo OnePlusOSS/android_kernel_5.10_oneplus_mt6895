@@ -141,6 +141,32 @@ int tcpci_check_vsafe0v(
 }
 EXPORT_SYMBOL(tcpci_check_vsafe0v);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+int tcpci_get_chip_id(struct tcpc_device *tcpc,uint32_t *chip_id)
+{
+	if (tcpc->ops->get_chip_id == NULL)
+		return -ENOTSUPP;
+	return tcpc->ops->get_chip_id(tcpc,chip_id);
+}
+EXPORT_SYMBOL(tcpci_get_chip_id);
+int tcpci_get_chip_pid(struct tcpc_device *tcpc,uint32_t *chip_pid)
+{
+	if (tcpc->ops->get_chip_pid == NULL)
+		return -ENOTSUPP;
+
+	return tcpc->ops->get_chip_pid(tcpc,chip_pid);
+}
+EXPORT_SYMBOL(tcpci_get_chip_pid);
+int tcpci_get_chip_vid(struct tcpc_device *tcpc,uint32_t *chip_vid)
+{
+	if (tcpc->ops->get_chip_vid == NULL)
+		return -ENOTSUPP;
+
+	return tcpc->ops->get_chip_vid(tcpc,chip_vid);;
+}
+EXPORT_SYMBOL(tcpci_get_chip_vid);
+#endif
+
 int tcpci_alert_status_clear(
 	struct tcpc_device *tcpc, uint32_t mask)
 {
@@ -263,12 +289,20 @@ EXPORT_SYMBOL(tcpci_get_cc);
 
 int tcpci_set_cc(struct tcpc_device *tcpc, int pull)
 {
-	PD_BUG_ON(tcpc->ops->set_cc == NULL);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*	PD_BUG_ON(tcpc->ops->set_cc == NULL);
 
 #if CONFIG_USB_PD_DBG_ALWAYS_LOCAL_RP
 	if (pull == TYPEC_CC_RP)
 		pull = tcpc->typec_local_rp_level;
-#endif /* CONFIG_USB_PD_DBG_ALWAYS_LOCAL_RP */
+#endif*/ /* CONFIG_USB_PD_DBG_ALWAYS_LOCAL_RP */
+/*#else*/
+#if CONFIG_TYPEC_CHECK_LEGACY_CABLE
+#if CONFIG_TYPEC_LEGACY3_ALWAYS_LOCAL_RP
+	uint8_t rp_lvl = TYPEC_RP_DFT, res = TYPEC_CC_DRP;
+#endif /* CONFIG_TYPEC_LEGACY3_ALWAYS_LOCAL_RP */
+#endif /* CONFIG_TYPEC_CHECK_LEGACY_CABLE */
+/*#endif*/
 
 #if CONFIG_TYPEC_CHECK_LEGACY_CABLE
 	if (pull == TYPEC_CC_DRP && tcpc->typec_legacy_cable) {
@@ -282,18 +316,27 @@ int tcpci_set_cc(struct tcpc_device *tcpc, int pull)
 			pull = TYPEC_CC_RP_1_5;
 		TCPC_DBG2("LC->Toggling (%d)\n", pull);
 	}
-#endif /* CONFIG_TYPEC_CHECK_LEGACY_CABLE */
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	else if (!tcpc->typec_legacy_cable) {
+#if CONFIG_TYPEC_LEGACY3_ALWAYS_LOCAL_RP
+		rp_lvl = TYPEC_CC_PULL_GET_RP_LVL(pull);
+		res = TYPEC_CC_PULL_GET_RES(pull);
+		pull = TYPEC_CC_PULL(rp_lvl == TYPEC_RP_DFT ?
+			tcpc->typec_local_rp_level : rp_lvl, res);
+#endif /* CONFIG_TYPEC_LEGACY3_ALWAYS_LOCAL_RP */
+	}
+/*#endif*/
 
 	if (pull & TYPEC_CC_DRP) {
-		tcpc->typec_remote_cc[0] =
-		tcpc->typec_remote_cc[1] =
-			TYPEC_CC_DRP_TOGGLING;
+		tcpc->typec_remote_cc[1] = TYPEC_CC_DRP_TOGGLING;
+		tcpc->typec_remote_cc[0] = tcpc->typec_remote_cc[1];
 	} else if (pull == TYPEC_CC_OPEN
 			&& (tcpc->tcpc_flags & TCPC_FLAGS_TYPEC_OTP))
 		tcpci_set_otp_fwen(tcpc, false);
 
-	tcpc->typec_local_cc = pull;
-	return tcpc->ops->set_cc(tcpc, pull);
+#endif /* CONFIG_TYPEC_CHECK_LEGACY_CABLE */
+
+	return __tcpci_set_cc(tcpc, pull);
 }
 EXPORT_SYMBOL(tcpci_set_cc);
 
@@ -384,8 +427,9 @@ EXPORT_SYMBOL(tcpci_set_low_power_mode);
 int tcpci_set_watchdog(struct tcpc_device *tcpc, bool en)
 {
 	int rv = 0;
-
+#ifndef OPLUS_FEATURE_CHG_BASIC
 	if (tcpc->tcpc_flags & TCPC_FLAGS_WATCHDOG_EN)
+#endif
 		if (tcpc->ops->set_watchdog)
 			rv = tcpc->ops->set_watchdog(tcpc, en);
 
@@ -494,6 +538,56 @@ int tcpci_set_cc_hidet(struct tcpc_device *tcpc, bool en)
 	return rv;
 }
 EXPORT_SYMBOL(tcpci_set_cc_hidet);
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+int tcpci_notify_wd0_state(struct tcpc_device *tcpc, bool wd0_state)
+{
+	struct tcp_notify tcp_noti;
+
+	tcp_noti.wd0_state.wd0 = wd0_state;
+
+	pr_err("%s wd0: %d\n", __func__, wd0_state);
+	TCPC_DBG("wd0: %d\n", wd0_state);
+	return tcpc_check_notify_time(tcpc, &tcp_noti, TCP_NOTIFY_IDX_MISC,
+				      TCP_NOTIFY_WD0_STATE);
+}
+EXPORT_SYMBOL(tcpci_notify_wd0_state);
+
+int tcpci_notify_chrdet_state(struct tcpc_device *tcpc, bool chrdet_state)
+{
+	struct tcp_notify tcp_noti;
+
+	tcp_noti.chrdet_state.chrdet = chrdet_state;
+
+	pr_err("%s chrdet: %d\n", __func__, chrdet_state);
+	TCPC_DBG("chrdet: %d\n", chrdet_state);
+	return tcpc_check_notify_time(tcpc, &tcp_noti, TCP_NOTIFY_IDX_MISC,
+					TCP_NOTIFY_CHRDET_STATE);
+}
+EXPORT_SYMBOL(tcpci_notify_chrdet_state);
+
+int tcpci_notify_switch_get_state(struct tcpc_device *tcpc, bool (*pfunc)(int))
+{
+	struct tcp_notify tcp_noti;
+
+	tcp_noti.switch_get_status.pfunc = pfunc;
+	return tcpc_check_notify_time(tcpc, &tcp_noti, TCP_NOTIFY_IDX_MISC,
+				TCP_NOTIFY_SWITCH_GET_STATE);
+}
+EXPORT_SYMBOL(tcpci_notify_switch_get_state);
+
+int tcpci_notify_switch_set_state(struct tcpc_device *tcpc, bool state, bool (*pfunc)(int))
+{
+	struct tcp_notify tcp_noti;
+
+	tcp_noti.switch_set_status.state = state;
+	tcp_noti.switch_set_status.pfunc = pfunc;
+	pr_err("%s state: %d\n", __func__, state);
+	return tcpc_check_notify_time(tcpc, &tcp_noti, TCP_NOTIFY_IDX_MISC,
+			TCP_NOTIFY_SWITCH_SET_STATE);
+}
+EXPORT_SYMBOL(tcpci_notify_switch_set_state);
+#endif
 
 int tcpci_notify_plug_out(struct tcpc_device *tcpc)
 {
@@ -692,14 +786,14 @@ int tcpci_source_vbus(
 	if (ma < 0) {
 		if (mv != 0) {
 			switch (tcpc->typec_local_rp_level) {
-			case TYPEC_CC_RP_1_5:
-				ma = 1500;
-				break;
-			case TYPEC_CC_RP_3_0:
+			case TYPEC_RP_3_0:
 				ma = 3000;
 				break;
+			case TYPEC_RP_1_5:
+				ma = 1500;
+				break;
+			case TYPEC_RP_DFT:
 			default:
-			case TYPEC_CC_RP_DFT:
 				ma = CONFIG_TYPEC_SRC_CURR_DFT;
 				break;
 			}
@@ -973,6 +1067,8 @@ int tcpci_dp_configure(struct tcpc_device *tcpc, uint32_t dp_config)
 	case MODE_DP_SRC:
 		tcp_noti.ama_dp_state.sel_config = SW_UFP_D;
 		tcp_noti.ama_dp_state.pin_assignment = (dp_config >> 16) & 0xff;
+		break;
+	default:
 		break;
 	}
 	if (tcp_noti.ama_dp_state.pin_assignment == 0)

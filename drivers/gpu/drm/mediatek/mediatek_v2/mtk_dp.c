@@ -2195,8 +2195,11 @@ int mdrv_DPTx_Training_Handler(struct mtk_dp *mtk_dp)
 
 			mtk_dp->info.audio_caps
 				= mdrv_DPTx_getAudioCaps(mtk_dp);
-		} else
+		} else {
+			mtk_dp->info.audio_caps = 0;
+			DPTXMSG("mtk_dp->info.audio_caps = 0!\n");
 			DPTXMSG("Read EDID Fail!\n");
+		}
 
 		mtk_dp->training_state = DPTX_NTSTATE_TRAINING_PRE;
 		break;
@@ -3158,11 +3161,14 @@ int mtk_drm_dp_get_cap(struct drm_device *dev, void *data,
 	if (g_mtk_dp->dp_ready)
 		*dp_cap = g_mtk_dp->info.audio_caps;
 
+//#ifdef CONFIG_MTK_DPTX_PATCH_FOR_TABLET_ENABLE
+	DPTXMSG("%s, %d, *dp_cap = 0x%x\n", __func__, __LINE__, *dp_cap);
+/*#else
 	if (*dp_cap == 0)
 		*dp_cap = ((DP_CHANNEL_2 << DP_CAPABILITY_CHANNEL_SFT)
 			| (DP_SAMPLERATE_192 << DP_CAPABILITY_SAMPLERATE_SFT)
 			| (DP_BITWIDTH_24 << DP_CAPABILITY_BITWIDTH_SFT));
-
+#endif*/
 	return 0;
 
 }

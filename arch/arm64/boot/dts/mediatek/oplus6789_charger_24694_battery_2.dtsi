@@ -1,0 +1,237 @@
+&charger {
+	battery_2 {
+		io-channels = <&auxadc 3>,<&auxadc 5>,<&auxadc 4>,<&pmic_auxadc AUXADC_VCDT>;
+		io-channel-names = "auxadc3-charger_id","usb_temp_v_l","usb_temp_v_r","pmic_vbus_voltage";
+		pinctrl-names = "charger_gpio_as_output_low","charger_gpio_as_output_high",
+						"ccdetect_active","ccdetect_sleep","dischg_enable","dischg_disable";
+		pinctrl-0 = <&charger_gpio_as_output_low>;
+		pinctrl-1 = <&charger_gpio_as_output_high>;
+		pinctrl-2 = <&ccdetect_active>;
+		pinctrl-3 = <&ccdetect_sleep>;
+		pinctrl-4 = <&dischg_enable>;
+		pinctrl-5 = <&dischg_disable>;
+
+		gauge = <&mtk_gauge>;
+		charger = <&sgm41542>;
+
+		//for oplus chg framework:
+		qcom,pd_input_current_charger_ma = <2000>;
+		qcom,qc_input_current_charger_ma = <2000>;
+		qcom,input_current_charger_ma = <3000>;
+		qcom,input_current_usb_ma = <500>;
+		qcom,input_current_cdp_ma = <1500>;
+		qcom,input_current_camera_ma = <1200>;
+		qcom,input_current_calling_ma = <1500>;
+
+		qcom,led_warm_bat_decidegc = <350>;
+		qcom,led_high_bat_decidegc = <370>;
+		qcom,input_current_led_ma = <1200>;
+		qcom,input_current_led_ma_high = <1200>;
+		qcom,input_current_led_ma_warm = <1500>;
+		qcom,input_current_led_ma_normal = <3000>;
+		qcom,input_current_led_ma_forcmcc = <500>;
+		qcom,input_current_led_ma_limit_high = <1200>;
+
+		qcom,vooc_temp_bat_normal_decidegc = <350>;
+		qcom,vooc_temp_bat_warm_decidegc = <370>;
+		qcom,vooc_temp_bat_hot_decidegc = <440>;
+		qcom,input_current_vooc_led_ma_high = <1200>;
+		qcom,input_current_vooc_led_ma_warm = <1800>;
+		qcom,input_current_vooc_led_ma_normal = <3600>;
+		qcom,input_current_vooc_ma_normal = <3600>;
+		qcom,input_current_vooc_ma_warm = <3200>;
+		qcom,input_current_vooc_ma_high = <2200>;
+
+		qcom,overtemp_bat_decidegc = <350>;
+		qcom,iterm_disabled = <0>;
+		//sw_full_count = <25>;
+		qcom,iterm_ma = <420>;
+		qcom,recharge-mv = <100>;
+
+		qcom,batt_capacity_mah = <8360>; /*typical capacity*/
+		//qcom,batt_capacity_mah = <4880>; /*rated capacity*/
+		qcom,usb_high_than_bat_decidegc = <168>;
+
+		qcom,removed_bat_decidegc = <390>;  /* < -39C */
+
+		qcom,cold_bat_decidegc = <0>;  /* -10C ~ 0C */
+		qcom,temp_cold_vfloat_mv = <4465>;
+		qcom,temp_freeze_fastchg_current_ma_high = <1600>;
+		qcom,temp_freeze_fastchg_current_ma_low = <1200>;
+		qcom,temp_freeze_fastchg_current_ma = <900>;
+		qcom,temp_cold_fastchg_current_ma = <1200>;
+		qcom,temp_cold_fastchg_current_ma_high = <1600>;
+
+		qcom,little_cold_bat_decidegc = <0>;    /* 0C ~ 5C */
+		qcom,temp_little_cold_vfloat_mv = <4465>;
+		qcom,temp_little_cold_fastchg_current_ma_high = <2500>;
+		qcom,temp_little_cold_fastchg_current_ma_low = <2000>;
+		qcom,temp_little_cold_fastchg_current_ma = <2500>;
+		qcom,qc_temp_little_cold_fastchg_current_ma_high = <2594>;
+		qcom,qc_temp_little_cold_fastchg_current_ma_low = <3300>;
+		qcom,pd_temp_little_cold_fastchg_current_ma_high = <2594>;
+		qcom,pd_temp_little_cold_fastchg_current_ma_low = <3300>;
+
+		qcom,cool_bat_decidegc = <50>;  /* 5C ~ 12C */
+		qcom,temp_cool_vfloat_mv = <4465>;
+		qcom,temp_cool_fastchg_current_ma_high = <3000>;
+		qcom,temp_cool_fastchg_current_ma_low = <3000>;
+		qcom,qc_temp_cool_fastchg_current_ma_high = <3300>;
+		qcom,qc_temp_cool_fastchg_current_ma_low = <3300>;
+		qcom,pd_temp_cool_fastchg_current_ma_high = <3300>;
+		qcom,pd_temp_cool_fastchg_current_ma_low = <3300>;
+
+		qcom,little_cool_bat_decidegc = <120>;  /* 12C ~ 16C */
+		qcom,temp_little_cool_vfloat_mv = <4465>;
+		qcom,temp_little_cool_fastchg_current_ma = <2200>;
+		qcom,pd_temp_little_cool_fastchg_current_ma = <3300>;
+		qcom,qc_temp_little_cool_fastchg_current_ma = <3300>;
+
+		qcom,normal_bat_decidegc = <160>;       /* 16C ~ 45C */
+		qcom,temp_normal_vfloat_mv = <4465>;
+		qcom,temp_normal_fastchg_current_ma = <2200>;
+		qcom,pd_temp_normal_fastchg_current_ma = <3300>;
+		qcom,qc_temp_normal_fastchg_current_ma = <3300>;
+
+		qcom,warm_bat_decidegc = <450>;         /* 45C ~ 53C */ /*8pin Bat Vooc project need add 3 degree C*/
+		qcom,temp_warm_vfloat_mv = <4130>;
+		qcom,temp_warm_fastchg_current_ma = <3000>;
+		qcom,pd_temp_warm_fastchg_current_ma = <1300>;
+		qcom,qc_temp_warm_fastchg_current_ma = <1300>;
+		qcom,temp_warm_fastchg_current_ma_led_on = <1000>;
+
+		qcom,hot_bat_decidegc = <530>;  /* > 53C */
+
+		qcom,non_standard_vfloat_mv = <3980>;
+		qcom,non_standard_fastchg_current_ma = <512>;
+
+		qcom,short_c_bat_cv_mv = <4330>;
+		qcom,short_c_bat_vfloat_mv = <3800>;
+		qcom,short_c_bat_fastchg_current_ma = <512>;
+		qcom,short_c_bat_vfloat_sw_limit = <3750>;
+
+		qcom,cold_vfloat_sw_limit = <4415>;
+		qcom,little_cold_vfloat_sw_limit = <4415>;
+		qcom,cool_vfloat_sw_limit = <4415>;
+		qcom,little_cool_vfloat_sw_limit = <4415>;
+		qcom,normal_vfloat_sw_limit = <4415>;
+		qcom,warm_vfloat_sw_limit = <4080>;
+		qcom,non_standard_vfloat_sw_limit = <3930>;
+
+		qcom,max_chg_time_sec = <72000>;
+		qcom,charger_hv_thr = <5800>;
+		qcom,charger_recv_thr = <5500>;
+		qcom,charger_lv_thr = <3400>;
+		qcom,vbatt_full_thr = <4465>;
+		qcom,vbatt_hv_thr = <4600>;
+
+		qcom,vfloat_step_mv = <16>;
+		qcom,non_standard_vfloat_over_sw_limit = <3990>;
+		qcom,cold_vfloat_over_sw_limit = <4475>;
+		qcom,little_cold_vfloat_over_sw_limit = <4475>;
+		qcom,cool_vfloat_over_sw_limit = <4475>;
+		qcom,little_cool_vfloat_over_sw_limit = <4475>;
+		qcom,normal_vfloat_over_sw_limit = <4475>;
+		qcom,warm_vfloat_over_sw_limit = <4140>;
+
+		qcom,vbatt_power_off = <3300>;
+		qcom,vbatt_soc_1 = <3410>;
+		qcom,vooc_project = <0>;
+		qcom,vbatt_num = <1>;
+		qcom,new_ui_warning_support;
+		qcom,smart_charging_screenoff;
+		qcom,smart_charge_version = <1>;
+
+		qcom,support_usbtemp_protect_v2;
+		qcom,usbtemp_batt_temp_low = <50>;
+		qcom,usbtemp_batt_temp_high = <50>;
+		qcom,usbtemp_ntc_temp_low = <57>;
+		qcom,usbtemp_ntc_temp_high = <69>;
+		qcom,usbtemp_temp_gap_low_with_batt_temp = <7>;
+		qcom,usbtemp_temp_gap_high_with_batt_temp = <12>;
+		qcom,usbtemp_temp_gap_low_without_batt_temp = <12>;
+		qcom,usbtemp_temp_gap_high_without_batt_temp = <24>;
+		qcom.usbtemp_rise_fast_temp_low = <3>;
+		qcom.usbtemp_rise_fast_temp_high = <3>;
+		qcom.usbtemp_rise_fast_temp_count_low = <30>;
+		qcom.usbtemp_rise_fast_temp_count_high = <20>;
+
+		qcom,usbtemp_cool_down_ntc_low = <54>;
+		qcom,usbtemp_cool_down_ntc_high = <65>;
+		qcom,usbtemp_cool_down_gap_low = <12>;
+		qcom,usbtemp_cool_down_gap_high = <20>;
+		qcom,usbtemp_cool_down_recover_ntc_low = <48>;
+		qcom,usbtemp_cool_down_recover_ntc_high = <60>;
+		qcom,usbtemp_cool_down_recover_gap_low = <6>;
+		qcom,usbtemp_cool_down_recover_gap_high = <15>;
+
+		qcom,normal_vterm_hw_inc = <18>;
+		qcom,non_normal_vterm_hw_inc = <18>;
+		qcom,usbtemp_batttemp_gap = <12>;
+
+		qcom,ff1_normal_fastchg_ma = <1500>; /*12C~35c*/
+		qcom,ff1_warm_fastchg_ma = <1700>;	/* 35C ~ 40c */
+		qcom,ff1_exit_step_ma = <400>;
+		qcom,ff1_warm_exit_step_ma = <200>;
+
+		qcom,ffc2_normal_fastchg_ma = <1300>;/*12C~35c*/
+		qcom,ffc2_warm_fastchg_ma = <1700>;	/* 35C ~ 40c */
+		qcom,ffc2_temp_warm_decidegc = <350>;
+		qcom,ffc2_temp_high_decidegc = <400>;
+		qcom,ffc2_temp_low_decidegc = <120>;
+		qcom,ffc2_exit_step_ma = <200>;
+		qcom,ffc2_warm_exit_step_ma = <200>;
+
+		qcom,ffc_normal_vfloat_sw_limit = <4475>;
+		qcom,ffc_temp_normal_vfloat_mv = <4550>;
+		qcom,ffc_normal_vfloat_over_sw_limit = <4550>;
+		qcom,ffc_warm_vfloat_sw_limit = <4475>;
+
+		qcom,ffc2_normal_vfloat_sw_limit = <4475>;
+		qcom,ffc2_temp_normal_vfloat_mv = <4550>;
+		qcom,ffc2_normal_vfloat_over_sw_limit = <4550>;
+		qcom,ffc2_warm_vfloat_sw_limit = <4475>;
+
+		qcom,default_iterm_ma = <420>;
+		qcom,default_temp_normal_fastchg_current_ma = <3000>;
+		qcom,default_normal_vfloat_sw_limit = <4415>;
+		qcom,default_temp_normal_vfloat_mv = <4465>;
+		qcom,default_normal_vfloat_over_sw_limit = <4475>;
+
+		qcom,default_temp_little_cool_fastchg_current_ma = <3000>;
+		qcom,default_little_cool_vfloat_sw_limit = <4415>;
+		qcom,default_temp_little_cool_vfloat_mv = <4465>;
+		qcom,default_little_cool_vfloat_over_sw_limit = <4475>;
+
+		//for PD9V or QC9V
+		qcom,vbatt_pdqc_to_5v_thr = <4500>;
+		qcom,vbatt_pdqc_to_9v_thr = <4500>;
+
+		//for control:
+		//qcom,suspend_after_full;
+		qcom,check_batt_full_by_sw;
+		qcom,chg_ctrl_by_lcd;
+		qcom,chg_ctrl_by_camera;
+		qcom,chg_ctrl_by_calling;
+		qcom,sw_vfloat_over_protect_enable;
+		qcom,usbtemp_dischg_by_platpmic;
+		qcom,ffc_support;
+		qcom,chargerid_vol_disable;
+		qcom,support_ntc_01c_precision;
+		qcom,voocphy_support = <2>;
+		//qcom,external_authenticate;
+		qcom,chargerid_support;
+		qcom,vooc_show_ui_soc_decimal;
+		qcom,ui_soc_decimal_speedmin = <20>;//2A
+		qcom,ccdetect_by_wd0;
+		qcom,hvdcp_disabled; //turn off hvdcp func for doki
+		qcom,sgm41542_support;
+		//GPIO config:
+		qcom,chargerid_switch-gpio = <&pio 52 0x00>;
+		qcom,dischg-gpio = <&pio 156 0x00>;
+		qcom,ccdetect-gpio = <&pio 14 0x00>;
+
+		qcom,vooc-max-input-volt-support = <10000>;     //10V
+		qcom,vooc-max-input-current-support = <3000>;   //3A
+	};
+};

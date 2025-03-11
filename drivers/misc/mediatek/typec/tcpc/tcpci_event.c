@@ -1350,9 +1350,15 @@ static int tcpc_event_thread_fn(void *data)
 			dev_notice(&tcpc->dev, "%s exits(%d)\n", __func__, ret);
 			break;
 		}
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		atomic_inc(&tcpc->suspend_pending);
+#endif
 		do {
 			atomic_dec_if_positive(&tcpc->pending_event);
 		} while (pd_policy_engine_run(tcpc) && !kthread_should_stop());
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		atomic_dec_if_positive(&tcpc->suspend_pending);
+#endif
 	}
 
 	return 0;

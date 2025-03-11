@@ -1294,9 +1294,7 @@ static int mt6360_set_cc(struct tcpc_device *tcpc, int pull)
 
 		pull1 = pull2 = pull;
 
-		if ((pull == TYPEC_CC_RP_DFT || pull == TYPEC_CC_RP_1_5 ||
-			pull == TYPEC_CC_RP_3_0) &&
-			tcpc->typec_is_attached_src) {
+		if (pull == TYPEC_CC_RP && tcpc->typec_is_attached_src) {
 			if (tcpc->typec_polarity)
 				pull1 = TYPEC_CC_RD;
 			else
@@ -2362,15 +2360,11 @@ static int mt6360_tcpcdev_init(struct mt6360_chip *chip, struct device *dev)
 
 	if (of_property_read_u32(np, "mt-tcpc,rp_level", &val) >= 0) {
 		switch (val) {
-		case 0: /* RP Default */
-			desc->rp_lvl = TYPEC_CC_RP_DFT;
-			break;
-		case 1: /* RP 1.5V */
-			desc->rp_lvl = TYPEC_CC_RP_1_5;
-			break;
-		case 2: /* RP 3.0V */
-			desc->rp_lvl = TYPEC_CC_RP_3_0;
-			break;
+		case TYPEC_RP_DFT:
+		case TYPEC_RP_1_5:
+		case TYPEC_RP_3_0:
+			desc->rp_lvl = val;
+ 			break;
 		default:
 			break;
 		}

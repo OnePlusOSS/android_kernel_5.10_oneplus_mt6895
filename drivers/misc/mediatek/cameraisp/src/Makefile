@@ -14,3 +14,9 @@
 
 obj-y += isp_6s/
 obj-y += isp_4/
+
+ifeq ($(strip $(CONFIG_MTK_ISP_IRQ_CONTROLLER)), y)
+$(warning "CONFIG_MTK_ISP_IRQ_CONTROLLER")
+$(warning $(CONFIG_MTK_ISP_IRQ_CONTROLLER))
+LOCAL_CFLAGS += -DISP_IRQ_CONTROLLER
+endif

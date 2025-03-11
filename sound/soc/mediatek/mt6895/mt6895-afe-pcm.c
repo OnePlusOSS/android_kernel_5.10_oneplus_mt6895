@@ -33,6 +33,15 @@
 #if IS_ENABLED(CONFIG_MTK_ULTRASND_PROXIMITY)
 #include "../ultrasound/ultra_scp/mtk-scp-ultra-common.h"
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_fatal_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 /* FORCE_FPGA_ENABLE_IRQ use irq in fpga */
 /* #define FORCE_FPGA_ENABLE_IRQ */
 
@@ -1375,6 +1384,10 @@ static const struct snd_kcontrol_new memif_ul1_ch1_mix[] = {
 				    I_ADDA_UL_CH2, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH3", AFE_CONN21,
 				    I_ADDA_UL_CH3, 1, 0),
+//#ifdef OPLUS_BUG_COMPATIBILITY
+	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH1", AFE_CONN21_1,
+				    I_DL4_CH1, 1, 0),
+//#endif
 };
 
 static const struct snd_kcontrol_new memif_ul1_ch2_mix[] = {
@@ -1386,6 +1399,10 @@ static const struct snd_kcontrol_new memif_ul1_ch2_mix[] = {
 				    I_ADDA_UL_CH3, 1, 0),
 	SOC_DAPM_SINGLE_AUTODISABLE("ADDA_UL_CH4", AFE_CONN22,
 				    I_ADDA_UL_CH4, 1, 0),
+//#ifdef OPLUS_BUG_COMPATIBILITY
+	SOC_DAPM_SINGLE_AUTODISABLE("DL4_CH2", AFE_CONN22_1,
+ 				    I_DL4_CH2, 1, 0),
+//#endif
 };
 
 static const struct snd_kcontrol_new memif_ul1_ch3_mix[] = {
@@ -1895,6 +1912,11 @@ static const struct snd_soc_dapm_route mt6895_memif_routes[] = {
 
 	{"HW_GAIN2_IN_CH1", "ADDA_UL_CH1", "ADDA_UL_Mux"},
 	{"HW_GAIN2_IN_CH2", "ADDA_UL_CH2", "ADDA_UL_Mux"},
+//#ifdef OPLUS_BUG_COMPATIBILITY
+	{"UL1_CH1", "DL4_CH1", "Hostless_UL1 UL"},
+	{"UL1_CH2", "DL4_CH2", "Hostless_UL1 UL"},
+	{"Hostless_UL1 UL", NULL, "UL1_VIRTUAL_INPUT"},
+//#endif
 };
 
 static const struct mtk_base_memif_data memif_data[MT6895_MEMIF_NUM] = {
@@ -3262,8 +3284,13 @@ static irqreturn_t mt6895_afe_irq_handler(int irq_id, void *dev)
 	status_mcu = status & mcu_en & AFE_IRQ_STATUS_BITS;
 
 	if (ret || status_mcu == 0) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_not_fb(afe->dev, "%s(), irq status err, ret %d, status 0x%x, mcu_en 0x%x\n",
+			__func__, ret, status, mcu_en);
+#else
 		dev_err(afe->dev, "%s(), irq status err, ret %d, status 0x%x, mcu_en 0x%x\n",
 			__func__, ret, status, mcu_en);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 		goto err_irq;
 	}
@@ -7052,6 +7079,7 @@ static int mt6895_afe_pcm_dev_probe(struct platform_device *pdev)
 		afe->memif[i].const_irq = 1;
 	}
 	afe->memif[MT6895_DEEP_MEMIF].ack = mtk_sp_clean_written_buffer_ack;
+	afe->memif[MT6895_FAST_MEMIF].ack = mtk_sp_clean_written_buffer_ack;
 
 	mutex_init(&afe->irq_alloc_lock);       /* needed when dynamic irq */
 
@@ -7153,6 +7181,12 @@ static int mt6895_afe_pcm_dev_probe(struct platform_device *pdev)
 
 err_pm_disable:
 	pm_runtime_disable(&pdev->dev);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (ret) {
+		pr_err_fb_fatal_delay("%s:failed ret=%d", __func__, ret);
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 	return ret;
 }

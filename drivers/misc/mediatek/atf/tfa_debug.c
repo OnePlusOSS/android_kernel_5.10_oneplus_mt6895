@@ -17,6 +17,9 @@
 #include <linux/slab.h>
 #include <linux/soc/mediatek/mtk_sip_svc.h>
 #include <linux/uaccess.h>
+/*#ifdef OPLUS_FEATURE_SECURITY_COMMON*/
+#include <soc/oplus/system/oplus_project.h>
+/*#endif OPLUS_FEATURE_SECURITY_COMMON*/
 
 #define ATF_LOG_RESERVED_MEMORY_KEY "mediatek,atf-log-reserved"
 #define DEBUG_BUF_NAME_LEN 16
@@ -498,6 +501,24 @@ static int tfa_time_sync_resume(struct device *dev)
 	return 0;
 }
 
+/*#ifdef OPLUS_FEATURE_SECURITY_COMMON*/
+static int atf_eng_version_sync_func(struct device *dev)
+{
+	/* Get eng_version and sync to TF-A */
+	u32 eng_version = get_eng_version();
+	struct arm_smccc_res res;
+
+	/* make sure atf logger do the eng_version sync with TF-A */
+	pr_notice("atf eng_version sync eng_version:%d\n",eng_version);
+	/* linux kernel smc call */
+	arm_smccc_smc(MTK_SIP_KERNEL_HIGH_TEMP_AGING,
+		(u32)eng_version, 0, 0, 0,
+		0, 0, 0, &res);
+
+	return 0;
+}
+/*#endif OPLUS_FEATURE_SECURITY_COMMON*/
+
 static const struct dev_pm_ops tfa_pm_ops = {
 	.suspend_noirq = tfa_time_sync_suspend,
 	.resume_noirq = tfa_time_sync_resume,
@@ -514,6 +535,10 @@ static int __init tfa_debug_probe(struct platform_device *pdev)
 
 	/* Synchronize timestamp in Kernel and ATF */
 	tfa_time_sync_resume(NULL);
+/*#ifdef OPLUS_FEATURE_SECURITY_COMMON*/
+	/* Synchronize eng_version in Kernel and ATF */
+	atf_eng_version_sync_func(NULL);
+/*#endif OPLUS_FEATURE_SECURITY_COMMON*/
 	ret = lookup_reserved_memory();
 	if (ret) {
 		pr_notice("Fail to look up atf_logger reserved memory:%d\n",

@@ -17,6 +17,9 @@
 #include <lpm.h>
 #include <lpm_module.h>
 #include <lpm_spm_comm.h>
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+#include <lpm_dbg_common_v1.h>
+#endif
 #include <spm_reg.h>
 #include <pwr_ctrl.h>
 #include <mt-plat/mtk_ccci_common.h>
@@ -174,6 +177,7 @@ static int lpm_get_wakeup_status(void)
 
 static void lpm_save_sleep_info(void)
 {
+#if !IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
 #define AVOID_OVERFLOW (0xFFFFFFFF00000000)
 	u32 off_26M_duration;
 	u32 slp_duration;
@@ -216,6 +220,7 @@ static void lpm_save_sleep_info(void)
 		spm_26M_off_count = (plat_mmio_read(SPM_VTCXO_EVENT_COUNT_STA)
 					& 0xffff)
 			+ spm_26M_off_count;
+#endif
 }
 
 static void suspend_show_detailed_wakeup_reason
@@ -550,7 +555,11 @@ static int lpm_show_message(int type, const char *prefix, void *data)
 			PCM_TICK_TO_SEC((wakesrc->timer_out %
 				PCM_32K_TICKS_PER_SEC)
 			* 1000));
-
+#if IS_ENABLED(CONFIG_OPLUS_POWERINFO_STANDBY_DEBUG)
+#if IS_ENABLED(CONFIG_MTK_ECCCI_DRIVER)
+		log_md_sleep_info();
+#endif
+#endif
 		/* Eable rcu lock checking */
 		//rcu_irq_exit_irqson();
 	} else

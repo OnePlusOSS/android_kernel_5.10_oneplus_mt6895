@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (C) 2021 MediaTek Inc.
+ */
+
+&pio {
+    // gpio205 pull up to enable dvdd supply
+    state_reset_high: state_reset_high {
+        pins_cmd_dat {
+            pinmux = <PINMUX_GPIO205__FUNC_GPIO205>,
+                    <PINMUX_GPIO188__FUNC_GPIO188>;
+            slew-rate = <1>;
+            output-high;
+        };
+    };
+    state_reset_low: state_reset_low {
+        pins_cmd_dat {
+            pinmux = <PINMUX_GPIO188__FUNC_GPIO188>;
+            slew-rate = <1>;
+            output-low;
+        };
+    };
+};
+
+&i2c3 {
+    clock-frequency = <400000>;
+    multi_reg@2F {
+        compatible = "multi_reg-pmic";
+        reg = <0x2F>;
+        pinctrl-names = "reset_high", "reset_low";
+        pinctrl-0 = <&state_reset_high>;
+        pinctrl-1 = <&state_reset_low>;
+        regulators {
+            multi_reg_ldo1:ONLDO1 {
+                regulator-name = "multi_reg_ldo1";
+                regulator-min-microvolt = <800000>;
+                regulator-max-microvolt = <1504000>;
+            };
+            multi_reg_ldo2:ONLDO2 {
+                regulator-name = "multi_reg_ldo2";
+                regulator-min-microvolt = <800000>;
+                regulator-max-microvolt = <1504000>;
+            };
+            multi_reg_ldo3:ONLDO3 {
+                regulator-name = "multi_reg_ldo3";
+                regulator-min-microvolt = <1644000>;
+                regulator-max-microvolt = <2900000>;
+            };
+            multi_reg_ldo4:ONLDO4 {
+                regulator-name = "multi_reg_ldo4";
+                regulator-min-microvolt = <1644000>;
+                regulator-max-microvolt = <2900000>;
+            };
+            multi_reg_ldo5:ONLDO5 {
+                regulator-name = "multi_reg_ldo5";
+                regulator-min-microvolt = <1644000>;
+                regulator-max-microvolt = <2900000>;
+            };
+            multi_reg_ldo6:ONLDO6 {
+                regulator-name = "multi_reg_ldo6";
+                regulator-min-microvolt = <1644000>;
+                regulator-max-microvolt = <2900000>;
+            };
+            multi_reg_ldo7:ONLDO7 {
+                regulator-name = "multi_reg_ldo7";
+                regulator-min-microvolt = <1644000>;
+                regulator-max-microvolt = <2900000>;
+            };
+        };
+    };
+};
+

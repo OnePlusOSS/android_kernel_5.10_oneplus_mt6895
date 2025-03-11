@@ -1,0 +1,66 @@
+/* Copyright (c) 2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+&pio {
+	typec_switch_hs_det: typec_switchs_hs_det {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO151__FUNC_GPIO151>;
+			slew-rate = <1>;  /*direction 0:in, 1:out*/
+			output-low;
+		};
+	};
+};
+
+&i2c9 {
+	aw87xxx_pa_58@58 {
+		compatible = "awinic,aw87xxx_pa_2_x_0";
+		reset-gpio = <&pio 98 0>;
+		reg = <0x58>;
+		dev_index = < 1 >;
+		status = "okay";
+	};
+
+	aw87xxx_pa_5B@5B {
+		compatible = "awinic,aw87xxx_pa_2_x_0";
+		reset-gpio = <&pio 97 0>;
+		reg = <0x5B>;
+		dev_index = < 0 >;
+		status = "okay";
+	};
+
+	dio4483: dio4483@42 {
+		 compatible = "oplus,typec-switch-i2c";
+		 reg = <0x42>;
+		 pinctrl-names = "default";
+		 pinctrl-0 = <&typec_switch_hs_det>;
+		 oplus,hs-det-gpio = <&pio 151 0>;
+		 oplus,hs-det-level = <1>;
+		 // add for supporting type-c headphone detect bypass
+		 oplus,hp-bypass = <1>;
+		 status = "okay";
+	 };
+};
+
+&sound {
+	/* this dtsi config for product's special config, AudioHal read ctl 'OPLUS_AUDIO_EXTEN_CONFIG' get the values*
+	 * 1st value --> PA type: 0:NXP Pa, 1:Awinic Pa 2:sia81xx Pa*/
+	audio_extern_config = <1>;
+	oplus,special-pa-dapm = <1>;
+};
+// add for supporting type-c headphone detect bypass
+&accdet {
+	headset-eint0-disable = <1>;
+	pull-high-impedance = <1>;
+};
+
+&mt6358codec {
+	pull-high-impedance = <1>;
+};

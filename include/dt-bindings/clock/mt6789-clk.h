@@ -335,7 +335,13 @@
 #define CLK_MM_SMI_IOMMU				20
 #define CLK_MM_DSI0_DSI_CK_DOMAIN			21
 #define CLK_MM_DISP_26M					22
-#define CLK_MM_NR_CLK					23
+
+#define CLK_SMI_INFRA				23
+#define CLK_SMI_COMMON				24
+#define CLK_SMI_GALS					25
+#define CLK_SMI_IOMMU				26
+
+#define CLK_MM_NR_CLK					27
 
 /* DISP_DSC */
 #define CLK_DISP_DSC_DSC_EN				0

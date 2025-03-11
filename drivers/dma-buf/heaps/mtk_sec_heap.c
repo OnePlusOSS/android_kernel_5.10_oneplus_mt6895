@@ -31,6 +31,8 @@
 #include "mtk_iommu.h"
 #include "iommu_pseudo.h"
 
+#include "mm_osvelte/mm-trace.h"
+
 enum sec_heap_region_type {
 	/* MM heap */
 	MM_HEAP_START,
@@ -1117,6 +1119,11 @@ static struct dma_buf *tmem_page_allocate(struct dma_heap *heap,
 			__func__, __LINE__);
 		return ERR_PTR(-ENOMEM);
 	}
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
+	mm_trace_fmt_begin("%s %zu,%zu,%lu",
+			   dma_heap_get_name(heap), sizeof(*buffer),
+			   atomic64_read(&sec_heap->total_size), len);
+#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
 	buffer->len = len;
 	buffer->heap = heap;
 	/* all page base memory set as noncached buffer */
@@ -1134,6 +1141,9 @@ static struct dma_buf *tmem_page_allocate(struct dma_heap *heap,
 		goto free_tmem;
 	}
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
+	mm_trace_fmt_end();
+#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
 	init_buffer_info(heap, buffer);
 
 	//pr_info("%s done: [%s], req_size:0x%lx, align_sz:0x%lx\n",
@@ -1148,6 +1158,9 @@ free_tmem:
 	sg_free_table(&buffer->sg_table);
 free_buffer:
 	kfree(buffer);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
+	mm_trace_fmt_end();
+#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
 	return ERR_PTR(ret);
 }
 

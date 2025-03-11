@@ -8,10 +8,21 @@
  *	Yongmyung Lee <ymhungry.lee@samsung.com>
  *	Jinyoung Choi <j-young.choi@samsung.com>
  */
-
 #ifndef _UFSHPB_H_
 #define _UFSHPB_H_
-
+/*
+ *  Enhance hpb host memory management, adjusting the available memory
+ *	size of HPB depends on the system memory water level.
+ */
+#define UFS_HPB_SHRINK
+/*
+ *  Some devices' readbuf cmd will block io too long time (>3ms).
+ *  So we do readbuf when device suspend or system screen off.
+ *  Also, this feature relies on UFS_HPB_SHRINK to manage memory.
+ */
+#ifdef  UFS_HPB_SHRINK
+#define UFS_HPB_LAZY_LOAD
+#endif
 /* hpb response UPIU macro */
 #define HPB_RSP_NONE				0x0
 #define HPB_RSP_REQ_REGION_UPDATE		0x1
@@ -22,18 +33,15 @@
 #define DEV_SENSE_SEG_LEN			0x12
 #define DEV_DES_TYPE				0x80
 #define DEV_ADDITIONAL_LEN			0x10
-
 /* hpb map & entries macro */
 #define HPB_RGN_SIZE_UNIT			512
 #define HPB_ENTRY_BLOCK_SIZE			4096
 #define HPB_ENTRY_SIZE				0x8
 #define PINNED_NOT_SET				U32_MAX
-
 /* hpb support chunk size */
 #define HPB_LEGACY_CHUNK_HIGH			1
 #define HPB_MULTI_CHUNK_LOW			7
 #define HPB_MULTI_CHUNK_HIGH			255
-
 /* hpb vender defined opcode */
 #define UFSHPB_READ				0xF8
 #define UFSHPB_READ_BUFFER			0xF9
@@ -46,19 +54,16 @@
 #define MAX_HPB_READ_ID				0x7F
 #define HPB_READ_BUFFER_CMD_LENGTH		10
 #define LU_ENABLED_HPB_FUNC			0x02
-
 #define HPB_RESET_REQ_RETRIES			10
 #define HPB_MAP_REQ_RETRIES			5
 #define HPB_REQUEUE_TIME_MS			0
-
 #define HPB_SUPPORT_VERSION			0x200
 #define HPB_SUPPORT_LEGACY_VERSION		0x100
-
+#define HPB_MAJOR_VERSION_MASK			0xFF00
 enum UFSHPB_MODE {
 	HPB_HOST_CONTROL,
 	HPB_DEVICE_CONTROL,
 };
-
 enum UFSHPB_STATE {
 	HPB_INIT = 0,
 	HPB_PRESENT = 1,
@@ -66,21 +71,21 @@ enum UFSHPB_STATE {
 	HPB_FAILED,
 	HPB_RESET,
 };
-
 enum HPB_RGN_STATE {
 	HPB_RGN_INACTIVE,
 	HPB_RGN_ACTIVE,
 	/* pinned regions are always active */
 	HPB_RGN_PINNED,
+#ifdef UFS_HPB_SHRINK
+	HPB_RGN_ISSUED,
+#endif
 };
-
 enum HPB_SRGN_STATE {
 	HPB_SRGN_UNUSED,
 	HPB_SRGN_INVALID,
 	HPB_SRGN_VALID,
 	HPB_SRGN_ISSUED,
 };
-
 /**
  * struct ufshpb_lu_info - UFSHPB logical unit related info
  * @num_blocks: the number of logical block
@@ -94,42 +99,34 @@ struct ufshpb_lu_info {
 	int num_pinned;
 	int max_active_rgns;
 };
-
 struct ufshpb_map_ctx {
 	struct page **m_page;
 	unsigned long *ppn_dirty;
 };
-
 struct ufshpb_subregion {
 	struct ufshpb_map_ctx *mctx;
 	enum HPB_SRGN_STATE srgn_state;
 	int rgn_idx;
 	int srgn_idx;
 	bool is_last;
-
 	/* subregion reads - for host mode */
 	unsigned int reads;
-
 	/* below information is used by rsp_list */
 	struct list_head list_act_srgn;
 };
-
 struct ufshpb_region {
 	struct ufshpb_lu *hpb;
 	struct ufshpb_subregion *srgn_tbl;
 	enum HPB_RGN_STATE rgn_state;
 	int rgn_idx;
 	int srgn_cnt;
-
 	/* below information is used by rsp_list */
 	struct list_head list_inact_rgn;
-
 	/* below information is used by lru */
 	struct list_head list_lru_rgn;
 	unsigned long rgn_flags;
 #define RGN_FLAG_DIRTY 0
 #define RGN_FLAG_UPDATE 1
-
 	/* region reads - for host mode */
 	spinlock_t rgn_lock;
 	unsigned int reads;
@@ -138,12 +135,10 @@ struct ufshpb_region {
 	unsigned int read_timeout_expiries;
 	struct list_head list_expired_rgn;
 };
-
 #define for_each_sub_region(rgn, i, srgn)				\
 	for ((i) = 0;							\
 	     ((i) < (rgn)->srgn_cnt) && ((srgn) = &(rgn)->srgn_tbl[i]); \
 	     (i)++)
-
 /**
  * struct ufshpb_req - HPB related request structure (write/read buffer)
  * @req: block layer request structure
@@ -178,13 +173,11 @@ struct ufshpb_req {
 		} wb;
 	};
 };
-
 struct victim_select_info {
 	struct list_head lh_lru_rgn; /* LRU list of regions */
 	int max_lru_active_cnt; /* supported hpb #region - pinned #region */
 	atomic_t active_cnt;
 };
-
 /**
  * ufshpb_params - ufs hpb parameters
  * @requeue_timeout_ms - requeue threshold of wb command (0x2)
@@ -196,10 +189,19 @@ struct victim_select_info {
  * @read_timeout_expiries - amount of allowable timeout expireis
  * @timeout_polling_interval_ms - frequency in which timeouts are checked
  * @inflight_map_req - number of inflight map requests
+ * @normalization_thld -  min reads [IOs] to trriger normalization_work
+ * @suspend_load_cnt - cnt of srgn to load When the driver goes to suspend
+ * @screenoff_load_cnt - cnt of srgn to load when the driver gets off-screen event
  */
 struct ufshpb_params {
 	unsigned int requeue_timeout_ms;
 	unsigned int activation_thld;
+#ifdef UFS_HPB_LAZY_LOAD
+	unsigned int normalization_thld;
+	unsigned int suspend_load_cnt;
+	// screenoff_load_cnt < 0 means ignore this value
+	int screenoff_load_cnt;
+#endif
 	unsigned int normalization_factor;
 	unsigned int eviction_thld_enter;
 	unsigned int eviction_thld_exit;
@@ -208,7 +210,7 @@ struct ufshpb_params {
 	unsigned int timeout_polling_interval_ms;
 	unsigned int inflight_map_req;
 };
-
+#define UFS_HPB_SHRINK_UT
 struct ufshpb_stats {
 	u64 hit_cnt;
 	u64 miss_cnt;
@@ -218,47 +220,46 @@ struct ufshpb_stats {
 	u64 map_req_cnt;
 	u64 pre_req_cnt;
 	u64 umap_req_cnt;
+#ifdef UFS_HPB_SHRINK
+	u64 mm_done_cnt;
+	u64 mm_drgn_cnt;
+	u64 hit4k_cnt;
+	u64 miss4k_cnt;
+	u64 read4k_cnt;
+	u64 read4k_total_us;
+	u64 suspend_cnt;
+#endif
 };
-
 struct ufshpb_lu {
 	int lun;
 	struct scsi_device *sdev_ufs_lu;
-
 	spinlock_t rgn_state_lock; /* for protect rgn/srgn state */
 	struct ufshpb_region *rgn_tbl;
-
 	atomic_t hpb_state;
-
 	spinlock_t rsp_list_lock;
 	struct list_head lh_act_srgn; /* hold rsp_list_lock */
 	struct list_head lh_inact_rgn; /* hold rsp_list_lock */
-
 	/* pre request information */
 	struct ufshpb_req *pre_req;
 	int num_inflight_pre_req;
 	int throttle_pre_req;
 	int num_inflight_map_req; /* hold param_lock */
 	spinlock_t param_lock;
-
 	struct list_head lh_pre_req_free;
 	int cur_read_id;
 	int pre_req_min_tr_len;
 	int pre_req_max_tr_len;
-
 	/* cached L2P map management worker */
 	struct work_struct map_work;
-
 	/* for selecting victim */
 	struct victim_select_info lru_info;
 	struct work_struct ufshpb_normalization_work;
 	struct delayed_work ufshpb_read_to_work;
 	unsigned long work_data_bits;
 #define TIMEOUT_WORK_RUNNING 0
-
 	/* pinned region information */
 	u32 lu_pinned_start;
 	u32 lu_pinned_end;
-
 	/* HPB related configuration */
 	u32 rgns_per_lu;
 	u32 srgns_per_lu;
@@ -271,21 +272,31 @@ struct ufshpb_lu {
 	u32 entries_per_srgn_mask;
 	u32 entries_per_srgn_shift;
 	u32 pages_per_srgn;
-
 	bool is_hcm;
-
 	struct ufshpb_stats stats;
 	struct ufshpb_params params;
-
 	struct kmem_cache *map_req_cache;
 	struct kmem_cache *m_page_cache;
-
 	struct list_head list_hpb_lu;
+#ifdef UFS_HPB_SHRINK
+#define HPB_MM_LV_CNT           (8)
+#define HPB_MM_LV_DEFAULT       (0)
+// HPB_MM_LV_URGENT not reserve memory
+#define HPB_MM_LV_URGENT        (4)
+// Proportion that HPB can occupy, 3 means 1/8 host memory
+#define HPB_MM_TRIGGER_FACTOR   (3)
+	int  mm_rgn_cnt[HPB_MM_LV_CNT];
+#endif
 };
-
+#ifdef UFS_HPB_SHRINK
+struct ufshpb_shrink_pkg {
+	int level;
+	unsigned long pages;
+	struct completion done;
+};
+#endif
 struct ufs_hba;
 struct ufshcd_lrb;
-
 #ifndef CONFIG_SCSI_UFS_HPB
 static int ufshpb_prep(struct ufs_hba *hba, struct ufshcd_lrb *lrbp) { return 0; }
 static void ufshpb_rsp_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp) {}
@@ -319,5 +330,5 @@ bool ufshpb_is_legacy(struct ufs_hba *hba);
 extern struct attribute_group ufs_sysfs_hpb_stat_group;
 extern struct attribute_group ufs_sysfs_hpb_param_group;
 #endif
-
 #endif /* End of Header */
+

@@ -137,6 +137,9 @@ enum scp_reserve_mem_id_t {
 	SENS_DEBUG_MEM_ID,
 	SENS_CUSTOM_W_MEM_ID,
 	SENS_CUSTOM_R_MEM_ID,
+//#ifdef OPLUS_FEATURE_SENSOR
+	SENS_FB_MEM_ID,
+//#endif
 	SCP_SPK_MEM_ID,
 	NUMS_MEM_ID,
 };

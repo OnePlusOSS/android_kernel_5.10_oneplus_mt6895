@@ -31,6 +31,7 @@ obj-$(CONFIG_MTK_LENS)    += mainaf.o
 
 mainaf-y  += main_lens.o
 mainaf-y  += common/fp5510e2af/FP5510E2AF.o
+mainaf-y  += common/fp5513e4af/FP5513E4AF.o
 mainaf-y  += common/bu6424af/BU6424AF.o
 mainaf-y  += common/bu6429af/BU6429AF.o
 mainaf-y  += common/bu64748af/bu64748_function.o
@@ -67,4 +68,7 @@ mainaf-y  += common/bu63169af/OIS_func.o
 mainaf-y  += common/bu63169af/OIS_main.o
 mainaf-y  += common/bu63169af/OIS_user.o
 mainaf-y  += common/bu64253gwzaf/BU64253GWZAF.o
-
+mainaf-y  += common/aw8601xaf/AW8601xAF.o
+mainaf-y  += common/pe916c6haf/PE916C6HAF.o
+mainaf-y  += common/gt9769af/GT9769AF.o
+mainaf-y  += common/gt9772af_24267/GT9772AF_24267.o

@@ -220,6 +220,7 @@ struct mtk_base_afe_memif {
 #if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
 	int use_scp_share_mem;
 #endif
+	int fast_palyback;
 };
 
 struct mtk_base_afe_irq {

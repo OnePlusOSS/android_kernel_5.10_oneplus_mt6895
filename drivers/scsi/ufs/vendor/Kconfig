@@ -36,6 +36,13 @@ config UFSTW
 	help
 	  UFS TW Feature Enable
 
+config UFSTW_DEBUG
+	bool "TW Debug Log Enable"
+	depends on SCSI_UFSHCD && UFSFEATURE && UFSTW
+	default n
+	help
+	  UFS TW Debug Enable (dmesg log[=if set debug sysfs] & BLK_TRACE msg)
+
 config UFSTW_IGNORE_GUARANTEE_BIT
 	bool "Ignore UFS Turbo Write Life Time Guarantee bit for POC"
 	default n
@@ -50,6 +57,13 @@ config UFSTW_BOOT_ENABLED
 	help
 	  fTurboWriteEn and fTurboWriteBufferFlushDuringHibnerEnter flags
 	  are enabled at boot time.
+
+config UFSTW_RESTORE_WB
+	bool "Restore Write Booster for unsupported TW version"
+	default y
+	depends on SCSI_UFSHCD && UFSFEATURE && UFSTW
+	help
+	  Restoring Write Booster when TW initialization is failed.
 
 config UFSHID
 	bool "UFS Host Initiated Defrag support"
@@ -67,12 +81,12 @@ config UFSHID_POC
 	  3. set flag bDefragOperation
 	  4. debug msg enable (default : disable)
 
-config UFSHID_DEBUG
-	bool "HID Debug Enable"
+config UFSSID
+	bool "UFS Stream ID support"
 	depends on SCSI_UFSHCD && UFSFEATURE && UFSHID
-	default n
 	help
-	UFS HID Debug Enable (for check io stat during trigger)
+	  Enable Stream ID Feature for Streamed-HID
+
 
 config UFSRINGBUF
 	bool "UFS RingBuffer support"

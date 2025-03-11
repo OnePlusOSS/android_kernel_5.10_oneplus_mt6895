@@ -11,6 +11,26 @@
 #include <linux/types.h>
 #include <linux/tracepoint.h>
 
+#define LB_FAIL		(0x01)
+#define LB_SYNC		(0x02)
+#define LB_ZERO_UTIL	(0x04)
+#define LB_PREV		(0x08)
+#define LB_LATENCY_SENSITIVE_BEST_IDLE_CPU	(0x10)
+#define LB_LATENCY_SENSITIVE_IDLE_MAX_SPARE_CPU (0x20)
+#define LB_LATENCY_SENSITIVE_MAX_SPARE_CPU	(0x40)
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#define LB_UX_PREFER	(0x80)
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+#define LB_FBT_PREFER	(0x90)
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+#define LB_PIPELINE     (0xA0)
+#endif
+
+#define LB_BEST_ENERGY_CPU	(0x100)
+#define LB_MAX_SPARE_CPU	(0x200)
+
 #ifdef CREATE_TRACE_POINTS
 int sched_cgroup_state(struct task_struct *p, int subsys_id)
 {

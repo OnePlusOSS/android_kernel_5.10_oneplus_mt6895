@@ -24,7 +24,18 @@ extern int AK7371AF_Release(struct inode *a_pstInode, struct file *a_pstFile);
 extern int AK7371AF_PowerDown(struct i2c_client *pstAF_I2Cclient,
 				int *pAF_Opened);
 extern int AK7371AF_GetFileName(unsigned char *pFileName);
-
+//sonic start
+#define AW8601xAF_SetI2Cclient AW8601xAF_SetI2Cclient_Main
+#define AW8601xAF_Ioctl AW8601xAF_Ioctl_Main
+#define AW8601xAF_Release AW8601xAF_Release_Main
+#define AW8601xAF_GetFileName AW8601xAF_GetFileName_Main
+extern int AW8601xAF_SetI2Cclient(struct i2c_client *pstAF_I2Cclient,
+				 spinlock_t *pAF_SpinLock, int *pAF_Opened);
+extern long AW8601xAF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
+			   unsigned long a_u4Param);
+extern int AW8601xAF_Release(struct inode *a_pstInode, struct file *a_pstFile);
+extern int AW8601xAF_GetFileName(unsigned char *pFileName);
+//sonic end
 #define BU6424AF_SetI2Cclient BU6424AF_SetI2Cclient_Main
 #define BU6424AF_Ioctl BU6424AF_Ioctl_Main
 #define BU6424AF_Release BU6424AF_Release_Main
@@ -142,6 +153,18 @@ extern long FP5510E2AF_Ioctl(struct file *a_pstFile,
 extern int FP5510E2AF_Release(struct inode *a_pstInode,
 	struct file *a_pstFile);
 extern int FP5510E2AF_GetFileName(unsigned char *pFileName);
+
+#define FP5513E4AF_SetI2Cclient FP5513E4AF_SetI2Cclient_Main
+#define FP5513E4AF_Ioctl FP5513E4AF_Ioctl_Main
+#define FP5513E4AF_Release FP5513E4AF_Release_Main
+#define FP5513E4AF_GetFileName FP5513E4AF_GetFileName_Main
+extern int FP5513E4AF_SetI2Cclient(struct i2c_client *pstAF_I2Cclient,
+	spinlock_t *pAF_SpinLock, int *pAF_Opened);
+extern long FP5513E4AF_Ioctl(struct file *a_pstFile,
+	unsigned int a_u4Command, unsigned long a_u4Param);
+extern int FP5513E4AF_Release(struct inode *a_pstInode,
+	struct file *a_pstFile);
+extern int FP5513E4AF_GetFileName(unsigned char *pFileName);
 
 #define DW9814AF_SetI2Cclient DW9814AF_SetI2Cclient_Main
 #define DW9814AF_Ioctl DW9814AF_Ioctl_Main
@@ -373,4 +396,42 @@ extern long WV511AAF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
 extern int WV511AAF_Release(struct inode *a_pstInode, struct file *a_pstFile);
 extern int WV511AAF_GetFileName(unsigned char *pFileName);
 
+#define PE916C6HAF_SetI2Cclient PE916C6HAF_SetI2Cclient_Main
+#define PE916C6HAF_Ioctl PE916C6HAF_Ioctl_Main
+#define PE916C6HAF_Release PE916C6HAF_Release_Main
+#define PE916C6HAF_GetFileName PE916C6HAF_GetFileName_Main
+extern int PE916C6HAF_SetI2Cclient(struct i2c_client *pstAF_I2Cclient,
+				 spinlock_t *pAF_SpinLock, int *pAF_Opened);
+extern long PE916C6HAF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
+			   unsigned long a_u4Param);
+extern int PE916C6HAF_Release(struct inode *a_pstInode, struct file *a_pstFile);
+extern int PE916C6HAF_GetFileName(unsigned char *pFileName);
+
+#define GT9769AF_SetI2Cclient GT9769AF_SetI2Cclient_Main
+#define GT9769AF_Ioctl GT9769AF_Ioctl_Main
+#define GT9769AF_Release GT9769AF_Release_Main
+#define GT9769AF_PowerDown GT9769AF_PowerDown_Main
+#define GT9769AF_GetFileName GT9769AF_GetFileName_Main
+extern int GT9769AF_SetI2Cclient(struct i2c_client *pstAF_I2Cclient,
+				spinlock_t *pAF_SpinLock, int *pAF_Opened);
+extern long GT9769AF_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
+				unsigned long a_u4Param);
+extern int GT9769AF_Release(struct inode *a_pstInode, struct file *a_pstFile);
+extern int GT9769AF_PowerDown(struct i2c_client *pstAF_I2Cclient,
+				int *pAF_Opened);
+extern int GT9769AF_GetFileName(unsigned char *pFileName);
+
+#define GT9772AF_24267_SetI2Cclient GT9772AF_24267_SetI2Cclient_Main
+#define GT9772AF_24267_Ioctl GT9772AF_24267_Ioctl_Main
+#define GT9772AF_24267_Release GT9772AF_24267_Release_Main
+#define GT9772AF_24267_PowerDown GT9772AF_24267_PowerDown_Main
+#define GT9772AF_24267_GetFileName GT9772AF_24267_GetFileName_Main
+extern int GT9772AF_24267_SetI2Cclient(struct i2c_client *pstAF_I2Cclient,
+                                spinlock_t *pAF_SpinLock, int *pAF_Opened);
+extern long GT9772AF_24267_Ioctl(struct file *a_pstFile, unsigned int a_u4Command,
+                                unsigned long a_u4Param);
+extern int GT9772AF_24267_Release(struct inode *a_pstInode, struct file *a_pstFile);
+extern int GT9772AF_24267_PowerDown(struct i2c_client *pstAF_I2Cclient,
+                                int *pAF_Opened);
+extern int GT9772AF_24267_GetFileName(unsigned char *pFileName);
 #endif

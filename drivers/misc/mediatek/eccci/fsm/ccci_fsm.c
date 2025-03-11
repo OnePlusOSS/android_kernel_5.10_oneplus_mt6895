@@ -606,6 +606,9 @@ static void fsm_routine_wdt(struct ccci_fsm_ctl *ctl,
 			CCCI_MD_MSG_RESET_REQUEST, 0);
 		fsm_monitor_send_message(GET_OTHER_MD_ID(ctl->md_id),
 			CCCI_MD_MSG_RESET_REQUEST, 0);
+	//#ifdef OPLUS_FEATURE_MDRST
+		inject_md_status_event(ctl->md_id, MD_STA_EV_RESET_REQUEST, "WDT_RESET");
+	//#endif
 	}
 	fsm_finish_command(ctl, cmd, 1);
 }

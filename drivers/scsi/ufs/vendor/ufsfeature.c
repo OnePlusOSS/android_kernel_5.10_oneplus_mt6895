@@ -94,6 +94,9 @@ static int ufsf_read_dev_desc(struct ufsf_feature *ufsf, u8 selector)
 #if defined(CONFIG_UFSRINGBUF)
 	ufsringbuf_get_dev_info(ufsf, desc_buf);
 #endif
+#if defined(CONFIG_UFSSID)
+	ufssid_get_dev_info(ufsf, desc_buf);
+#endif
 	return 0;
 }
 
@@ -115,6 +118,10 @@ static int ufsf_read_geo_desc(struct ufsf_feature *ufsf, u8 selector)
 #if defined(CONFIG_UFSTW)
 	if (ufstw_get_state(ufsf) == TW_NEED_INIT)
 		ufstw_get_geo_info(ufsf, geo_buf);
+#endif
+#if defined(CONFIG_UFSHID)
+	if (ufshid_get_state(ufsf) == HID_NEED_INIT)
+		ufshid_get_geo_info(ufsf, geo_buf);
 #endif
 #if defined(CONFIG_UFSRINGBUF)
 	if (ufsringbuf_get_state(ufsf) == RINGBUF_NEED_INIT)
@@ -286,8 +293,21 @@ int ufsf_query_ioctl(struct ufsf_feature *ufsf, int lun, void __user *buffer,
 	INFO_MSG("op %u idn %u sel %u size %u(0x%X)", opcode, ioctl_data->idn,
 		 selector, ioctl_data->buf_size, ioctl_data->buf_size);
 
-	buf_len = (ioctl_data->idn == QUERY_DESC_IDN_STRING) ?
-		IOCTL_DEV_CTX_MAX_SIZE : QUERY_DESC_MAX_SIZE;
+	switch (ioctl_data->idn) {
+	case QUERY_DESC_IDN_STRING:
+		buf_len = IOCTL_DEV_CTX_MAX_SIZE;
+		break;
+
+#if defined(CONFIG_UFSHID)
+	case QUERY_ATTR_IDN_HID_OPERATION:
+	case QUERY_ATTR_IDN_HID_FRAG_LEVEL:
+		buf_len = ioctl_data->buf_size;
+		break;
+#endif
+	default:
+		buf_len = QUERY_DESC_MAX_SIZE;
+		break;
+	}
 
 	kernel_buf = kzalloc(buf_len, GFP_KERNEL);
 	if (!kernel_buf) {
@@ -341,6 +361,55 @@ int ufsf_query_ioctl(struct ufsf_feature *ufsf, int lun, void __user *buffer,
 			goto out_release_mem;
 		}
 		break;
+
+	case UPIU_QUERY_OPCODE_WRITE_ATTR:
+		switch (ioctl_data->idn) {
+#if defined(CONFIG_UFSHID)
+		case QUERY_ATTR_IDN_HID_OPERATION:
+			err = copy_from_user(kernel_buf, buffer +
+				     sizeof(struct ufs_ioctl_query_data),
+				     ioctl_data->buf_size);
+			if (err)
+				goto out_release_mem;
+
+			err = ufshid_send_file_info(ufsf->hid_dev, lun,
+						    kernel_buf, buf_len,
+						    ioctl_data->idn);
+			if (err)
+				ERR_MSG("HID LBA Trigger fail. (%d)", err);
+
+			goto out_release_mem;
+#endif
+		default:
+			break;
+		}
+		break;
+
+	case UPIU_QUERY_OPCODE_READ_ATTR:
+		switch (ioctl_data->idn) {
+#if defined(CONFIG_UFSHID)
+		case QUERY_ATTR_IDN_HID_FRAG_LEVEL:
+			err = copy_from_user(kernel_buf, buffer +
+				     sizeof(struct ufs_ioctl_query_data),
+				     ioctl_data->buf_size);
+			if (err)
+				goto out_release_mem;
+
+			err = ufshid_send_file_info(ufsf->hid_dev, lun,
+						    kernel_buf, buf_len,
+						    ioctl_data->idn);
+			if (err) {
+				ERR_MSG("HID LBA Trigger fail. (%d)", err);
+				goto out_release_mem;
+			}
+
+			goto copy_buffer;
+#endif
+		default:
+			break;
+		}
+		break;
+
 	default:
 		ERR_MSG("invalid opcode %d", opcode);
 		err = -EINVAL;
@@ -356,7 +425,8 @@ int ufsf_query_ioctl(struct ufsf_feature *ufsf, int lun, void __user *buffer,
 		goto out_release_mem;
 
 copy_buffer:
-	if (opcode == UPIU_QUERY_OPCODE_READ_DESC) {
+	if (opcode == UPIU_QUERY_OPCODE_READ_DESC ||
+	    opcode == UPIU_QUERY_OPCODE_READ_ATTR) {
 		err = copy_to_user(buffer, ioctl_data,
 				   sizeof(struct ufs_ioctl_query_data));
 		if (err)
@@ -466,63 +536,22 @@ inline int ufsf_prep_fn(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp)
 	    ufsringbuf_get_state(ufsf) == RINGBUF_RESET)
 		ufsringbuf_prep_fn(ufsf, lrbp);
 #endif
+#if defined(CONFIG_UFSSID)
+	if (ufsf->sid_dev)
+		ufssid_prep_fn(ufsf, lrbp);
+#endif
 
 	return ret;
-}
-
-inline void ufsf_prepare_reset_lu(struct ufsf_feature *ufsf)
-{
-#if defined(CONFIG_UFSTW)
-	INFO_MSG("run reset_lu.. tw_state(%d) -> TW_PREPARE_RESET",
-		 ufstw_get_state(ufsf));
-	ufstw_set_state(ufsf, TW_PREPARE_RESET);
-#endif
 }
 
 inline void ufsf_reset_lu(struct ufsf_feature *ufsf)
 {
 #if defined(CONFIG_UFSTW)
-	ufsf->reset_lu_pos = ufsf->hba->ufs_stats.event[UFS_EVT_DEV_RESET].pos;
-	schedule_work(&ufsf->reset_lu_work);
-#endif
-}
-
-inline void ufsf_reset_lu_handler(struct work_struct *work)
-{
-#if defined(CONFIG_UFSTW)
-	struct ufsf_feature *ufsf;
-	int retry;
-
-	ufsf = container_of(work, struct ufsf_feature, reset_lu_work);
-
-	retry = ufsf->hba->nutrs;
-
-	if (ufstw_get_state(ufsf) != TW_PREPARE_RESET)
-		return;
-
-	// check pos diff
-	while (ufsf->reset_lu_pos == ufsf->hba->ufs_stats.event[UFS_EVT_DEV_RESET].pos) {
-		if (--retry < 0)
-			break;
-
-		// In ufshcd_clear_cmd(), it waits 1s for each doorbell.
-		msleep(1000);
+	INFO_MSG("run reset_lu.. tw_state(%d)", ufstw_get_state(ufsf));
+	if (ufstw_get_state(ufsf) == TW_PRESENT) {
+		ufstw_set_state(ufsf, TW_RESET);
+		ufstw_reset(ufsf);
 	}
-
-	if ((ufsf->reset_lu_pos == ufsf->hba->ufs_stats.event[UFS_EVT_DEV_RESET].pos) ||
-	    (ufsf->hba->ufs_stats.event[UFS_EVT_DEV_RESET].val[ufsf->reset_lu_pos] != 0)) {
-		/*
-		 * TW is not reset in this LU
-		 * We just restore its state as PRESENT
-		*/
-		ufstw_set_state(ufsf, TW_PRESENT);
-		return;
-	}
-
-	INFO_MSG("run reset_lu.. tw_state(%d) -> TW_RESET",
-		 ufstw_get_state(ufsf));
-	ufstw_set_state(ufsf, TW_RESET);
-	ufstw_reset(ufsf);
 #endif
 }
 
@@ -603,6 +632,10 @@ inline void ufsf_init(struct ufsf_feature *ufsf)
 	if (ufsringbuf_get_state(ufsf) == RINGBUF_NEED_INIT)
 		ufsringbuf_init(ufsf);
 #endif
+#if defined(CONFIG_UFSSID)
+	if (ufsf->sid_dev)
+		ufssid_init(ufsf);
+#endif
 
 	ufsf->check_init = true;
 }
@@ -651,6 +684,10 @@ inline void ufsf_remove(struct ufsf_feature *ufsf)
 #if defined(CONFIG_UFSRINGBUF)
 	if (ufsringbuf_get_state(ufsf) == RINGBUF_PRESENT)
 		ufsringbuf_remove(ufsf);
+#endif
+#if defined(CONFIG_UFSSID)
+	if (ufsf->sid_dev)
+		ufssid_remove(ufsf);
 #endif
 }
 
@@ -710,18 +747,6 @@ static void ufsf_reset_wait_work_handler(struct work_struct *work)
 		ufsf_reset(ufsf);
 }
 
-#if defined(CONFIG_UFSHID)
-static void ufsf_on_idle(struct work_struct *work)
-{
-	struct ufsf_feature *ufsf;
-
-	ufsf = container_of(work, struct ufsf_feature, on_idle_work);
-	if (ufshid_get_state(ufsf) == HID_PRESENT &&
-	    !ufsf->hba->outstanding_reqs)
-		ufshid_on_idle(ufsf);
-}
-#endif
-
 inline void ufsf_set_init_state(struct ufsf_feature *ufsf)
 {
 	ufsf->slave_conf_cnt = 0;
@@ -730,7 +755,6 @@ inline void ufsf_set_init_state(struct ufsf_feature *ufsf)
 	mutex_init(&ufsf->device_check_lock);
 	INIT_WORK(&ufsf->device_check_work, ufsf_device_check_work_handler);
 	INIT_WORK(&ufsf->reset_wait_work, ufsf_reset_wait_work_handler);
-	INIT_WORK(&ufsf->reset_lu_work, ufsf_reset_lu_handler);
 
 #if defined(CONFIG_UFSSHPB)
 	ufsshpb_set_state(ufsf, HPB_NEED_INIT);
@@ -741,7 +765,6 @@ inline void ufsf_set_init_state(struct ufsf_feature *ufsf)
 	ufstw_set_state(ufsf, TW_NEED_INIT);
 #endif
 #if defined(CONFIG_UFSHID)
-	INIT_WORK(&ufsf->on_idle_work, ufsf_on_idle);
 	ufshid_set_state(ufsf, HID_NEED_INIT);
 #endif
 #if defined(CONFIG_UFSRINGBUF)
@@ -749,7 +772,7 @@ inline void ufsf_set_init_state(struct ufsf_feature *ufsf)
 #endif
 }
 
-inline void ufsf_suspend(struct ufsf_feature *ufsf)
+inline void ufsf_suspend(struct ufsf_feature *ufsf, bool is_system_pm)
 {
 	/*
 	 * Wait completion of reset_wait_work.
@@ -775,7 +798,7 @@ inline void ufsf_suspend(struct ufsf_feature *ufsf)
 #endif
 #if defined(CONFIG_UFSHID)
 	if (ufshid_get_state(ufsf) == HID_PRESENT)
-		ufshid_suspend(ufsf);
+		ufshid_suspend(ufsf, is_system_pm);
 #endif
 }
 
@@ -796,7 +819,7 @@ inline void ufsf_resume(struct ufsf_feature *ufsf, bool is_link_off)
 #endif
 #if defined(CONFIG_UFSHID)
 	if (ufshid_get_state(ufsf) == HID_SUSPEND)
-		ufshid_resume(ufsf);
+		ufshid_resume(ufsf, is_link_off);
 #endif
 #if defined(CONFIG_UFSRINGBUF)
 	if (ufsringbuf_get_state(ufsf) == RINGBUF_PRESENT)
@@ -829,21 +852,6 @@ inline void ufsf_hpb_noti_rb(struct ufsf_feature *ufsf, struct ufshcd_lrb *lrbp)
 #else
 inline void ufsf_hpb_noti_rb(struct ufsf_feature *ufsf,
 			     struct ufshcd_lrb *lrbp) {}
-#endif
-
-/*
- * Wrapper functions for ufshid.
- */
-#if defined(CONFIG_UFSHID) && defined(CONFIG_UFSHID_DEBUG)
-inline void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf,
-				 struct ufshcd_lrb *lrbp)
-{
-	if (ufshid_get_state(ufsf) == HID_PRESENT)
-		ufshid_acc_io_stat_during_trigger(ufsf, lrbp);
-}
-#else
-inline void ufsf_hid_acc_io_stat(struct ufsf_feature *ufsf,
-				 struct ufshcd_lrb *lrbp) {}
 #endif
 
 MODULE_LICENSE("GPL v2");

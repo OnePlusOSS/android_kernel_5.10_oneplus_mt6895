@@ -10,7 +10,6 @@
 #include <linux/pm_runtime.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
-
 #include "../common/mtk-afe-platform-driver.h"
 #include "mt6789-afe-common.h"
 #include "mt6789-afe-clk.h"
@@ -22,6 +21,38 @@
 #endif
 
 #include "../common/mtk-sp-spk-amp.h"
+#if IS_ENABLED(CONFIG_SIA_PA_ALGO)
+#include "../../codecs/audio/sia81xx/sipa_aux_dev_if.h"
+#endif
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+#include "../../codecs/audio/oplus_speaker_manager/oplus_speaker_manager_platform.h"
+#include "../../codecs/audio/oplus_speaker_manager/oplus_speaker_manager_codec.h"
+#endif /*CONFIG_SND_SOC_OPLUS_PA_MANAGER*/
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb_fatal_delay
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
+#if IS_ENABLED(CONFIG_SND_SMARTPA_AW883XX)
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+#endif
+
+#if IS_ENABLED(CONFIG_SND_SMARTPA_FS18XX)
+#ifndef OPLUS_ARCH_EXTENDS
+#define OPLUS_ARCH_EXTENDS
+#endif
+#endif
+
+#ifdef OPLUS_ARCH_EXTENDS
+void extend_set_smartpa_type(int smartpa_type);
+extern void extend_codec_i2s_be_dailinks(struct snd_soc_dai_link *dailink, size_t size);
+#endif
 
 /*
  * if need additional control for the ext spk amp that is connected
@@ -29,6 +60,9 @@
  * mt6789_mt6366_spk_amp_event()
  */
 #define EXT_SPK_AMP_W_NAME "Ext_Speaker_Amp"
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+#define EXT_RCV_AMP_W_NAME "Ext_Reciver_Amp"
+#endif
 
 static const char *const mt6789_spk_type_str[] = {MTK_SPK_NOT_SMARTPA_STR,
 						  MTK_SPK_RICHTEK_RT5509_STR,
@@ -79,6 +113,72 @@ static int mt6789_spk_i2s_in_type_get(struct snd_kcontrol *kcontrol,
 	ucontrol->value.integer.value[0] = idx;
 	return 0;
 }
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+//#ifdef OPLUS_ARCH_EXTENDS
+/* 2024/5/28, add for dual PA special dapm handle to resolve pop sound when PA closing */
+static bool need_special_dapm;
+//#endif
+static int rcv_amp_mode;
+static const char *rcv_amp_type_str[] = {"SPEAKER_MODE", "RECIEVER_MODE"};
+static const struct soc_enum rcv_amp_type_enum =
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(rcv_amp_type_str), rcv_amp_type_str);
+
+static int mt6789_rcv_amp_mode_get(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	pr_info("%s() = %d\n", __func__, rcv_amp_mode);
+	ucontrol->value.integer.value[0] = rcv_amp_mode;
+	return 0;
+}
+
+static int mt6789_rcv_amp_mode_set(struct snd_kcontrol *kcontrol,
+				   struct snd_ctl_elem_value *ucontrol)
+{
+	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
+
+	if (ucontrol->value.enumerated.item[0] >= e->items)
+		return -EINVAL;
+
+	rcv_amp_mode = ucontrol->value.integer.value[0];
+	pr_info("%s() = %d\n", __func__, rcv_amp_mode);
+	return 0;
+}
+
+static int mt6789_mt6366_rcv_amp_event(struct snd_soc_dapm_widget *w,
+					struct snd_kcontrol *kcontrol,
+					int event)
+{
+	struct snd_soc_dapm_context *dapm = w->dapm;
+	struct snd_soc_card *card = dapm->card;
+
+	dev_info(card->dev, "%s(), event %d\n", __func__, event);
+
+	switch (event) {
+	case SND_SOC_DAPM_POST_PMU:
+		/* rcv amp on control */
+		if(rcv_amp_mode == 1)
+		{
+			oplus_ext_amp_recv_l_enable(true);
+		} else {
+			oplus_ext_amp_l_enable(true);
+		}
+		break;
+	case SND_SOC_DAPM_PRE_PMD:
+		/* rcv amp off control */
+		if(rcv_amp_mode == 1)
+		{
+			oplus_ext_amp_recv_l_enable(false);
+		} else {
+			oplus_ext_amp_l_enable(false);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+};
+#endif  /*CONFIG_SND_SOC_OPLUS_PA_MANAGER*/
 
 static int mt6789_mt6366_spk_amp_event(struct snd_soc_dapm_widget *w,
 					struct snd_kcontrol *kcontrol,
@@ -92,9 +192,25 @@ static int mt6789_mt6366_spk_amp_event(struct snd_soc_dapm_widget *w,
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
 		/* spk amp on control */
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+		oplus_ext_amp_r_enable(true);
+#endif  /*CONFIG_SND_SOC_OPLUS_PA_MANAGER*/
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		/* spk amp off control */
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+		//#ifdef OPLUS_ARCH_EXTENDS
+		/* 2024/5/28, add for dual PA special dapm handle to resolve pop sound when PA closing */
+		if (need_special_dapm) {
+			if(rcv_amp_mode == 1) {
+				oplus_ext_amp_recv_l_enable(false);
+			} else {
+				oplus_ext_amp_l_enable(false);
+			}
+		}
+		//#endif
+		oplus_ext_amp_r_enable(false);
+#endif  /*CONFIG_SND_SOC_OPLUS_PA_MANAGER*/
 		break;
 	default:
 		break;
@@ -102,25 +218,52 @@ static int mt6789_mt6366_spk_amp_event(struct snd_soc_dapm_widget *w,
 
 	return 0;
 };
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+/* add for audiohal feedback */
+#define HAL_FEEDBACK_MAX_BYTES         (256)
+extern int hal_feedback_config_get(struct snd_kcontrol *kcontrol,
+			unsigned int __user *bytes,
+			unsigned int size);
+extern int hal_feedback_config_set(struct snd_kcontrol *kcontrol,
+			const unsigned int __user *bytes,
+			unsigned int size);
+#endif
 
 static const struct snd_soc_dapm_widget mt6789_mt6366_widgets[] = {
 	SND_SOC_DAPM_SPK(EXT_SPK_AMP_W_NAME, mt6789_mt6366_spk_amp_event),
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+	SND_SOC_DAPM_SPK(EXT_RCV_AMP_W_NAME, mt6789_mt6366_rcv_amp_event),
+#endif
 };
 
 static const struct snd_soc_dapm_route mt6789_mt6366_routes[] = {
 	{EXT_SPK_AMP_W_NAME, NULL, "LINEOUT L"},
-	{EXT_SPK_AMP_W_NAME, NULL, "Headphone L Ext Spk Amp"},
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+	{EXT_RCV_AMP_W_NAME, NULL, "Receiver"},
+	{EXT_RCV_AMP_W_NAME, NULL, "Headphone L Ext Spk Amp"},
+#endif
 	{EXT_SPK_AMP_W_NAME, NULL, "Headphone R Ext Spk Amp"},
 };
 
 static const struct snd_kcontrol_new mt6789_mt6366_controls[] = {
 	SOC_DAPM_PIN_SWITCH(EXT_SPK_AMP_W_NAME),
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+	SOC_DAPM_PIN_SWITCH(EXT_RCV_AMP_W_NAME),
+	SOC_ENUM_EXT("RCV_AMP_MODE", rcv_amp_type_enum,
+		     mt6789_rcv_amp_mode_get, mt6789_rcv_amp_mode_set),
+#endif
 	SOC_ENUM_EXT("MTK_SPK_TYPE_GET", mt6789_spk_type_enum[0],
 		     mt6789_spk_type_get, NULL),
 	SOC_ENUM_EXT("MTK_SPK_I2S_OUT_TYPE_GET", mt6789_spk_type_enum[1],
 		     mt6789_spk_i2s_out_type_get, NULL),
 	SOC_ENUM_EXT("MTK_SPK_I2S_IN_TYPE_GET", mt6789_spk_type_enum[1],
 		     mt6789_spk_i2s_in_type_get, NULL),
+	#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	/* add for audiohal feedback */
+	SND_SOC_BYTES_TLV("HAL FEEDBACK",
+			  HAL_FEEDBACK_MAX_BYTES,
+			  hal_feedback_config_get, hal_feedback_config_set),
+	#endif
 };
 
 /*
@@ -220,9 +363,15 @@ static int mt6789_mt6366_mtkaif_calibration(struct snd_soc_pcm_runtime *rtd)
 
 			/* handle if never test done */
 			if (++counter > 10000) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+				dev_err_not_fb(afe->dev, "%s(), test fail, cycle_1 %d, cycle_2 %d, monitor 0x%x\n",
+					__func__,
+					cycle_1, cycle_2, monitor);
+#else
 				dev_err(afe->dev, "%s(), test fail, cycle_1 %d, cycle_2 %d, monitor 0x%x\n",
 					__func__,
 					cycle_1, cycle_2, monitor);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 				mtkaif_calib_ok = false;
 				break;
 			}
@@ -315,6 +464,9 @@ static int mt6789_mt6366_init(struct snd_soc_pcm_runtime *rtd)
 
 	/* disable ext amp connection */
 	snd_soc_dapm_disable_pin(dapm, EXT_SPK_AMP_W_NAME);
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+	snd_soc_dapm_disable_pin(dapm, EXT_RCV_AMP_W_NAME);
+#endif
 #if IS_ENABLED(CONFIG_SND_SOC_MT6366_ACCDET)
 	mt6358_accdet_init(codec_component, rtd->card);
 #endif
@@ -1118,6 +1270,10 @@ static int mt6789_mt6366_dev_probe(struct platform_device *pdev)
 	struct snd_soc_card *card = &mt6789_mt6366_soc_card;
 	struct device_node *platform_node, *spk_node;
 	int ret, i;
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+	/* 2024/5/28, add for dual PA special dapm handle to resolve pop sound when PA closing */
+	int special_dapm_status = 0;
+#endif
 	struct snd_soc_dai_link *dai_link;
 #if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
 	struct device_node *scp_audio_node;
@@ -1134,6 +1290,19 @@ static int mt6789_mt6366_dev_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
+#if IS_ENABLED(CONFIG_SND_SOC_OPLUS_PA_MANAGER)
+	/* 2024/5/28, add for dual PA special dapm handle to resolve pop sound when PA closing */
+	ret = of_property_read_u32(pdev->dev.of_node,
+			"oplus,special-pa-dapm", &special_dapm_status);
+	if (ret) {
+		dev_info(&pdev->dev, "%s() read prop special-pa-dapm fail\n", __func__);
+		need_special_dapm = false;
+	} else {
+		dev_info(&pdev->dev, "%s() read prop special-pa-dapm %d\n", __func__, special_dapm_status);
+		need_special_dapm = special_dapm_status;
+	}
+#endif
+
 	/* get platform node */
 	platform_node = of_parse_phandle(pdev->dev.of_node,
 					 "mediatek,platform", 0);
@@ -1143,18 +1312,33 @@ static int mt6789_mt6366_dev_probe(struct platform_device *pdev)
 	}
 
 	/* get speaker codec node */
-	spk_node = of_get_child_by_name(pdev->dev.of_node,
-					"mediatek,speaker-codec");
+	if (mtk_spk_get_type() == MTK_SPK_AWINIC_AW883XX &&
+	    of_find_property(pdev->dev.of_node, "mediatek,speaker-codec-aw", NULL)) {
+		spk_node = of_get_child_by_name(pdev->dev.of_node, "mediatek,speaker-codec-aw");
+		pr_info("%s() use awinic", __func__);
+	} else if (mtk_spk_get_type() == MTK_SPK_FOURSEMI_FS18XX &&
+		   of_find_property(pdev->dev.of_node, "mediatek,speaker-codec-fs", NULL)) {
+		spk_node = of_get_child_by_name(pdev->dev.of_node, "mediatek,speaker-codec-fs");
+		pr_info("%s() use foursemi", __func__);
+	} else {
+		spk_node = of_get_child_by_name(pdev->dev.of_node, "mediatek,speaker-codec");
+		pr_info("%s() use deault", __func__);
+	}
 	if (!spk_node) {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_err_not_fb(&pdev->dev,
+			"spk_node of_get_child_by_name fail\n");
+#else
 		dev_err(&pdev->dev,
 			"spk_node of_get_child_by_name fail\n");
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 		return -EINVAL;
 	}
 
 	for_each_card_prelinks(card, i, dai_link) {
 		if (!dai_link->platforms->name)
 			dai_link->platforms->of_node = platform_node;
-
+#ifndef OPLUS_ARCH_EXTENDS
 		if (!strcmp(dai_link->name, "Speaker Codec")) {
 			ret = snd_soc_of_get_dai_link_codecs(
 						&pdev->dev, spk_node, dai_link);
@@ -1172,14 +1356,19 @@ static int mt6789_mt6366_dev_probe(struct platform_device *pdev)
 				return -EINVAL;
 			}
 		}
+#endif
 	}
+#ifdef OPLUS_ARCH_EXTENDS
+	extend_set_smartpa_type(mtk_spk_get_type());
+	extend_codec_i2s_be_dailinks(mt6789_mt6366_dai_links, ARRAY_SIZE(mt6789_mt6366_dai_links));
+#endif
 
 #if IS_ENABLED(CONFIG_MTK_SCP_AUDIO)
 	/* get scp audio node */
 	scp_audio_node = of_parse_phandle(pdev->dev.of_node,
 					 "mediatek,scp-audio", 0);
 	if (scp_audio_node) {
-		dev_err(&pdev->dev, "got scp audio node\n");
+		dev_info(&pdev->dev, "got scp audio node\n");
 
 		ret = of_property_read_u32(scp_audio_node,
 					   "scp_spk_process_enable",
@@ -1197,11 +1386,27 @@ static int mt6789_mt6366_dev_probe(struct platform_device *pdev)
 #endif
 
 	card->dev = &pdev->dev;
-
+#if IS_ENABLED(CONFIG_SIA_PA_ALGO)
+	soc_aux_init_only_sia81xx(pdev, card);
+#endif
 	ret = devm_snd_soc_register_card(&pdev->dev, card);
 	if (ret)
 		dev_err(&pdev->dev, "%s snd_soc_register_card fail %d\n",
 			__func__, ret);
+	else
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+		dev_info(&pdev->dev, "%s snd_soc_register_card pss %d\n",
+				__func__, ret);
+#else
+		dev_err(&pdev->dev, "%s snd_soc_register_card pss %d\n",
+				__func__, ret);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	dev_info(&pdev->dev, "%s: event_id=%u, version:%s\n", __func__, \
+			OPLUS_AUDIO_EVENTID_AUDIO_KERNEL_ERR, AUDIO_KERNEL_FB_VERSION);
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 	return ret;
 }
 

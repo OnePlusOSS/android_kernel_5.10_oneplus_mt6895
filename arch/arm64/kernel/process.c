@@ -394,7 +394,7 @@ int copy_thread(unsigned long clone_flags, unsigned long stack_start,
 
 	ptrauth_thread_init_kernel(p);
 
-	if (likely(!(p->flags & PF_KTHREAD))) {
+	if (likely(!(p->flags & (PF_KTHREAD | PF_IO_WORKER)))) {
 		*childregs = *current_pt_regs();
 		childregs->regs[0] = 0;
 
@@ -618,6 +618,39 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(get_wchan);
+
+unsigned long get_backtrace(struct task_struct *p, int i)
+{
+        struct stackframe frame;
+        unsigned long stack_page = 0;
+        int count = 0;
+        int layer_count = 0;
+        unsigned long ret = 0;
+
+        if (!p || p == current || p->state == TASK_RUNNING)
+                return 0;
+
+        stack_page = (unsigned long)try_get_task_stack(p);
+        if (!stack_page)
+                return 0;
+        start_backtrace(&frame, thread_saved_fp(p), thread_saved_pc(p));
+
+        do {
+                if (unwind_frame(p, &frame))
+                        goto out;
+                if (!in_sched_functions(frame.pc) ) {
+                        if(layer_count == i) {
+                                ret = frame.pc;
+                                goto out;
+                        }
+                        layer_count++;
+                }
+        } while (count ++ < 16);
+
+out:
+        put_task_stack(p);
+        return ret;
+}
 
 unsigned long arch_align_stack(unsigned long sp)
 {

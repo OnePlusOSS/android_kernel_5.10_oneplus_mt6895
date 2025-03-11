@@ -252,7 +252,9 @@ void mtu3_set_speed(struct mtu3 *mtu, enum usb_device_speed speed)
 	}
 
 	mtu->speed = speed;
-	dev_dbg(mtu->dev, "set speed: %s\n", usb_speed_string(speed));
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	dev_info(mtu->dev, "set speed: %s\n", usb_speed_string(speed));
+/*#endif*/
 }
 
 /* CSR registers will be reset to default value if port is disabled */
@@ -677,7 +679,9 @@ static irqreturn_t mtu3_link_isr(struct mtu3 *mtu)
 	link = mtu3_readl(mbase, U3D_DEV_LINK_INTR);
 	link &= mtu3_readl(mbase, U3D_DEV_LINK_INTR_ENABLE);
 	mtu3_writel(mbase, U3D_DEV_LINK_INTR, link); /* W1C */
-	dev_dbg(mtu->dev, "=== LINK[%x] ===\n", link);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	dev_info(mtu->dev, "=== LINK[%x] ===\n", link);
+/*#endif*/
 
 	if (!(link & SSUSB_DEV_SPEED_CHG_INTR))
 		return IRQ_NONE;
@@ -740,7 +744,9 @@ static irqreturn_t mtu3_u3_ltssm_isr(struct mtu3 *mtu)
 	ltssm = mtu3_readl(mbase, U3D_LTSSM_INTR);
 	ltssm &= mtu3_readl(mbase, U3D_LTSSM_INTR_ENABLE);
 	mtu3_writel(mbase, U3D_LTSSM_INTR, ltssm); /* W1C */
-	dev_dbg(mtu->dev, "=== LTSSM[%x] ===\n", ltssm);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	dev_info(mtu->dev, "=== LTSSM[%x] ===\n", ltssm);
+/*#endif*/
 	trace_mtu3_u3_ltssm_isr(ltssm);
 
 	if (ltssm & (HOT_RST_INTR | WARM_RST_INTR))
@@ -771,7 +777,9 @@ static irqreturn_t mtu3_u2_common_isr(struct mtu3 *mtu)
 	u2comm = mtu3_readl(mbase, U3D_COMMON_USB_INTR);
 	u2comm &= mtu3_readl(mbase, U3D_COMMON_USB_INTR_ENABLE);
 	mtu3_writel(mbase, U3D_COMMON_USB_INTR, u2comm); /* W1C */
-	dev_dbg(mtu->dev, "=== U2COMM[%x] ===\n", u2comm);
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+	dev_info(mtu->dev, "=== U2COMM[%x] ===\n", u2comm);
+/*#endif*/
 	trace_mtu3_u2_common_isr(u2comm);
 
 	if (u2comm & SUSPEND_INTR)
@@ -782,6 +790,11 @@ static irqreturn_t mtu3_u2_common_isr(struct mtu3 *mtu)
 
 	if (u2comm & RESET_INTR)
 		mtu3_gadget_reset(mtu);
+
+	if (u2comm & LPM_RESUME_INTR) {
+		if (!(mtu3_readl(mbase, U3D_POWER_MANAGEMENT) & LPM_HRWE))
+			mtu3_setbits(mbase, U3D_USB20_MISC_CONTROL, LPM_U3_ACK_EN);
+	}
 
 	return IRQ_HANDLED;
 }

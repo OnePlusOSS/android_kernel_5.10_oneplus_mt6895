@@ -406,6 +406,10 @@ static int irq3a_wait_cnt = 1;
 static int irq3a_print_vf_off[ISP_IRQ_TYPE_AMOUNT] = {-1};
 static unsigned int cq_recovery[ISP_IRQ_TYPE_AMOUNT];
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static int mask_sof;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 #if IS_ENABLED(CONFIG_PM_WAKELOCKS)
 struct wakeup_source *isp_wake_lock;
 #else
@@ -537,6 +541,9 @@ struct ISP_IRQ_ERR_WAN_CNT_STRUCT {
 };
 
 static int FirstUnusedIrqUserKey = 1;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static int p1UserKey;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 /* array for recording the user name for a specific user key */
 static struct ISP_REGISTER_USERKEY_STRUCT IrqUserKey_UserInfo[IRQ_USER_NUM_MAX];
@@ -2734,11 +2741,13 @@ static void ISP_EnableClock(enum ISP_DEV_NODE_ENUM module, bool En)
 		G_u4EnableClockCount[module]++;
 		spin_unlock(&(IspInfo.SpinLockClock));
 		Prepare_Enable_ccf_clock(module); /* !!cannot be used in spinlock!! */
+		LOG_INF("ISP_IRQ_CONTROLLER enable_irq E\n");
 		if (G_u4EnableClockCount[module] == 1) {
 			enable_irq(isp_devs[module].irq);
 			LOG_INF(
 				"enable_irq cam %d\n", module);
 		}
+		LOG_INF("ISP_IRQ_CONTROLLER enable_irq X\n");
 #endif
 	} else { /* Disable clock. */
 #if defined(EP_NO_CLKMGR)
@@ -2774,11 +2783,13 @@ static void ISP_EnableClock(enum ISP_DEV_NODE_ENUM module, bool En)
 		G_u4EnableClockCount[module]--;
 		spin_unlock(&(IspInfo.SpinLockClock));
 		/* !!cannot be used in spinlock!! */
+		LOG_INF("ISP_IRQ_CONTROLLER disable_irq E\n");
 		if (G_u4EnableClockCount[module] == 0) {
 			disable_irq(isp_devs[module].irq);
 			LOG_INF(
 				"disable_irq cam %d\n", module);
 		}
+		LOG_INF("ISP_IRQ_CONTROLLER disable_irq X\n");
 		Disable_Unprepare_ccf_clock(module);
 #endif
 	}
@@ -3465,6 +3476,13 @@ static int ISP_REGISTER_IRQ_USERKEY(char *userName)
 				userName, USERKEY_STR_LEN - 1);
 
 			IrqUserKey_UserInfo[i].userKey = FirstUnusedIrqUserKey;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+			if (is_project(0x2269C) || is_project(0x2269D) || is_project(0x2269E)) {
+				if (strcmp((void *)userName, "NormalPipe_Thread") == 0) {
+					p1UserKey = FirstUnusedIrqUserKey;
+				}
+			}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 			key = FirstUnusedIrqUserKey;
 			FirstUnusedIrqUserKey++;
 		}
@@ -5667,6 +5685,35 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 				/* Enable clock */
 				ISP_EnableClock(dev_node_idx, MTRUE);
 
+				switch (dev_node_idx) {
+					case ISP_CAM_A_IDX:
+					case ISP_CAM_B_IDX:
+					case ISP_CAM_C_IDX: {
+						unsigned int temp = 0;
+						LOG_NOTICE("CAM%c: Set CAM_REG_CTL_CAMCTL_CCU_INTx_EN", 'A' + dev_node_idx - ISP_CAM_A_IDX);
+						ISP_WR32(CAM_REG_CTL_CAMCTL_CCU_INT_EN(dev_node_idx), 0x00004003);
+						ISP_RD32(CAM_REG_CTL_CAMCTL_CCU_INT_STATUS(dev_node_idx));
+
+						ISP_WR32(CAM_REG_CTL_CAMCTL_CCU_INT2_EN(dev_node_idx), 0x300);
+						ISP_RD32(CAM_REG_CTL_CAMCTL_CCU_INT2_STATUS(dev_node_idx));
+
+						ISP_WR32(CAM_REG_CTL_CAMCTL_CCU_INT3_EN(dev_node_idx), 0x0);
+						ISP_RD32(CAM_REG_CTL_CAMCTL_CCU_INT3_STATUS(dev_node_idx));
+
+						temp = ISP_RD32(CAM_REG_CTL_CAMCTL_CCU_INT6_EN(dev_node_idx));
+						temp |= 0x1;
+						ISP_WR32(CAM_REG_CTL_CAMCTL_CCU_INT6_EN(dev_node_idx), temp);
+						ISP_RD32(CAM_REG_CTL_CAMCTL_CCU_INT6_STATUS(dev_node_idx));
+						break;
+					}
+					case ISP_CAMSV0_IDX: {
+						LOG_NOTICE("CAMSV0: Set CAM_REG_CTL_CAMSV_CCU_INT_EN");
+						ISP_WR32(CAM_REG_CTL_CAMSV_CCU_INT_EN(dev_node_idx), 0x1);
+						ISP_RD32(CAM_REG_CTL_CAMSV_CCU_INT_STATUS(dev_node_idx));
+						break;
+					}
+				}
+
 				spin_lock(&(IspInfo.SpinLockClock));
 				if (G_u4EnableClockCount[dev_node_idx] == 1) {
 					spin_unlock(&(IspInfo.SpinLockClock));
@@ -5699,6 +5746,12 @@ static long ISP_ioctl(struct file *pFile, unsigned int Cmd, unsigned long Param)
 			Ret = -EFAULT;
 		}
 	} break;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	case ISP_MASK_NEXT_SOF:
+		mask_sof = 1;
+		LOG_NOTICE("ISP_MASK_NEXT_SOF\n");
+		break;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	default: {
 		LOG_NOTICE("Unknown Cmd(%d)\n", Cmd);
 		Ret = -EPERM;
@@ -6127,7 +6180,9 @@ static int ISP_open(struct inode *pInode, struct file *pFile)
 	/*  */
 	for (i = 0; i < IRQ_USER_NUM_MAX; i++) {
 		FirstUnusedIrqUserKey = 1;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		p1UserKey = 0;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 		strncpy((void *)IrqUserKey_UserInfo[i].userName,
 			"DefaultUserNametoAllocMem", USERKEY_STR_LEN);
 
@@ -6277,6 +6332,7 @@ static int ISP_release(struct inode *pInode, struct file *pFile)
 		 *  Next camera runs in single mode, and it will not update CQ0
 		 */
 		ISP_WR32(CAM_REG_CTL_TWIN_STATUS(i), 0x0);
+		ISP_StopHW(i);
 
 		LOG_INF("dev(%d): Disable all clk, cnt(%d)\n", i, clkcnt);
 		for (j = 0; j < clkcnt; j++)
@@ -6719,6 +6775,9 @@ static int ISP_probe(struct platform_device *pDev)
 
 					return Ret;
 				}
+
+				/* Reset irq ref cnt after request_irq by disable_irq. */
+				disable_irq(isp_devs[dev_idx].irq);
 
 				LOG_INF(
 				"G_u4DevNodeCt=%d, devnode(%s), irq=%d, ISR: %s\n",
@@ -10639,7 +10698,9 @@ irqreturn_t ISP_Irq_CAM(
 	unsigned int IrqEnableOrig, IrqEnableNew;
 	union CAMCTL_TWIN_STATUS_ twinStatus;
 	unsigned int isStagger = 0, FBC_CurState = 0;
-
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	unsigned int bypassSOF = 0;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	/* Avoid touch hwmodule when clock is disable. */
 	/* DEVAPC will moniter this kind of err */
 	if (G_u4EnableClockCount[cam_idx] == 0)
@@ -11148,7 +11209,15 @@ irqreturn_t ISP_Irq_CAM(
 		}
 		if ((ISP_RD32(CAM_REG_DMA_CQ_COUNTER(reg_module)))
 			!= g_virtual_cq_cnt[module]){
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 			IrqStatus &= ~SOF_INT_ST;
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+			if (is_project(0x2269C) || is_project(0x2269D) || is_project(0x2269E)) {
+				bypassSOF = 1;
+			} else {
+				IrqStatus &= ~SOF_INT_ST;
+			}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 			IRQ_LOG_KEEPER(module, m_CurrentPPB, _LOG_INF,
 				"CAM%c PHY cqcnt:%d != VIR cqcnt:%d, IrqStatus:0x%x\n",
 				'A'+cardinalNum,
@@ -11846,7 +11915,28 @@ LB_CAM_SOF_IGNORE:
 
 	for (i = 0; i < IRQ_USER_NUM_MAX; i++) {
 		/* 1. update interrupt status to all users */
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 		IspInfo.IrqInfo.Status[module][SIGNAL_INT][i] |= IrqStatus;
+#else /*OPLUS_FEATURE_CAMERA_COMMON*/
+		if (is_project(0x2269C) || is_project(0x2269D) || is_project(0x2269E)) {
+			if (bypassSOF) {
+				if(p1UserKey == i && p1UserKey != 0) {
+					IspInfo.IrqInfo.Status[module][SIGNAL_INT][i] |= IrqStatus;
+				} else {
+					IspInfo.IrqInfo.Status[module][SIGNAL_INT][i] |= (IrqStatus & ~SOF_INT_ST);
+				}
+			} else {
+				IspInfo.IrqInfo.Status[module][SIGNAL_INT][i] |= IrqStatus;
+			}
+			if (mask_sof == 1 && (IrqStatus & SOF_INT_ST)) {
+				IspInfo.IrqInfo.Status[module][SIGNAL_INT][i] &= ~SOF_INT_ST;
+				mask_sof = 0;
+			}
+		} else {
+			IspInfo.IrqInfo.Status[module][SIGNAL_INT][i] |= IrqStatus;
+		}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
+
 		IspInfo.IrqInfo.Status[module][DMA_INT][i] |= DmaStatus;
 
 		/* 2. update signal time and passed by signal count */

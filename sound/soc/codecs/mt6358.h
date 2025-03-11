@@ -3778,6 +3778,7 @@ struct mt6358_priv {
 
 	struct dentry *debugfs;
 	unsigned int debug_flag;
+	unsigned int pull_high_impedance;
 	/* regulator */
 	struct regulator *reg_vaud28;
 
@@ -3794,6 +3795,8 @@ struct mt6358_priv {
 	int vow_dmic_lp;
 
 	int pull_down_stay_enable;
+	bool init_dis_micbias;
+	bool is_smartpa;
 };
 
 /* dl pga gain */

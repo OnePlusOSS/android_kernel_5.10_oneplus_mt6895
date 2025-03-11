@@ -26,9 +26,6 @@
 #include <linux/printk.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_domain.h>
-#if IS_ENABLED(CONFIG_MTK_DEVINFO)
-#include <linux/nvmem-consumer.h>
-#endif
 
 #include <gpufreq_v2.h>
 #include <gpufreq_history_common.h>
@@ -3078,10 +3075,10 @@ static void __gpufreq_avs_adjustment(void)
 	 * Freq (MHz) | Signedoff Volt (V) | Efuse name | Efuse address
 	 * ============================================================
 	 * 1100       | 0.85               | PTPOD16    | 0x11C1_05C0
-	 * 700        | 0.7                | PTPOD17    | 0x11C1_05C4
-	 * 390        | 0.625              | PTPOD18    | 0x11C1_05C8
+	 * 700        | 0.65               | PTPOD17    | 0x11C1_05C4
+	 * 390        | 0.575              | PTPOD18    | 0x11C1_05C8
 	 *
-	 * 0.625 will not be lowered, but will increase according to
+	 * 0.575 will not be lowered, but will increase according to
 	 * the binning result for rescue yeild.
 	 */
 
@@ -3251,9 +3248,9 @@ static int __gpufreq_init_opp_table(struct platform_device *pdev)
 	/* init working OPP range */
 	segment_id = g_gpu.segment_id;
 	if (segment_id == MT6789_SEGMENT)
-		g_gpu.segment_upbound = 7;
-	else
 		g_gpu.segment_upbound = 0;
+	else
+		g_gpu.segment_upbound = 8;
 	g_gpu.segment_lowbound = SIGNED_OPP_GPU_NUM - 1;
 	g_gpu.signed_opp_num = SIGNED_OPP_GPU_NUM;
 
@@ -3335,47 +3332,18 @@ static void __iomem *__gpufreq_of_ioremap(const char *node_name, int idx)
 static int __gpufreq_init_segment_id(struct platform_device *pdev)
 {
 	unsigned int efuse_id = 0x0;
-	unsigned int segment_id = ENG_SEGMENT;
+	unsigned int segment_id = 0;
 	int ret = GPUFREQ_SUCCESS;
 
-#if IS_ENABLED(CONFIG_MTK_DEVINFO)
-	struct nvmem_cell *efuse_cell;
-	unsigned int *efuse_buf;
-	size_t efuse_len;
-
-	efuse_cell = nvmem_cell_get(&pdev->dev, "efuse_segment_cell");
-	if (IS_ERR(efuse_cell)) {
-		GPUFREQ_LOGE("fail to get efuse_segment_cell (%ld)", PTR_ERR(efuse_cell));
-		ret = PTR_ERR(efuse_cell);
-		goto done;
-	}
-
-	efuse_buf = (unsigned int *)nvmem_cell_read(efuse_cell, &efuse_len);
-	nvmem_cell_put(efuse_cell);
-	if (IS_ERR(efuse_buf)) {
-		GPUFREQ_LOGE("fail to get efuse_buf (%ld)", PTR_ERR(efuse_buf));
-		ret = PTR_ERR(efuse_buf);
-		goto done;
-	}
-
-	efuse_id = (*efuse_buf & 0xFF);
-	kfree(efuse_buf);
-#else
-	efuse_id = 0x0;
-#endif /* CONFIG_MTK_DEVINFO */
-
 	switch (efuse_id) {
-	case 0x1:
-		segment_id = MT6789_SEGMENT;
-		break;
 	default:
-		segment_id = ENG_SEGMENT;
+		segment_id = MT6789_SEGMENT;
+		GPUFREQ_LOGW("unknown efuse id: 0x%x", efuse_id);
 		break;
 	}
 
 	GPUFREQ_LOGI("efuse_id: 0x%x, segment_id: %d", efuse_id, segment_id);
 
-done:
 	g_gpu.segment_id = segment_id;
 
 	return ret;

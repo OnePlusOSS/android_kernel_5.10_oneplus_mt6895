@@ -2539,10 +2539,14 @@ static int tfa98xx_hw_params(struct snd_pcm_substream *substream,
 }
 
 #ifdef TFA_NON_DSP_SOLUTION
+#if 0
 static uint8_t bytes[3*3+1] = {0};
+#endif
 
 enum Tfa98xx_Error tfa98xx_adsp_send_calib_values(void)
 {
+//do not send message to adsp avoid crash
+#if 0
 	struct tfa98xx *tfa98xx;
 	int ret = 0;
 	int value = 0, nr, dsp_cal_value = 0;
@@ -2609,6 +2613,9 @@ enum Tfa98xx_Error tfa98xx_adsp_send_calib_values(void)
 	}
 
 	return ret;
+#else
+	return 0;
+#endif
 }
 
 static int tfa98xx_send_mute_cmd(void)

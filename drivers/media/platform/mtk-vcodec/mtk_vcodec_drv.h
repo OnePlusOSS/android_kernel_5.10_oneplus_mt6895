@@ -301,6 +301,8 @@ struct mtk_enc_params {
 	unsigned int	qp_control_mode;
 	unsigned int	dummynal;
 	int		priority;
+	int             cb_qp_offset;
+	int             cr_qp_offset;
 };
 
 /*
@@ -364,6 +366,8 @@ struct venc_enc_param {
 	unsigned int slbc_addr;
 	char set_vcp_buf[1024];
 	char property_buf[1024];
+	int cb_qp_offset;
+	int cr_qp_offset;
 };
 
 /*
@@ -405,6 +409,11 @@ struct meta_describe {
 
 struct metadata_info {
 	struct meta_describe metadata_dsc[MTK_MAX_METADATA_NUM];
+};
+
+struct vdec_set_frame_work_struct {
+	struct work_struct work;
+	struct mtk_vcodec_ctx *ctx;
 };
 
 /**
@@ -476,6 +485,7 @@ struct mtk_vcodec_ctx {
 	int is_hdr;
 	int last_is_hdr;
 	unsigned int errormap_info[VB2_MAX_FRAME];
+	u32 err_msg;
 	s64 input_max_ts;
 
 	bool is_flushing;
@@ -497,6 +507,9 @@ struct mtk_vcodec_ctx {
 	wait_queue_head_t fm_wq;
 	unsigned char *ipi_blocked;
 	enum vdec_input_driven_mode input_driven;
+
+	struct workqueue_struct *vdec_set_frame_wq;
+	struct vdec_set_frame_work_struct vdec_set_frame_work;
 
 	/* for user lock HW case release check */
 	int user_lock_hw;
@@ -658,6 +671,7 @@ struct mtk_vcodec_dev {
 	int venc_port_cnt;
 	int vdec_port_idx[MTK_VDEC_HW_NUM];
 	int venc_port_idx[MTK_VENC_HW_NUM];
+	struct mtk_tf_info *tf_info;
 	struct vcodec_perf *vdec_tput;
 	struct vcodec_perf *venc_tput;
 	//struct vcodec_config *vdec_cfg;
@@ -679,6 +693,7 @@ struct mtk_vcodec_dev {
 	struct mutex log_param_mutex;
 	struct mutex prop_param_mutex;
 	enum venc_lock enc_hw_locked[MTK_VENC_HW_NUM];
+	struct mutex enc_hw_mutex;
 
 	unsigned int svp_mtee;
 	unsigned int unique_domain;
@@ -884,5 +899,8 @@ static inline struct mtk_vcodec_ctx *ctrl_to_ctx(struct v4l2_ctrl *ctrl)
 	(V4L2_CID_MPEG_MTK_BASE+48)
 #define V4L2_CID_MPEG_MTK_VCP_PROP \
 	(V4L2_CID_MPEG_MTK_BASE+49)
+
+#define V4L2_CID_MPEG_MTK_ENCODE_CHROMA_QP \
+	(V4L2_CID_MPEG_MTK_BASE+67)
 
 #endif /* _MTK_VCODEC_DRV_H_ */

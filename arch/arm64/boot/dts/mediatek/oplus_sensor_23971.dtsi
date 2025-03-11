@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+* Copyright (C) 2018-2020 Oplus. All rights reserved.
+*/
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			ICM4X6XX,
+			ICM4263X,
+			ICM4N607,
+			BMI22X,
+			SC7A20,
+			MC34X9,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <9>;//ICM4N607
+			device_name = "icm4n607";
+			i2c_num = <1>;
+			i2c_addr = <0>;
+			direction = <1>;
+			eint_num = <2>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <300 300 300>;
+			gyro_cali_range = <350>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <0>;
+			i2c_addr = <0x30>;
+			direction = <2>;
+			eint_num = <0>;
+			soft-mag-parameter = <9990 0 120 1 303 1 356 1 9204 0 6 1 184 0 799 1 9881 0>;
+		};
+		/*
+		enum {
+			TCS3408_CCT,
+		};
+		*/
+		cct_1: cct_1 {
+			status = "okay";
+			sensor_name = <0>;//TCS3408_CCT
+			i2c_num = <0>;
+			i2c_addr = <0x39>;
+			direction = <0>;
+			eint_num = <11>;
+			available_sensor = <3>; // bit 0: rear als, bit 1: rear cct, bit 2: rear flicker
+			product_num = <1>; // 0:Aries 1:Bluey
+			device_name = "tcs3408";
+		};
+		light_1: light_1 {
+			device_name = "tcs3408";
+			gold_cct_channels = <5>;
+			gold_cct_3k = <2170 745 316 3037 1158>; // 3000k gold parameter
+			gold_cct_6k = <1291 783 390 2359 894>;  // 6000k gold parameter
+		};
+		/*
+		enum {
+			SX933x,
+			SX937x,
+		};
+		*/
+		sar_1: sar_1 {
+			status = "okay";
+			sensor_name = <1>;//SX937x
+			i2c_num = <0>;
+			i2c_addr = <0x2c>;
+			direction = <0>;
+			eint_num = <5>;
+			channel_num = <4>;
+			channel_0_min = <0>;
+			channel_0_max = <70000>;
+			channel_1_min = <0>;
+			channel_1_max = <70000>;
+			channel_2_min = <0>;
+			channel_2_max = <70000>;
+			channel_3_min = <0>;
+			channel_3_max = <70000>;
+			reg_table_num = <2>; //WIFI
+                        sup_move_detect = <1>;
+		};
+	};
+/* sensor end */
+};
+
+&odm {
+		mha100kn_hall1 {
+			compatible = "oplus,mha100kn_hall";
+			hall-id = <1>;
+			pinctrl-names = "mha100kn_hall1_active" , "mha100kn_hall1_sleep";
+
+			pinctrl-0 = <&mha100kn_hall1_active>;
+			pinctrl-1 = <&mha100kn_hall1_sleep>;
+
+			interrupt-parent = <&pio>;
+			interrupts = <6 0x2003>;      //both rising and falling edge
+			irq-gpio = <&pio 6 0x2003>;
+			irq_active_low;
+		};
+};
+
+&pio {
+		mha100kn_hall1_active: mha100kn_hall1_active {
+			pins_cmd_dat {
+				pinmux = <PINMUX_GPIO6__FUNC_GPIO6>;
+				bias-pull-up;
+			};
+		};
+		mha100kn_hall1_sleep: mha100kn_hall1_sleep {
+			pins_cmd_dat {
+				pinmux = <PINMUX_GPIO6__FUNC_GPIO6>;
+				bias-pull-up;
+			};
+		};
+};
+
+&mt6358_vsim2_reg {
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+	regulator-always-on;
+	regulator-boot-on;
+};

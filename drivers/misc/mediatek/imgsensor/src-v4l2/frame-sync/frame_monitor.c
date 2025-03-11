@@ -9,15 +9,22 @@
 #ifndef FS_UT
 #include <linux/of_platform.h>
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define OPLUS_FEATURE_CAMERA_COMMON
+#endif
+
 #ifdef USING_CCU
 #include <linux/remoteproc.h>
 #include <linux/remoteproc/mtk_ccu.h>
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include <linux/pm_runtime.h>
+#endif // OPLUS_FEATURE_CAMERA_COMMON
 #endif // USING_CCU
 
 #ifdef USING_N3D
 #include "vsync_recorder.h"
 #endif // USING_N3D
-#endif // FS_UT
+#endif // !FS_UT
 
 #ifdef FS_UT
 #include <stdint.h> // for uint32_t
@@ -64,10 +71,9 @@ struct FrameMeasurement {
 	/*     => or (2 + 7) % VSYNCS_MAX = 1 */
 	/*     all operation based on idx 1 to calculate correct data */
 	unsigned int idx;
+	struct FrameResult results[VSYNCS_MAX];
 
 	unsigned int timestamps[VSYNCS_MAX];
-
-	struct FrameResult results[VSYNCS_MAX];
 };
 //----------------------------------------------------------------------------//
 
@@ -80,13 +86,20 @@ struct FrameInfo {
 	unsigned int wait_for_setting_predicted_fl:1;
 	struct FrameMeasurement fmeas;
 
+	/* vsync data information obtained by query */
+	/* - vsync for sensor FL */
+	struct vsync_time rec;
+	unsigned int query_ts_at_tick;
+	unsigned int query_ts_at_us;
+	unsigned int time_after_vsync;
+
 
 #ifdef FS_UT
 	unsigned int predicted_curr_fl_us; /* current predicted framelength (us) */
 	unsigned int predicted_next_fl_us; /* next predicted framelength (us) */
 	unsigned int sensor_curr_fl_us;    /* current framelength set to sensor */
 	unsigned int next_vts_bias;        /* next vsync timestamp bias / shift */
-#endif
+#endif // FS_UT
 };
 
 
@@ -98,6 +111,9 @@ struct FrameMonitorInst {
 	struct platform_device *ccu_pdev;
 	phandle handle;
 	int power_on_cnt;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct platform_device *pdevs[FM_TG_CNT];
+#endif // OPLUS_FEATURE_CAMERA_COMMON
 #endif // USING_CCU
 #endif // FS_UT
 
@@ -105,46 +121,41 @@ struct FrameMonitorInst {
 
 //----------------------------------------------------------------------------//
 
-	struct vsync_time recs[FM_TG_CNT];
-
-	unsigned int query_ts_at_tick[FM_TG_CNT];
-
 	unsigned int cur_tick;
 	unsigned int tick_factor;
 
 	struct FrameInfo f_info[SENSOR_MAX_NUM];
-
-	unsigned int ts_last_check[FM_TG_CNT];
-	unsigned int ts_last_query[FM_TG_CNT];
-	unsigned int ts_check_cnt;
 
 //----------------------------------------------------------------------------//
 
 #ifdef FS_UT
 	/* flag for using fake information (only for ut test and check) */
 	unsigned int debug_flag:1;
-#endif
+#endif // FS_UT
 
 //----------------------------------------------------------------------------//
 };
 static struct FrameMonitorInst frm_inst;
 
-/******************************************************************************/
 
+#if defined(FS_UT)
+#define FS_UT_TG_MAPPING_SIZE 23
+static const int ut_camsv_tg_mapping[FS_UT_TG_MAPPING_SIZE] = {
+	-1, -1, -1, 0, 1,
+	2, 3, 4, 5, 10,
+	11, 12, 13, 14, 15,
+	-1, -1, -1, -1, 6,
+	7, 8, 9
+};
 
-
-
-
-/******************************************************************************/
-// vsync timestamp utility functions
-/******************************************************************************/
-/*
- * return: (0/1) for (non-valid/valid)
- */
-static inline unsigned int check_tg_vsync_rec_pos_valid(unsigned int tg)
-{
-	return ((tg < 1) || (tg > FM_TG_CNT)) ? 0 : 1;
-}
+static const int ut_mraw_tg_mapping[FS_UT_TG_MAPPING_SIZE] = {
+	-1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1,
+	0, 1, 2, 3, -1,
+	-1, -1, -1
+};
+#endif
 /******************************************************************************/
 
 
@@ -154,18 +165,43 @@ static inline unsigned int check_tg_vsync_rec_pos_valid(unsigned int tg)
 /******************************************************************************/
 // Dump function
 /******************************************************************************/
-static inline void dump_vsync_rec(struct vsync_rec (*pData))
+void dump_frame_info(const unsigned int idx, const char *caller)
+{
+	struct FrameInfo *p_f_info = &frm_inst.f_info[idx];
+
+	LOG_MUST(
+		"[%s]: [%u] ID:%#x(sidx:%u), tg:%u, rec:(id:%u, vsyncs:%u, ts:(%u/%u/%u/%u)), query at:(%u/+%u(%u))\n",
+		caller, idx,
+		p_f_info->sensor_id,
+		p_f_info->sensor_idx,
+		p_f_info->tg,
+		p_f_info->rec.id,
+		p_f_info->rec.vsyncs,
+		p_f_info->rec.timestamps[0],
+		p_f_info->rec.timestamps[1],
+		p_f_info->rec.timestamps[2],
+		p_f_info->rec.timestamps[3],
+		p_f_info->query_ts_at_us,
+		p_f_info->time_after_vsync,
+		p_f_info->query_ts_at_tick);
+}
+
+
+void dump_vsync_recs(const struct vsync_rec (*pData), const char *caller)
 {
 	unsigned int i = 0;
 
-	LOG_MUST("buf->ids:%u, buf->cur_tick:%u, buf->tick_factor:%u\n",
+	LOG_MUST(
+		"[%s]: ids:%u, cur_tick:%u, tick_factor:%u\n",
+		caller,
 		pData->ids,
 		pData->cur_tick,
 		pData->tick_factor);
 
 	for (i = 0; i < pData->ids; ++i) {
 		LOG_MUST(
-			"buf->recs[%u]: id:%u (TG), vsyncs:%u, vts:(%u/%u/%u/%u)\n",
+			"[%s]: recs[%u]: id:%u (TG), vsyncs:%u, ts:(%u/%u/%u/%u)\n",
+			caller,
 			i,
 			pData->recs[i].id,
 			pData->recs[i].vsyncs,
@@ -173,32 +209,6 @@ static inline void dump_vsync_rec(struct vsync_rec (*pData))
 			pData->recs[i].timestamps[1],
 			pData->recs[i].timestamps[2],
 			pData->recs[i].timestamps[3]);
-	}
-}
-
-
-static inline void dump_frm_ts_recs(void)
-{
-	unsigned int i = 0;
-
-	LOG_MUST("frm cur_tick:%u, frm tick_factor:%u\n",
-		frm_inst.cur_tick,
-		frm_inst.tick_factor);
-
-	for (i = 0; i < FM_TG_CNT; ++i) {
-		if (frm_inst.recs[i].id == 0)
-			continue;
-
-		LOG_INF(
-			"frm [%u]: id:%u (TG), vsyncs:%u, vts:(%u/%u/%u/%u), query at tick:%u\n",
-			i,
-			frm_inst.recs[i].id,
-			frm_inst.recs[i].vsyncs,
-			frm_inst.recs[i].timestamps[0],
-			frm_inst.recs[i].timestamps[1],
-			frm_inst.recs[i].timestamps[2],
-			frm_inst.recs[i].timestamps[3],
-			frm_inst.query_ts_at_tick[i]);
 	}
 }
 /******************************************************************************/
@@ -210,91 +220,16 @@ static inline void dump_frm_ts_recs(void)
 /******************************************************************************/
 // Frame Monitor static function (private function)
 /******************************************************************************/
-#ifdef FS_UT
-static void debug_simu_query_vsync_data(struct vsync_rec (*pData))
-{
-	unsigned int i = 0, j = 0;
-
-	pData->cur_tick = frm_inst.cur_tick;
-	pData->tick_factor = frm_inst.tick_factor;
-	for (i = 0; i < FM_TG_CNT; ++i) {
-		if (frm_inst.recs[i].id == 0)
-			continue;
-
-		for (j = 0; j < pData->ids; ++j) {
-			if (pData->recs[j].id == frm_inst.recs[i].id) {
-				pData->recs[j] = frm_inst.recs[i];
-				pData->cur_tick = frm_inst.query_ts_at_tick[i];
-
-				break;
-			}
-		}
-	}
-
-#if !defined(REDUCE_FRM_LOG)
-	LOG_INF("[UT] call dump_vsync_rec\n");
-	dump_vsync_rec(pData);
-#endif
-}
-#endif // FS_UT
-
-
-/*
- * only do boundary check
- *
- * return: (0/1) for (false/true)
- */
-static inline unsigned int check_tg_valid(unsigned int tg)
-{
-	return ((tg < CCU_CAM_TG_MIN) || (tg >= FM_TG_CNT)) ? 0 : 1;
-}
-
-
-static void copy_vsync_data_of_query(struct vsync_rec (*pData))
-{
-	unsigned int i = 0;
-
-	frm_inst.cur_tick = pData->cur_tick;
-	frm_inst.tick_factor = pData->tick_factor;
-
-
-#if defined(FS_UT)
-	LOG_MUST("query %u tg timestamp data\n",
-		pData->ids);
-#endif
-
-
-	for (i = 0; i < pData->ids; ++i) {
-		unsigned int idx = 0;
-
-		if (!check_tg_valid(pData->recs[i].id)) {
-			LOG_MUST(
-				"ERROR: invalid tg:%u num, skip\n",
-				pData->recs[i].id);
-
-			continue;
-		}
-
-		/* because tg is start from 1 in frame monitor */
-		idx = pData->recs[i].id - 1;
-
-		/* copy vsync_time struct data */
-		frm_inst.recs[idx] = pData->recs[i];
-
-		/* (for SA) copy tick value at querying timestamp data */
-		frm_inst.query_ts_at_tick[idx] = pData->cur_tick;
-	}
-
-
-#if defined(FS_UT)
-	dump_frm_ts_recs();
-#endif
-}
-
-
 #ifdef USING_CCU
 #ifndef FS_UT
-static unsigned int get_ccu_device(void)
+/*
+ * return:
+ *     0: NO error.
+ *     1: find compatiable node failed.
+ *     2: get ccu_pdev failed.
+ *     < 0: read node property failed.
+ */
+static unsigned int get_ccu_device(const char *caller)
 {
 	int ret = 0;
 
@@ -309,8 +244,11 @@ static unsigned int get_ccu_device(void)
 
 	node = of_find_compatible_node(NULL, NULL, "mediatek,camera_fsync_ccu");
 	if (!node) {
-		LOG_PR_ERR("ERROR: find mediatek,camera_fsync_ccu failed!!!\n");
-		return 1;
+		ret = 1;
+		LOG_MUST(
+			"[%s]: ERROR: find DTS compatiable node:(mediatek,camera_fsync_ccu) failed, ret:%d\n",
+			caller, ret);
+		return ret;
 	}
 
 	ret = of_property_read_u32(node, "mediatek,ccu_rproc", &handle);
@@ -324,15 +262,20 @@ static unsigned int get_ccu_device(void)
 		frm_inst.ccu_pdev = of_find_device_by_node(rproc_np);
 
 		if (!frm_inst.ccu_pdev) {
-			LOG_PR_ERR("ERROR: failed to find ccu rproc pdev\n");
+			LOG_MUST(
+				"[%s]: ERROR: find DTS device by node failed (ccu rproc pdev), ret:%d->2\n",
+				caller, ret);
 			frm_inst.ccu_pdev = NULL;
+			ret = 2;
 			return ret;
 		}
 
 		/* keep for rproc_get_by_phandle() using */
 		frm_inst.handle = handle;
 
-		LOG_MUST("get ccu proc pdev successfully\n");
+		LOG_MUST(
+			"[%s]: get ccu proc pdev successfully, ret:%d\n",
+			caller, ret);
 	}
 #endif
 
@@ -359,8 +302,11 @@ static unsigned int query_ccu_vsync_data(struct vsync_rec (*pData))
 
 
 #ifndef FS_UT
-	if (!frm_inst.ccu_pdev)
-		get_ccu_device();
+	if (unlikely(!frm_inst.ccu_pdev)) {
+		ret = get_ccu_device(__func__);
+		if (unlikely(ret != 0))
+			return ret;
+	}
 
 	/* using ccu_rproc_ipc_send to get vsync timestamp data */
 	ret = mtk_ccu_rproc_ipc_send(
@@ -382,23 +328,56 @@ static unsigned int query_ccu_vsync_data(struct vsync_rec (*pData))
 
 	return ret;
 }
-#endif // USING_CCU
 
-
-static inline void frm_save_vsync_timestamp(struct vsync_rec (*pData))
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#ifndef FS_UT
+static void frm_pm_runtime_ctrl(const unsigned int tg, const unsigned int flag)
 {
-#ifdef FS_UT
-	/* run in test mode */
-	if (frm_inst.debug_flag) {
-		// frm_inst.debug_flag = 0;
-		debug_simu_query_vsync_data(pData);
+	struct platform_device *pdev;
+	struct device *dev;
+	unsigned int idx = tg;
+	int ret;
 
+	if (unlikely(idx >= FM_TG_CNT))
 		return;
-	}
-#endif
+	pdev = frm_inst.pdevs[idx];
 
-	copy_vsync_data_of_query(pData);
+	/* need NOT to handle */
+	if (pdev == NULL)
+		return;
+	dev = &pdev->dev;
+
+	if (flag) {
+		ret = pm_runtime_get_sync(dev);
+		if (unlikely(ret < 0)) {
+			pm_runtime_put_noidle(dev);
+			LOG_MUST(
+				"ERROR: called (pdev:%s) pm_runtime_get_sync failed, ret:%d => put nodile  [tg:%u <=> pdev idx:%u]\n",
+				pdev->name, ret, tg, idx);
+		} else {
+			LOG_MUST(
+				"NOTICE: called (pdev:%s) pm_runtime_get_sync, ret:%d  [tg:%u <=> pdev idx:%u]\n",
+				pdev->name, ret, tg, idx);
+		}
+	} else {
+		ret = pm_runtime_put_sync(dev);
+		if (unlikely(ret < 0)) {
+			pm_runtime_get_noresume(dev);
+			LOG_MUST(
+				"ERROR: called (pdev:%s) pm_runtime_put_sync failed, ret:%d => get noresume  [tg:%u <=> pdev idx:%u]\n",
+				pdev->name, ret, tg, idx);
+		} else {
+			LOG_MUST(
+				"NOTICE: called (pdev:%s) pm_runtime_put_sync, ret:%d  [tg:%u <=> pdev idx:%u]\n",
+				pdev->name, ret, tg, idx);
+		}
+		/* clear dev */
+		// frm_inst.devs[idx] = NULL;
+	}
 }
+#endif
+#endif // OPLUS_FEATURE_CAMERA_COMMON
+#endif // USING_CCU
 /******************************************************************************/
 
 
@@ -408,63 +387,8 @@ static inline void frm_save_vsync_timestamp(struct vsync_rec (*pData))
 /******************************************************************************/
 // frame measurement function
 /******************************************************************************/
-/*
- * input:
- *     idx: search all for finding tg value match
- *
- * output:
- *     vdiff: array for timestamp diff (actual frame length)
- *     p_query_vts_at: query timestamp at tick
- *     p_time_after_sof: query timestamp after SOF
- */
-static void calc_ts_diff_and_info(
-	unsigned int idx,
-	unsigned int vdiff[],
-	unsigned int *p_query_vts_at, unsigned int *p_time_after_sof)
-{
-	unsigned int i = 0, j = 0;
-	unsigned int query_at_tick = 0, query_vts_at = 0, time_after_sof = 0;
-
-	struct FrameMeasurement *p_fmeas = &frm_inst.f_info[idx].fmeas;
-
-
-	for (i = 0; i < FM_TG_CNT; ++i) {
-		if (frm_inst.recs[i].id == 0)
-			continue;
-
-		/* find TG value match */
-		if (frm_inst.recs[i].id == frm_inst.f_info[idx].tg) {
-			for (j = 0; j < VSYNCS_MAX; ++j) {
-				p_fmeas->timestamps[j] =
-						frm_inst.recs[i].timestamps[j];
-			}
-
-			query_at_tick = frm_inst.query_ts_at_tick[i];
-
-			query_vts_at =
-				(frm_inst.tick_factor > 0)
-				? (query_at_tick / frm_inst.tick_factor) : 0;
-
-			time_after_sof = (query_vts_at > 0)
-				? (query_vts_at - p_fmeas->timestamps[0]) : 0;
-
-
-			if (p_query_vts_at != NULL)
-				*p_query_vts_at = query_vts_at;
-			if (p_time_after_sof != NULL)
-				*p_time_after_sof = time_after_sof;
-		}
-	}
-
-
-	for (i = 0; i < VSYNCS_MAX-1; ++i)
-		vdiff[i] = p_fmeas->timestamps[i] - p_fmeas->timestamps[i+1];
-}
-
-
 static void frm_dump_measurement_data(
-	unsigned int idx, unsigned int passed_vsyncs,
-	unsigned int query_vts_at, unsigned int time_after_sof)
+	unsigned int idx, unsigned int passed_vsyncs)
 {
 	struct FrameMeasurement *p_fmeas = &frm_inst.f_info[idx].fmeas;
 
@@ -495,8 +419,8 @@ static void frm_dump_measurement_data(
 			p_fmeas->timestamps[1],
 			p_fmeas->timestamps[2],
 			p_fmeas->timestamps[3],
-			query_vts_at,
-			time_after_sof);
+			frm_inst.f_info[idx].query_ts_at_us,
+			frm_inst.f_info[idx].time_after_vsync);
 	} else if (p_fmeas->idx == 1) {
 		LOG_PF_INF(
 			"[%u] ID:%#x (sidx:%u), tg:%d, vsync:%u, pred/act fl:(curr:%u, 0:%u(%u)/%u,*1:%u(%u)/%u, 2:%u(%u)/%u, 3:%u(%u)/%u), ts_tg_%u:(%u/%u/%u/%u), query_vts_at:%u (SOF + %u)\n",
@@ -523,8 +447,8 @@ static void frm_dump_measurement_data(
 			p_fmeas->timestamps[1],
 			p_fmeas->timestamps[2],
 			p_fmeas->timestamps[3],
-			query_vts_at,
-			time_after_sof);
+			frm_inst.f_info[idx].query_ts_at_us,
+			frm_inst.f_info[idx].time_after_vsync);
 	} else if (p_fmeas->idx == 2) {
 		LOG_PF_INF(
 			"[%u] ID:%#x (sidx:%u), tg:%d, vsync:%u, pred/act fl:(curr:%u, 0:%u(%u)/%u, 1:%u(%u)/%u,*2:%u(%u)/%u, 3:%u(%u)/%u), ts_tg_%u:(%u/%u/%u/%u), query_vts_at:%u (SOF + %u)\n",
@@ -551,8 +475,8 @@ static void frm_dump_measurement_data(
 			p_fmeas->timestamps[1],
 			p_fmeas->timestamps[2],
 			p_fmeas->timestamps[3],
-			query_vts_at,
-			time_after_sof);
+			frm_inst.f_info[idx].query_ts_at_us,
+			frm_inst.f_info[idx].time_after_vsync);
 	} else if (p_fmeas->idx == 3) {
 		LOG_PF_INF(
 			"[%u] ID:%#x (sidx:%u), tg:%d, vsync:%u, pred/act fl:(curr:%u, 0:%u(%u)/%u, 1:%u(%u)/%u, 2:%u(%u)/%u,*3:%u(%u)/%u), ts_tg_%u:(%u/%u/%u/%u), query_vts_at:%u (SOF + %u)\n",
@@ -579,8 +503,8 @@ static void frm_dump_measurement_data(
 			p_fmeas->timestamps[1],
 			p_fmeas->timestamps[2],
 			p_fmeas->timestamps[3],
-			query_vts_at,
-			time_after_sof);
+			frm_inst.f_info[idx].query_ts_at_us,
+			frm_inst.f_info[idx].time_after_vsync);
 	}
 }
 
@@ -623,11 +547,22 @@ static inline void frm_init_measurement(
 }
 
 
-#ifdef FS_UT
-static void frm_update_predicted_fl_us(
-	unsigned int idx,
-	unsigned int curr_fl_us, unsigned int next_fl_us);
-#endif
+static void frm_prepare_frame_measurement_info(
+	const unsigned int idx, unsigned int vdiff[])
+{
+	struct FrameInfo *p_f_info = &frm_inst.f_info[idx];
+	unsigned int i = 0;
+
+	/* update timestamp data in fmeas */
+	for (i = 0; i < VSYNCS_MAX; ++i)
+		p_f_info->fmeas.timestamps[i] = p_f_info->rec.timestamps[i];
+
+	for (i = 0; i < VSYNCS_MAX-1; ++i) {
+		vdiff[i] =
+			p_f_info->fmeas.timestamps[i] -
+			p_f_info->fmeas.timestamps[i+1];
+	}
+}
 
 
 void frm_set_frame_measurement(
@@ -635,12 +570,9 @@ void frm_set_frame_measurement(
 	unsigned int curr_fl_us, unsigned int curr_fl_lc,
 	unsigned int next_fl_us, unsigned int next_fl_lc)
 {
-	unsigned int i = 0;
-
 	struct FrameMeasurement *p_fmeas = &frm_inst.f_info[idx].fmeas;
-	// unsigned int last_updated_idx = (p_fmeas->idx + 1) % VSYNCS_MAX;
+	unsigned int i = 0;
 	unsigned int meas_idx = 0, vts_idx = 0;
-	unsigned int query_vts_at = 0, time_after_sof = 0;
 	unsigned int vdiff[VSYNCS_MAX] = {0};
 
 
@@ -672,7 +604,7 @@ void frm_set_frame_measurement(
 
 
 	/* 3. calculate actual frame length using vsync timestamp */
-	calc_ts_diff_and_info(idx, vdiff, &query_vts_at, &time_after_sof);
+	frm_prepare_frame_measurement_info(idx, vdiff);
 
 	/* ring back */
 	vts_idx = (p_fmeas->idx + (VSYNCS_MAX-1)) % VSYNCS_MAX;
@@ -682,6 +614,8 @@ void frm_set_frame_measurement(
 		vts_idx = (vts_idx + (VSYNCS_MAX-1)) % VSYNCS_MAX;
 	}
 
+	p_fmeas->results[meas_idx].predicted_fl_us = curr_fl_us;
+	p_fmeas->results[meas_idx].predicted_fl_lc = curr_fl_lc;
 	/* for passing more vsyncs case */
 	/*     i from 1 for preventing passed_vsyncs is 0 */
 	/*     and (0-1) compare to (unsigned int) will cause overflow */
@@ -695,8 +629,7 @@ void frm_set_frame_measurement(
 
 
 	/* 4. dump frame measurement */
-	frm_dump_measurement_data(
-		idx, passed_vsyncs, query_vts_at, time_after_sof);
+	frm_dump_measurement_data(idx, passed_vsyncs);
 
 
 	/* 5. update newest predict fl (lc / us) */
@@ -767,8 +700,11 @@ void frm_power_on_ccu(unsigned int flag)
 	struct rproc *ccu_rproc = NULL;
 
 
-	if (!frm_inst.ccu_pdev)
-		get_ccu_device();
+	if (unlikely(!frm_inst.ccu_pdev)) {
+		ret = get_ccu_device(__func__);
+		if (unlikely(ret != 0))
+			return;
+	}
 
 	ccu_rproc = rproc_get_by_phandle(frm_inst.handle);
 
@@ -783,7 +719,9 @@ void frm_power_on_ccu(unsigned int flag)
 		ret = rproc_boot(ccu_rproc);
 
 		if (ret != 0) {
-			LOG_PR_ERR("ERROR: ccu rproc_boot failed!\n");
+			LOG_MUST(
+				"ERROR: call ccu rproc_boot failed, ret:%d\n",
+				ret);
 			return;
 		}
 
@@ -820,8 +758,19 @@ void frm_reset_ccu_vsync_timestamp(unsigned int idx, unsigned int en)
 	uint32_t selbits = 0;
 	int ret = 0;
 
-
 	tg = frm_inst.f_info[idx].tg;
+
+	/* case handling */
+	if (unlikely(tg == CAMMUX_ID_INVALID)) {
+		LOG_MUST(
+			"NOTICE: [%u] ID:%#x(sidx:%u), tg:%u(invalid), do not call CCU reset(1)/clear(0):%u rproc.\n",
+			idx,
+			frm_inst.f_info[idx].sensor_id,
+			frm_inst.f_info[idx].sensor_idx,
+			tg, en);
+
+		return;
+	}
 
 	/* bit 0 no use, so "bit 1" --> means 2 */
 	/* TG_1 -> bit 1, TG_2 -> bit 2, TG_3 -> bit 3 */
@@ -829,9 +778,16 @@ void frm_reset_ccu_vsync_timestamp(unsigned int idx, unsigned int en)
 
 
 #ifndef FS_UT
-	if (!frm_inst.ccu_pdev)
-		get_ccu_device();
+	if (unlikely(!frm_inst.ccu_pdev)) {
+		ret = get_ccu_device(__func__);
+		if (unlikely(ret != 0))
+			return;
+	}
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	if (en > 0)
+		frm_pm_runtime_ctrl(tg, 1);
+#endif // OPLUS_FEATURE_CAMERA_COMMON
 	/* call CCU to reset vsync timestamp */
 	ret = mtk_ccu_rproc_ipc_send(
 		frm_inst.ccu_pdev,
@@ -850,10 +806,17 @@ void frm_reset_ccu_vsync_timestamp(unsigned int idx, unsigned int en)
 		LOG_MUST(
 			"called CCU reset(1)/clear(0):%u, tg:%u (selbits:%u) vsync data, ret:%u\n",
 			en, tg, selbits, ret);
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#ifndef FS_UT
+	if (en == 0)
+		frm_pm_runtime_ctrl(tg, 0);
+#endif
+#endif // OPLUS_FEATURE_CAMERA_COMMON
 }
 
 
-unsigned int frm_get_ccu_pwn_cnt(void)
+int frm_get_ccu_pwn_cnt(void)
 {
 #if !defined(FS_UT)
 	return frm_inst.power_on_cnt;
@@ -909,6 +872,51 @@ void frm_init_frame_info_st_data(
 }
 
 
+static void frm_set_frame_info_vsync_rec_data(const struct vsync_rec (*pData))
+{
+	unsigned int i = 0, j = 0;
+
+#if defined(FS_UT)
+	dump_vsync_recs(pData, __func__);
+#endif // FS_UT
+
+	/* always keeps newest tick info (and tick factor) */
+	frm_inst.cur_tick = pData->cur_tick;
+	frm_inst.tick_factor = pData->tick_factor;
+
+	for (i = 0; i < SENSOR_MAX_NUM; ++i) {
+		struct FrameInfo *p_f_info = &frm_inst.f_info[i];
+
+		/* for SA Frame-Sync, "ids" equal to 1 */
+		for (j = 0; j < pData->ids; ++j) {
+			unsigned int rec_id = pData->recs[j].id;
+
+			/* check each sensor info (if tg match) */
+			if (p_f_info->tg == rec_id) {
+				/* copy data */
+				p_f_info->rec = pData->recs[j];
+				p_f_info->query_ts_at_tick = pData->cur_tick;
+
+				/* update frame info data */
+				p_f_info->query_ts_at_us =
+					(frm_inst.tick_factor > 0)
+					? (p_f_info->query_ts_at_tick
+						/ frm_inst.tick_factor)
+					: 0;
+				p_f_info->time_after_vsync =
+					(p_f_info->query_ts_at_us > 0)
+					? (p_f_info->query_ts_at_us
+						- p_f_info->rec.timestamps[0])
+					: 0;
+
+#if defined(FS_UT)
+				dump_frame_info(i, __func__);
+#endif // FS_UT
+			}
+		}
+	}
+}
+
 static void frm_set_wait_for_setting_fmeas_by_tg(
 	unsigned int tgs[], unsigned int len)
 {
@@ -919,14 +927,6 @@ static void frm_set_wait_for_setting_fmeas_by_tg(
 			continue;
 
 		for (j = 0; j < len; ++j) {
-			if (!check_tg_valid(tgs[j])) {
-				LOG_MUST(
-					"ERROR: invalid tg:%u num, skip\n",
-					tgs[j]);
-
-				continue;
-			}
-
 			if (frm_inst.f_info[i].tg == tgs[j]) {
 				frm_inst.f_info[i]
 					.wait_for_setting_predicted_fl = 1;
@@ -1032,6 +1032,135 @@ unsigned int frm_convert_cammux_tg_to_ccu_tg(unsigned int tg)
 	return tg_mapped;
 }
 
+static int frm_get_mraw_id(unsigned int id)
+{
+#if !defined(FS_UT)
+
+	struct device_node *dev_node = NULL;
+	unsigned int mraw_id, cammux_id;
+	int ret = -1;
+
+	do {
+		dev_node = of_find_compatible_node(dev_node, NULL,
+			"mediatek,mraw");
+
+		if (dev_node) {
+			if (of_property_read_u32(dev_node,
+					"mediatek,mraw-id", &mraw_id)
+				|| of_property_read_u32(dev_node,
+					"mediatek,cammux-id", &cammux_id)) {
+				/* property not found */
+				continue;
+			}
+
+			if (cammux_id == (id - 1)) {
+				ret = mraw_id;
+				break;
+			}
+		}
+	} while (dev_node);
+
+#if !defined(REDUCE_FRM_LOG)
+	LOG_MUST(
+		"get cammux_id:%u(from 1), mraw_id:%u(from 0), cammux_id:%u, ret:%d\n",
+		id, mraw_id, cammux_id, ret);
+#endif
+
+	return ret;
+
+#else
+	return (id > 0 && id <= FS_UT_TG_MAPPING_SIZE)
+		? ut_mraw_tg_mapping[id-1] : -1;
+#endif // FS_UT
+}
+
+
+static int frm_get_camsv_id(unsigned int id)
+{
+#if !defined(FS_UT)
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	struct platform_device *pdev = NULL;
+#endif // OPLUS_FEATURE_CAMERA_COMMON
+	struct device_node *dev_node = NULL;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+	unsigned int camsv_id, cammux_id;
+#else // OPLUS_FEATURE_CAMERA_COMMON
+	unsigned int camsv_id, cammux_id, ccu_tg_id;
+#endif // OPLUS_FEATURE_CAMERA_COMMON
+	int ret = -1;
+
+	do {
+		dev_node = of_find_compatible_node(dev_node, NULL,
+			"mediatek,camsv");
+
+		if (dev_node) {
+			if (of_property_read_u32(dev_node,
+					"mediatek,camsv-id", &camsv_id)
+				|| of_property_read_u32(dev_node,
+					"mediatek,cammux-id", &cammux_id)) {
+				/* property not found */
+				continue;
+			}
+
+			if (cammux_id == (id - 1)) {
+				ret = camsv_id;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+				ccu_tg_id = camsv_id + CAMSV_TG_MIN;
+				pdev = of_find_device_by_node(dev_node);
+				if (unlikely(pdev == NULL)) {
+					LOG_MUST(
+						"ERROR: of find device by node failed, camsv_id:%d\n",
+						camsv_id);
+				} else {
+					frm_inst.pdevs[ccu_tg_id] = pdev;
+					LOG_MUST(
+						"NOTICE: get & keep pdevs[%u]:(%s) for camsv-id:%d\n",
+						ccu_tg_id,
+						frm_inst.pdevs[ccu_tg_id]->name,
+						camsv_id);
+				}
+#endif // OPLUS_FEATURE_CAMERA_COMMON
+				break;
+			}
+		}
+	} while (dev_node);
+
+#if !defined(REDUCE_FRM_LOG)
+	LOG_MUST(
+		"get cammux_id:%u(from 1), camsv_id:%u(from 0), cammux_id:%u, ret:%d\n",
+		id, camsv_id, cammux_id, ret);
+#endif
+
+	return ret;
+
+#else
+	return (id > 0 && id <= FS_UT_TG_MAPPING_SIZE)
+		? ut_camsv_tg_mapping[id-1] : -1;
+#endif // FS_UT
+}
+
+
+unsigned int frm_convert_cammux_id_to_ccu_tg_id(unsigned int cammux_id)
+{
+	int camsv_id = frm_get_camsv_id(cammux_id);
+	int mraw_id = frm_get_mraw_id(cammux_id);
+	unsigned int ccu_tg_id;
+
+	if (camsv_id >= 0)
+		ccu_tg_id = camsv_id + CAMSV_TG_MIN;
+	else if (mraw_id >= 0)
+		ccu_tg_id = mraw_id + MRAW_TG_MIN;
+	else
+		ccu_tg_id = cammux_id;
+
+	LOG_MUST(
+		"get cammux_id:%u(from 1), camsv_id:%d(from 0), mraw_id:%d(from 0), ccu_tg_id:%u(CAMSV_TG_MIN:%u, CAMSV_TG_MAX:%u, MRAW_TG_MIN:%u, MRAW_TG_MAX:%u)\n",
+		cammux_id, camsv_id, mraw_id, ccu_tg_id,
+		CAMSV_TG_MIN, CAMSV_TG_MAX, MRAW_TG_MIN, MRAW_TG_MAX);
+
+	return ccu_tg_id;
+}
+
 
 void frm_update_tg(unsigned int idx, unsigned int tg)
 {
@@ -1047,6 +1176,21 @@ void frm_update_tg(unsigned int idx, unsigned int tg)
 #endif // REDUCE_FRM_LOG
 }
 
+
+static void frm_save_vsync_timestamp(struct vsync_rec (*pData))
+{
+#ifdef FS_UT
+	/* run in test mode */
+	if (frm_inst.debug_flag) {
+		// frm_inst.debug_flag = 0;
+		frm_debug_copy_frame_info_vsync_rec_data(pData);
+
+		return;
+	}
+#endif
+
+	frm_set_frame_info_vsync_rec_data(pData);
+}
 
 /*
  * input:
@@ -1124,11 +1268,7 @@ unsigned int frm_query_vsync_data(
 
 
 #ifndef REDUCE_FRM_LOG
-	LOG_INF("call dump_frm_ts_recs\n");
-	dump_frm_ts_recs();
-
-	LOG_INF("call dump_vsync_rec\n");
-	dump_vsync_rec(pData);
+	dump_vsync_recs(pData, __func__);
 #endif
 
 
@@ -1136,173 +1276,6 @@ unsigned int frm_query_vsync_data(
 
 
 	return 0;
-}
-
-
-static unsigned int frm_detect_repeat_ts_check(
-	unsigned int m_tg, unsigned int s_tg,
-	unsigned int m_ts_select, unsigned int s_ts_select)
-{
-	unsigned int m_tg_idx, s_tg_idx;
-	unsigned int m_last_ts, s_last_ts;
-	unsigned int m_ts_repeat = 0, s_ts_repeat = 0;
-
-
-	/* recs[] array boundary check */
-	if ((!check_tg_vsync_rec_pos_valid(m_tg))
-		|| (!check_tg_vsync_rec_pos_valid(s_tg)))
-		return -1;
-
-	m_tg_idx = m_tg - 1;
-	s_tg_idx = s_tg - 1;
-
-	m_last_ts = frm_inst.recs[m_tg_idx].timestamps[m_ts_select];
-	s_last_ts = frm_inst.recs[s_tg_idx].timestamps[s_ts_select];
-
-	if (m_last_ts == frm_inst.ts_last_check[m_tg_idx]) {
-		/* timestamp have been queried last turn */
-		m_ts_repeat = 1;
-	} else {
-		/* update record data of timestamp */
-		frm_inst.ts_last_check[m_tg_idx] = m_last_ts;
-	}
-
-	if (s_last_ts == frm_inst.ts_last_check[s_tg_idx]) {
-		/* timestamp have been queried last turn */
-		s_ts_repeat = 1;
-	} else {
-		/* update record data of timestamp */
-		frm_inst.ts_last_check[s_tg_idx] = s_last_ts;
-	}
-
-
-#if !defined(REDUCE_FRM_LOG)
-	LOG_MUST("tg(m:%u/s:%u), select(m:%u/s:%u), ts(%u, %u) record_ts(%u, %u)\n",
-		m_tg, s_tg, m_ts_select, s_ts_select,
-		m_last_ts, s_last_ts,
-		frm_inst.ts_last_check[m_tg_idx],
-		frm_inst.ts_last_check[s_tg_idx]);
-#endif // REDUCE_FRM_LOG
-
-
-	return (m_ts_repeat && s_ts_repeat);
-}
-
-
-/*
- * input:
- *     m_tg: master sensor tg num
- *     s_tg: slave sensor tg num
- *
- * return (negative/0/1) for (non valid or no match/non-sync/sync)
- *
- * time Complexity: O(n) => (2*VSYNCS_MAX)
- */
-int frm_timestamp_checker(unsigned int m_tg, unsigned int s_tg)
-{
-	int result;
-	unsigned int i;
-	unsigned int m_tg_idx, s_tg_idx;
-	unsigned int m_last_ts, s_last_ts, diff;
-	unsigned int m_min_idx = 0, s_min_idx = 0, min_diff = (0-1);
-	unsigned int m_ts_updated = 0, s_ts_updated = 0;
-
-
-	/* recs[] array boundary check */
-	if ((!check_tg_vsync_rec_pos_valid(m_tg))
-		|| (!check_tg_vsync_rec_pos_valid(s_tg)))
-		return -1;
-
-	m_tg_idx = m_tg - 1;
-	s_tg_idx = s_tg - 1;
-
-	m_last_ts = frm_inst.recs[m_tg_idx].timestamps[0];
-	s_last_ts = frm_inst.recs[s_tg_idx].timestamps[0];
-
-	if (m_last_ts == 0 || s_last_ts == 0) {
-		result = -1;
-		goto timestamp_checker_log;
-	}
-
-	/* check if timestamp have been updated */
-	m_ts_updated = (m_last_ts != frm_inst.ts_last_query[m_tg_idx]) ? 1 : 0;
-	s_ts_updated = (s_last_ts != frm_inst.ts_last_query[s_tg_idx]) ? 1 : 0;
-
-	if (m_ts_updated)
-		frm_inst.ts_last_query[m_tg_idx] = m_last_ts;
-	if (s_ts_updated)
-		frm_inst.ts_last_query[s_tg_idx] = s_last_ts;
-
-
-	/* use slave last timestamp to find best match timestamp of master */
-	for (i = 0; i < VSYNCS_MAX; ++i) {
-		if (s_last_ts > frm_inst.recs[m_tg_idx].timestamps[i])
-			diff = s_last_ts - frm_inst.recs[m_tg_idx].timestamps[i];
-		else
-			diff = frm_inst.recs[m_tg_idx].timestamps[i] - s_last_ts;
-
-		if (diff < min_diff) {
-			min_diff = diff;
-			m_min_idx = i;
-			s_min_idx = 0;
-		}
-	}
-
-	/* use master last timestamp to find best match timestamp of slave */
-	for (i = 0; i < VSYNCS_MAX; ++i) {
-		if (m_last_ts > frm_inst.recs[s_tg_idx].timestamps[i])
-			diff = m_last_ts - frm_inst.recs[s_tg_idx].timestamps[i];
-		else
-			diff = frm_inst.recs[s_tg_idx].timestamps[i] - m_last_ts;
-
-		if (diff < min_diff) {
-			min_diff = diff;
-			s_min_idx = i;
-			m_min_idx = 0;
-		}
-	}
-
-	if (frm_detect_repeat_ts_check(m_tg, s_tg, m_min_idx, s_min_idx))
-		return -1;
-
-	frm_inst.ts_check_cnt++;
-
-	/* TODO: find a way for checking ts no match to get diff */
-	result = (min_diff < FS_TOLERANCE) ? 1 : 0;
-	if (result == 0) {
-		/* TODO: not hardcode 33350/2 */
-		if (min_diff >= 16675)
-			if ((m_min_idx == s_min_idx+3)
-				|| (s_min_idx == m_min_idx+3)) {
-				/* mark as no match */
-				result = -1;
-			}
-	}
-
-timestamp_checker_log:
-
-	LOG_PF_INF(
-		"sync:%d, diff:%u, cnt:%u, ts_idx(m:%u/s:%u), ts_tg_%u(%u):(0:%u/1:%u/2:%u/3:%u, %u)/ts_tg_%u(%u):(0:%u/1:%u/2:%u/3:%u, %u)\n",
-		result,
-		min_diff,
-		frm_inst.ts_check_cnt,
-		m_min_idx, s_min_idx,
-		m_tg,
-		m_ts_updated,
-		frm_inst.recs[m_tg_idx].timestamps[0],
-		frm_inst.recs[m_tg_idx].timestamps[1],
-		frm_inst.recs[m_tg_idx].timestamps[2],
-		frm_inst.recs[m_tg_idx].timestamps[3],
-		frm_inst.recs[m_tg_idx].vsyncs,
-		s_tg,
-		s_ts_updated,
-		frm_inst.recs[s_tg_idx].timestamps[0],
-		frm_inst.recs[s_tg_idx].timestamps[1],
-		frm_inst.recs[s_tg_idx].timestamps[2],
-		frm_inst.recs[s_tg_idx].timestamps[3],
-		frm_inst.recs[s_tg_idx].vsyncs);
-
-	return result;
 }
 /******************************************************************************/
 
@@ -1321,6 +1294,17 @@ int frm_get_instance_idx_by_tg(unsigned int tg)
 	unsigned int i = 0;
 
 	for (i = 0; i < SENSOR_MAX_NUM; ++i) {
+
+#if !defined(REDUCE_FRM_LOG)
+		LOG_INF(
+			"f_info[%u](sensor_id:%#x / sensor_idx:%u / tg:%u), input tg:%u\n",
+			i,
+			frm_inst.f_info[i].sensor_id,
+			frm_inst.f_info[i].sensor_idx,
+			frm_inst.f_info[i].tg,
+			tg);
+#endif
+
 		if (frm_inst.f_info[i].tg == tg) {
 			ret = i;
 			break;
@@ -1336,14 +1320,13 @@ void frm_update_predicted_curr_fl_us(unsigned int idx, unsigned int fl_us)
 	frm_inst.f_info[idx].predicted_curr_fl_us = fl_us;
 
 
-#ifndef REDUCE_FRM_LOG
-	/* log */
+#if !defined(REDUCE_FRM_LOG)
 	LOG_INF(
 		"[%u] ID:%#x (sidx:%u), predicted_curr_fl:%u (us)\n",
 		idx,
 		frm_inst.f_info[idx].sensor_id,
 		frm_inst.f_info[idx].sensor_idx,
-		frm_inst.f_info[idx].predicted_fl_us);
+		frm_inst.f_info[idx].predicted_curr_fl_us);
 #endif
 }
 
@@ -1353,8 +1336,7 @@ void frm_update_next_vts_bias_us(unsigned int idx, unsigned int vts_bias)
 	frm_inst.f_info[idx].next_vts_bias = vts_bias;
 
 
-#ifndef REDUCE_FRM_LOG
-	/* log */
+#if !defined(REDUCE_FRM_LOG)
 	LOG_INF(
 		"[%u] ID:%#x (sidx:%u), next_vts_bias:%u (us)\n",
 		idx,
@@ -1370,8 +1352,7 @@ void frm_set_sensor_curr_fl_us(unsigned int idx, unsigned int fl_us)
 	frm_inst.f_info[idx].sensor_curr_fl_us = fl_us;
 
 
-#ifndef REDUCE_FRM_LOG
-	/* log */
+#if !defined(REDUCE_FRM_LOG)
 	LOG_INF(
 		"[%u] ID:%#x (sidx:%u), sensor_curr_fl:%u (us)\n",
 		idx,
@@ -1382,7 +1363,7 @@ void frm_set_sensor_curr_fl_us(unsigned int idx, unsigned int fl_us)
 }
 
 
-static void frm_update_predicted_fl_us(
+void frm_update_predicted_fl_us(
 	unsigned int idx,
 	unsigned int curr_fl_us, unsigned int next_fl_us)
 {
@@ -1390,8 +1371,7 @@ static void frm_update_predicted_fl_us(
 	frm_inst.f_info[idx].predicted_next_fl_us = next_fl_us;
 
 
-#ifndef REDUCE_FRM_LOG
-	/* log */
+#if !defined(REDUCE_FRM_LOG)
 	LOG_INF(
 		"[%u] ID:%#x (sidx:%u), predicted_fl( curr:%u, next:%u ) (us)\n",
 		idx,
@@ -1415,6 +1395,18 @@ void frm_get_predicted_fl_us(
 	fl_us[0] = frm_inst.f_info[idx].predicted_curr_fl_us;
 	fl_us[1] = frm_inst.f_info[idx].predicted_next_fl_us;
 	*sensor_curr_fl_us = frm_inst.f_info[idx].sensor_curr_fl_us;
+
+#if !defined(REDUCE_FRM_LOG)
+	LOG_INF(
+		"f_info[%u](sensor_id:%#x / sensor_idx:%u / tg:%u / predicted_fl(c:%u, n:%u) / sensor_curr_fl:%u)\n",
+		idx,
+		frm_inst.f_info[idx].sensor_id,
+		frm_inst.f_info[idx].sensor_idx,
+		frm_inst.f_info[idx].tg,
+		frm_inst.f_info[idx].predicted_curr_fl_us,
+		frm_inst.f_info[idx].predicted_next_fl_us,
+		frm_inst.f_info[idx].sensor_curr_fl_us);
+#endif
 }
 
 
@@ -1424,17 +1416,58 @@ void frm_get_next_vts_bias_us(unsigned int idx, unsigned int *vts_bias)
 }
 
 
+void frm_debug_copy_frame_info_vsync_rec_data(struct vsync_rec (*p_vsync_res))
+{
+	unsigned int i = 0, j = 0;
+
+	/* always keeps newest tick info (and tick factor) */
+	p_vsync_res->cur_tick = frm_inst.cur_tick;
+	p_vsync_res->tick_factor = frm_inst.tick_factor;
+
+#if !defined(REDUCE_FRM_LOG)
+	LOG_MUST(
+		"sync vsync rec data (cur tick:%u, tick factor:%u)\n",
+		frm_inst.cur_tick,
+		frm_inst.tick_factor);
+#endif // REDUCE_FRM_LOG
+
+	for (i = 0; i < p_vsync_res->ids; ++i) {
+		unsigned int rec_id = p_vsync_res->recs[i].id;
+
+		for (j = 0; j < SENSOR_MAX_NUM; ++j) {
+			/* check info match */
+			if (frm_inst.f_info[j].tg == rec_id) {
+				/* copy data */
+				p_vsync_res->recs[i] = frm_inst.f_info[j].rec;
+
+#if !defined(REDUCE_FRM_LOG)
+				LOG_MUST(
+					"rec_id:%u/tg:%u, sync data vsyncs:%u, ts:(%u/%u/%u/%u)\n",
+					p_vsync_res->recs[i].id,
+					frm_inst.f_info[j].tg,
+					p_vsync_res->recs[i].vsyncs,
+					p_vsync_res->recs[i].timestamps[0],
+					p_vsync_res->recs[i].timestamps[1],
+					p_vsync_res->recs[i].timestamps[2],
+					p_vsync_res->recs[i].timestamps[3]);
+#endif // REDUCE_FRM_LOG
+			}
+		}
+	}
+
+	dump_vsync_recs(p_vsync_res, __func__);
+}
+
+
 void frm_debug_set_last_vsync_data(struct vsync_rec (*pData))
 {
 	frm_inst.debug_flag = 1;
-
 
 #ifndef REDUCE_FRM_LOG
 	LOG_INF("[debug] set data [debug_flag:%d]\n", frm_inst.debug_flag);
 #endif
 
-
-	copy_vsync_data_of_query(pData);
+	frm_set_frame_info_vsync_rec_data(pData);
 }
 #endif
 /******************************************************************************/

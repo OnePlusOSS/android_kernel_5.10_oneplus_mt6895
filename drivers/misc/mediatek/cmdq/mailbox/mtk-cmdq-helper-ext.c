@@ -11,14 +11,24 @@
 #include <linux/dma-mapping.h>
 #include <linux/dmapool.h>
 #include <linux/sched/clock.h>
+
+/*#ifdef OPLUS_BUG_STABILITY*/
+#include <soc/oplus/system/oplus_mm_kevent_fb.h>
+/*#endif*/
+
 #include <linux/timer.h>
 #include <linux/delay.h>
+
 
 #include <iommu_debug.h>
 
 #include "vcp.h"
 #include "vcp_status.h"
 #include "vcp_reg.h"
+
+#if IS_ENABLED(CONFIG_MTK_EMI)
+#include <soc/mediatek/emi.h>
+#endif
 
 #if IS_ENABLED(CONFIG_MTK_CMDQ_MBOX_EXT)
 #include "cmdq-util.h"
@@ -535,12 +545,13 @@ static void cmdq_dump_vcp_reg(struct cmdq_pkt *pkt)
 	}
 }
 
-static bool cmdq_pkt_is_exec(struct cmdq_pkt *pkt)
+bool cmdq_pkt_is_exec(struct cmdq_pkt *pkt)
 {
 	if (pkt && pkt->task_alloc && !pkt->rec_irq)
 		return true;
 	return false;
 }
+EXPORT_SYMBOL(cmdq_pkt_is_exec);
 
 void cmdq_mbox_pool_set_limit(struct cmdq_client *cl, u32 limit)
 {
@@ -929,7 +940,7 @@ struct cmdq_pkt *cmdq_pkt_create(struct cmdq_client *client)
 		pkt->dev = client->chan->mbox->dev;
 
 #if IS_ENABLED(CONFIG_MTK_CMDQ_MBOX_EXT)
-	if (client && cmdq_util_helper->is_feature_en(CMDQ_LOG_FEAT_PERF))
+	if (client)
 		cmdq_pkt_perf_begin(pkt);
 #endif
 	pkt->task_alive = true;
@@ -2010,6 +2021,9 @@ void cmdq_pkt_perf_begin(struct cmdq_pkt *pkt)
 	dma_addr_t pa;
 	struct cmdq_pkt_buffer *buf;
 
+	if (!cmdq_util_helper->is_feature_en(CMDQ_LOG_FEAT_PERF))
+		return;
+
 	if (!pkt->buf_size)
 		if (cmdq_pkt_add_cmd_buffer(pkt) < 0)
 			return;
@@ -2026,6 +2040,9 @@ void cmdq_pkt_perf_end(struct cmdq_pkt *pkt)
 {
 	dma_addr_t pa;
 	struct cmdq_pkt_buffer *buf;
+
+	if (!cmdq_util_helper->is_feature_en(CMDQ_LOG_FEAT_PERF))
+		return;
 
 	if (!pkt->buf_size)
 		if (cmdq_pkt_add_cmd_buffer(pkt) < 0)
@@ -2167,8 +2184,7 @@ s32 cmdq_pkt_finalize(struct cmdq_pkt *pkt)
 		return 0;
 
 #if IS_ENABLED(CONFIG_MTK_CMDQ_MBOX_EXT)
-	if (cmdq_util_helper->is_feature_en(CMDQ_LOG_FEAT_PERF))
-		cmdq_pkt_perf_end(pkt);
+	cmdq_pkt_perf_end(pkt);
 
 #ifdef CMDQ_SECURE_SUPPORT
 	if (pkt->sec_data) {
@@ -2209,6 +2225,9 @@ s32 cmdq_pkt_refinalize(struct cmdq_pkt *pkt)
 		dump_stack();
 		return 0;
 	}
+
+	if (!cmdq_pkt_is_finalized(pkt))
+		return 0;
 
 	if (!cmdq_pkt_is_finalized(pkt))
 		return 0;
@@ -2422,7 +2441,9 @@ static void cmdq_pkt_call_item_cb(struct cmdq_flush_item *item)
 
 	if (!item->err_cb)
 		return;
+	cmdq_msg("%s dump err_cb", __func__);
 	item->err_cb(cb_data);
+	cmdq_msg("%s dump err_cb done", __func__);
 }
 #endif
 
@@ -2459,8 +2480,11 @@ void cmdq_pkt_err_dump_cb(struct cmdq_cb_data data)
 		cmdq_util_helper->error_enable();
 
 	cmdq_util_user_err(client->chan, "Begin of Error %u", err_num);
-
-	cmdq_dump_core(client->chan);
+	/*#ifdef OPLUS_BUG_STABILITY*/
+	if (err_num < 5) {
+		mm_fb_display_kevent("DisplayDriverID@@508$$", MM_FB_KEY_RATELIMIT_1H, "cmdq timeout Begin of Error %u", err_num);
+	}
+	/*#endif*/
 
 #ifdef CMDQ_SECURE_SUPPORT
 	/* for secure path dump more detail */
@@ -2470,6 +2494,7 @@ void cmdq_pkt_err_dump_cb(struct cmdq_cb_data data)
 		cmdq_sec_helper->sec_err_dump_fp(
 			pkt, client, (u64 **)&inst, &mod);
 	} else {
+		cmdq_dump_core(client->chan);
 		cmdq_thread_dump(client->chan, pkt, (u64 **)&inst, &pc);
 	}
 
@@ -2483,8 +2508,12 @@ void cmdq_pkt_err_dump_cb(struct cmdq_cb_data data)
 #endif
 
 	if (inst && inst->op == CMDQ_CODE_WFE) {
+#ifdef CMDQ_SECURE_SUPPORT
+		if (!pkt->sec_data)
+			cmdq_print_wait_summary(client->chan, pc, inst);
+#else
 		cmdq_print_wait_summary(client->chan, pc, inst);
-
+#endif
 		if (inst->arg_a >= CMDQ_TOKEN_PREBUILT_MDP_WAIT &&
 			inst->arg_a <= CMDQ_TOKEN_DISP_VA_END)
 			cmdq_util_prebuilt_dump(
@@ -2574,8 +2603,10 @@ s32 cmdq_pkt_flush_async(struct cmdq_pkt *pkt,
 	u64 start = sched_clock(), diff;
 
 #if IS_ENABLED(CONFIG_MTK_CMDQ_MBOX_EXT)
-	if (IS_ERR(item))
+	if (IS_ERR(item)) {
+		cmdq_err("cmdq_prepare_flush_tiem return");
 		return -ENOMEM;
+	}
 #endif
 	if (!client) {
 		cmdq_err("client is NULL");
@@ -2584,8 +2615,10 @@ s32 cmdq_pkt_flush_async(struct cmdq_pkt *pkt,
 	}
 
 	err = cmdq_pkt_finalize(pkt);
-	if (err < 0)
+	if (err < 0) {
+		cmdq_err("cmdq_pkt_finalize return err:%d", err);
 		return err;
+	}
 
 #if IS_ENABLED(CONFIG_MTK_CMDQ_MBOX_EXT)
 	item->cb = cb;
@@ -2593,8 +2626,13 @@ s32 cmdq_pkt_flush_async(struct cmdq_pkt *pkt,
 	pkt->cb.cb = cmdq_flush_async_cb;
 	pkt->cb.data = pkt;
 
-	item->err_cb = pkt->err_cb.cb;
-	item->err_data = pkt->err_cb.data;
+	if (pkt->err_cb.cb == cmdq_pkt_err_dump_cb) {
+		item->err_cb = NULL;
+		item->err_data = NULL;
+	} else {
+		item->err_cb = pkt->err_cb.cb;
+		item->err_data = pkt->err_cb.data;
+	}
 	pkt->err_cb.cb = cmdq_pkt_err_dump_cb;
 	pkt->err_cb.data = pkt;
 
@@ -2607,8 +2645,14 @@ s32 cmdq_pkt_flush_async(struct cmdq_pkt *pkt,
 
 	mutex_lock(&client->chan_mutex);
 	err = mbox_send_message(client->chan, pkt);
-	if (!pkt->task_alloc)
+
+	if (err < 0)
+		cmdq_err("mbox_send_message return err:%d", err);
+
+	if (!pkt->task_alloc) {
 		err = -ENOMEM;
+		cmdq_err("pkt->task_alloc fail");
+	}
 	/* We can send next packet immediately, so just call txdone. */
 	mbox_client_txdone(client->chan, 0);
 	mutex_unlock(&client->chan_mutex);
@@ -2685,6 +2729,9 @@ static int cmdq_pkt_wait_complete_loop(struct cmdq_pkt *pkt)
 		cmdq_util_user_msg(client->chan,
 			"===== SW timeout Pre-dump %u =====", cnt);
 		++cnt;
+#if IS_ENABLED(CONFIG_MTK_EMI)
+		mtk_emidbg_dump();
+#endif
 		cmdq_dump_summary(client, pkt);
 		cmdq_util_helper->dump_unlock();
 	}
@@ -2772,8 +2819,10 @@ s32 cmdq_pkt_flush_threaded(struct cmdq_pkt *pkt,
 	s32 err;
 	u64 start = sched_clock(), diff;
 
-	if (!item_q)
+	if (!item_q) {
+		cmdq_err("item_q is null");
 		return -ENOMEM;
+	}
 
 	item_q->cb = cb;
 	item_q->data = data;
@@ -2788,6 +2837,8 @@ s32 cmdq_pkt_flush_threaded(struct cmdq_pkt *pkt,
 
 		cmdq_pkt_flush_q_cb(data);
 	}
+	else
+		cmdq_err("cmdq_pkt_flush_async return err:%d", err);
 #else
 	INIT_WORK(&item_q->work, cmdq_pkt_flush_q_cb_work);
 	err = cmdq_pkt_flush_async(pkt, cmdq_pkt_flush_q_cb, item_q);

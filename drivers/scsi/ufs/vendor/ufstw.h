@@ -1,6 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Universal Flash Storage tw Write
+ * Universal Flash Storage Turbo Write
  *
  * Copyright (C) 2017-2018 Samsung Electronics Co., Ltd.
  *
@@ -47,16 +46,79 @@
 
 #include "../../../block/blk.h"
 
-#define UFSTW_VER					0x0110
-#define UFSTW_DD_VER					0x010300
+#define UFSTW_VER					0x0203
+#define UFSTW_DD_VER					0x020201
 #define UFSTW_DD_VER_POST				""
 
-#define UFSTW_LIFETIME_SECT				2097152 /* 1GB */
+#define UFSTW_LIFETIME_WRITE_SECT_INTERVAL_DEFAULT	2097152  /* 1GB */
+#define UFSTW_RESIZE_WRITE_SECT_INTERVAL_DEFAULT	2097152  /* 1GB */
+#define UFSTW_RESIZE_WRITE_SECT_INTERVAL_MIN		524288   /* 256KB */
+#define UFSTW_RESIZE_WRITE_SECT_INTERVAL_MAX		20971520 /* 10GB */
+
 #define UFSTW_MAX_LIFETIME_VALUE			0x0B
 #define MASK_UFSTW_LIFETIME_NOT_GUARANTEE		0x80
+
+#define UFSTW_RESIZE_STATUS_IDLE			0
+#define UFSTW_RESIZE_STATUS_IN_PROGRESS			1
+#define UFSTW_RESIZE_STATUS_SUCCESS			2
+#define UFSTW_RESIZE_STATUS_FAIL			3
+
+#define UFSTW_RESIZE_DECREASE				0x0
+#define UFSTW_RESIZE_INCREASE				0x1
+#define UFSTW_RESIZE_NONE				0xff
+
 #define UFS_FEATURE_SUPPORT_TW_BIT			0x100
 
 #define TW_LU_SHARED					-1
+
+#define TW_SHARED_BUF(ufsf) (ufsf->tw_dev_info.tw_buf_type == TW_BUF_TYPE_SHARED)
+
+#define FLAG_IDN_NAME(idn)						\
+	(idn == QUERY_FLAG_IDN_TW_EN ? "tw_enable" :			\
+	 idn == QUERY_FLAG_IDN_TW_BUF_FLUSH_EN ? "flush_enable" :	\
+	 idn == QUERY_FLAG_IDN_TW_FLUSH_DURING_HIBERN ? "flush_hibern" :\
+	 idn == QUERY_FLAG_IDN_TW_BUF_FULL_COUNT_INIT ? "full_count_init" :\
+	 "unknown")
+
+#define ATTR_IDN_NAME(idn)						\
+	(idn == QUERY_ATTR_IDN_TW_FLUSH_STATUS ? "flush_status" :	\
+	 idn == QUERY_ATTR_IDN_TW_AVAIL_BUF_SIZE ? "avail_buffer_size" :\
+	 idn == QUERY_ATTR_IDN_TW_BUF_LIFETIME_EST ? "lifetime_est" :	\
+	 idn == QUERY_ATTR_IDN_TW_CURR_BUF_SIZE ? "current_buf_size" :	\
+	 idn == QUERY_ATTR_IDN_MAX_NO_FLUSH_TW_BUF_ALLOC_UNITS ?	\
+	 "max_no_flush_alloc_units" :\
+	 idn == QUERY_ATTR_IDN_TW_BUF_RESIZE ? "resize" :		\
+	 idn == QUERY_ATTR_IDN_TW_BUF_RESIZE_STATUS ? "resize_status" :	\
+	 idn == QUERY_ATTR_IDN_RESIZED_TW_BUF_ALLOC_UNITS ? "resized_alloc_units" :\
+	 idn == QUERY_ATTR_IDN_TW_BUF_FULL_COUNT ? "full_count" :	\
+	 idn == QUERY_ATTR_IDN_TW_BUF_RESIZE_NOT_AVAIL ? "resize_not_avail" :\
+	 idn == QUERY_ATTR_IDN_BKOPS_STATUS ? "bkops_status" :\
+	 "unknown")
+
+#define RESIZE_AUTO_TO_STR(no) (no ? "ON" : "OFF")
+
+#define RESIZE_STATUS_TO_STR(no)					\
+	(no == UFSTW_RESIZE_STATUS_IDLE ? "idle" :			\
+	 no == UFSTW_RESIZE_STATUS_IN_PROGRESS ? "in_progress" :	\
+	 no == UFSTW_RESIZE_STATUS_SUCCESS ? "completed successfully" :	\
+	 no == UFSTW_RESIZE_STATUS_FAIL ? "fail" : "unknown")
+
+/*
+ * UFSTW DEBUG
+ */
+
+#if defined(CONFIG_UFSTW_DEBUG)
+#define TW_DEBUG(tw, msg, args...)			\
+	do { if (tw && tw->debug)			\
+		printk(KERN_ERR "%s:%d " msg "\n",	\
+		       __func__, __LINE__, ##args);	\
+	} while (0)
+#else
+#define TW_DEBUG(hpb, msg, args...)	do { } while (0)
+#endif
+
+#define TW_FTRACE(tw, msg, args...)			\
+	trace_printk("%04d\t " msg "\n", __LINE__, ##args);
 
 enum UFSTW_STATE {
 	TW_NEED_INIT = 0,
@@ -64,7 +126,6 @@ enum UFSTW_STATE {
 	TW_SUSPEND = 2,
 	TW_RESET = -3,
 	TW_FAILED = -4,
-	TW_PREPARE_RESET = -5,
 };
 
 enum {
@@ -87,6 +148,7 @@ struct ufstw_lu {
 	struct ufsf_feature *ufsf;
 
 	int lun;
+	unsigned int lu_buf_size;
 
 	bool tw_enable;
 	bool flush_enable;
@@ -97,14 +159,33 @@ struct ufstw_lu {
 	unsigned int curr_buffer_size;
 
 	unsigned int lifetime_est;
-	spinlock_t lifetime_lock;
-	u32 stat_write_sec;
-	struct work_struct tw_lifetime_work;
+	unsigned int resize_op;
+
+	/* write calculation */
+	spinlock_t write_calc_lock;
+	u32 write_lifetime;
+	u32 write_lifetime_interval;
+	u32 write_resize;
+	u32 write_resize_interval;
+
+	struct work_struct tw_interval_work;
+	bool schedule_lifetime;
+	bool schedule_resize;
+
+	/* resize_auto */
+	bool resize_auto;
+	bool resize_fully_increased;
+	bool resize_fully_decreased;
 
 	/* for sysfs */
 	struct kobject kobj;
 	struct mutex sysfs_lock;
 	struct ufstw_sysfs_entry *sysfs_entries;
+
+	/* for debug */
+	bool force_resize;
+	u32 force_resize_op;
+	bool debug;
 };
 
 struct ufstw_sysfs_entry {

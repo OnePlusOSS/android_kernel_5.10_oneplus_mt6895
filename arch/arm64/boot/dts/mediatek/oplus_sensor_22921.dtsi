@@ -1,0 +1,107 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		/* sensor start */
+		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA4XY,
+			SC7A20,
+			ICM4X6XX,
+			BMI220,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <10>;//bmi220
+			device_name = "bmi220";
+			i2c_num = <2>;
+			i2c_addr = <0>;
+			direction = <0>;
+			eint_num = <29>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <200 200 200>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <6>;
+			i2c_addr = <48>;
+			direction = <3>;
+			eint_num = <0>;
+			alg_flag = <2>;
+			soft-mag-parameter = <10000 0 17 1 45 1 66 1 10318 0 157 0 27 1 333 1 10220 0>;
+		};
+		/*
+		enum {
+			TCS3408_CCT,
+		};
+		*/
+		cct_1: cct_1 {
+			status = "okay";
+			sensor_name = <0>;//TCS3408_CCT
+			i2c_num = <5>;
+			i2c_addr = <0x39>;
+			direction = <0>;
+			eint_num = <15>;
+			available_sensor = <3>; // bit 0: rear als, bit 1: rear cct, bit 2: rear flicker
+			device_name = "tcs3408";
+		};
+		/*
+		enum {
+			SX933x
+		};
+		*/
+		sar_1: sar_1 {
+			status = "okay";
+			sensor_name = <0>;//SX933x
+			i2c_num = <6>;
+			i2c_addr = <0x28>;
+			direction = <4>;
+			eint_num = <11>;
+			channel_num = <2>;
+			channel_0_min = <0>;
+			channel_0_max = <70000>;
+			channel_1_min = <0>;
+			channel_1_max = <70000>;
+			channel_2_min = <0>;
+			channel_2_max = <70000>;
+			channel_3_min = <0>;
+			channel_3_max = <70000>;
+			reg_table_num = <3>;
+			use_far_near = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		light_1: light_1 {
+			device_name = "tcs3408";
+                        gold_cct_channels = <5>;
+			gold_cct_3k = <2154 740 344 3104 1289>; // 3000k gold parameter
+			gold_cct_6k = <1318 797 450 2504 1015>;  // 6000k gold parameter
+		};
+	};
+/* sensor end */
+};

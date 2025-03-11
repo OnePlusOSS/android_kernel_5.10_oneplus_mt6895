@@ -170,12 +170,27 @@
 #define APDO_PPS_EXTRACT_CURR_RAW(raw)	(((raw) >> 0) & 0x7f)
 #define APDO_PPS_EXTRACT_PWR_LIMIT(raw)        ((raw >> 27) & 0x1)
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define APDO_PPS_EXTEND_EXTRACT_MAX_VOLT_RAW(raw)	(((raw) >> 17) & 0xff)
+#define APDO_PPS_EXTEND_EXTRACT_MIN_VOLT_RAW(raw)	(((raw) >> 8) & 0xff)
+#define APDO_PPS_EXTEND_EXTRACT_CURR_RAW(raw)	(((raw) >> 0) & 0xff)
+#endif
+
 #define APDO_PPS_EXTRACT_MAX_VOLT(raw)	\
 	(APDO_PPS_EXTRACT_MAX_VOLT_RAW(raw) * 100)
 #define APDO_PPS_EXTRACT_MIN_VOLT(raw)	\
 	(APDO_PPS_EXTRACT_MIN_VOLT_RAW(raw) * 100)
 #define APDO_PPS_EXTRACT_CURR(raw)	\
 	(APDO_PPS_EXTRACT_CURR_RAW(raw) * 50)
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define APDO_PPS_EXTEND_EXTRACT_MAX_VOLT(raw)	\
+	(APDO_PPS_EXTEND_EXTRACT_MAX_VOLT_RAW(raw) * 100)
+#define APDO_PPS_EXTEND_EXTRACT_MIN_VOLT(raw)	\
+	(APDO_PPS_EXTEND_EXTRACT_MIN_VOLT_RAW(raw) * 100)
+#define APDO_PPS_EXTEND_EXTRACT_CURR(raw)	\
+	(APDO_PPS_EXTEND_EXTRACT_CURR_RAW(raw) * 50)
+#endif
 
 #define APDO_PPS(min_mv, max_mv, ma, flags)	\
 	(APDO_PPS_MIN_VOLT(min_mv)	 | \
@@ -208,6 +223,11 @@
 #define RDO_APDO_OP_MV(mv)	((((mv) / 20) & 0x7FF) << 9)
 #define RDO_APDO_OP_MA(ma)	((((ma) / 50) & 0x7F) << 0)
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define RDO_APDO_OP_EXTRA_MV(mv)	((((mv) / 20) & 0x3FFF) << 9)
+#define RDO_APDO_OP_EXTRA_MA(ma)	((((ma) / 50) & 0xFF) << 0)
+#endif
+
 #define RDO_APDO_EXTRACT_OP_MV(raw)	(((raw >> 9 & 0x7FF)) * 20)
 #define RDO_APDO_EXTRACT_OP_MA(raw)	(((raw >> 0 & 0x7F)) * 50)
 
@@ -225,6 +245,13 @@
 				(RDO_OBJ_POS(n) | (flags) | \
 				RDO_APDO_OP_MV(op_mv) | \
 				RDO_APDO_OP_MA(op_ma))
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#define RDO_EXTRA_APDO(n, op_mv, op_ma, flags)	\
+				(RDO_OBJ_POS(n) | (flags) | \
+				RDO_APDO_OP_EXTRA_MV(op_mv) | \
+				RDO_APDO_OP_EXTRA_MA(op_ma))
+#endif
 
 /* BDO : BIST Data Object */
 #define BDO_MODE_RECV       (0 << 28)
@@ -667,8 +694,13 @@
 /* USB-IF SVIDs */
 #define USB_SID_PD		0xff00	/* power delivery */
 #define USB_SID_DISPLAYPORT	0xff01	/* display port */
+
 #define USB_VID_RICHTEK		0x29cf  /* demo uvdm */
 #define USB_VID_DIRECTCHARGE	0x29cf  /* direct charge */
+
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+#define USB_VID_OPLUS		0x22D9
+/*#endif*/
 
 /* PD counter definitions */
 #define PD_MESSAGE_ID_COUNT	7
@@ -852,6 +884,12 @@ struct pd_port {
 	struct tcpc_device *tcpc;
 	struct mutex pd_lock;
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/* miss msg */
+	bool miss_msg;
+	uint8_t rx_cap;
+#endif
+
 	/* PD */
 	bool msg_output_lock;
 
@@ -912,7 +950,9 @@ struct pd_port {
 	bool request_apdo;
 	bool request_apdo_new;
 #endif	/* CONFIG_USB_PD_REV30_PPS_SINK */
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	bool extra_pps_curr;
+#endif
 	struct pd_port_power_caps local_src_cap;
 	struct pd_port_power_caps local_snk_cap;
 	struct pd_port_power_caps local_src_cap_default;
@@ -1137,7 +1177,6 @@ static inline bool pd_check_timer_msg_event(
 
 extern bool pd_is_reset_cable(struct pd_port *pd_port);
 extern bool pd_is_discover_cable(struct pd_port *pd_port);
-
 static inline int pd_is_support_modal_operation(struct pd_port *pd_port)
 {
 	if (!(pd_port->id_vdos[0] & PD_IDH_MODAL_SUPPORT))
@@ -1145,7 +1184,6 @@ static inline int pd_is_support_modal_operation(struct pd_port *pd_port)
 
 	return pd_port->svid_data_cnt > 0;
 }
-
 static inline int pd_is_source_support_apdo(struct pd_port *pd_port)
 {
 #if CONFIG_USB_PD_REV30_PPS_SINK
@@ -1285,11 +1323,13 @@ static inline void pd_enable_pe_state_timer(
 	return pd_enable_timer(pd_port, timer_id);
 }
 
-static inline void pd_enable_vdm_state_timer(
+/*#ifdef OPLUS_FEATURE_CHG_BASIC*/
+/*static inline void pd_enable_vdm_state_timer(
 	struct pd_port *pd_port, uint32_t timer_id)
 {
 	pd_port->pe_data.vdm_state_timer = timer_id;
-}
+}*/
+/*#endif*/
 
 static inline void pd_disable_timer(struct pd_port *pd_port, uint32_t timer_id)
 {
@@ -1638,5 +1678,10 @@ static inline uint8_t pd_get_swap_battery_nr(struct pd_port *pd_port)
 struct pd_battery_info *pd_get_battery_info(
 	struct pd_port *pd_port, enum pd_battery_reference ref);
 #endif	/* CONFIG_USB_PD_REV30 */
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+void pd_add_miss_msg(struct pd_port *pd_port,struct pd_event *pd_event,
+				uint8_t msg);
+#endif
 
 #endif /* PD_CORE_H_ */

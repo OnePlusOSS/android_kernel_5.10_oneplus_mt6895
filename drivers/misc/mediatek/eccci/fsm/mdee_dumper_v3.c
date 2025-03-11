@@ -51,6 +51,16 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	int md_dbg_dump_flag = per_md_data->md_dbg_dump_flag;
 #endif
 
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	int temp_i;
+	int checkID = 0;
+	unsigned int hashId = 0;
+	char *logBuf;
+	char *aed_str_for_hash = NULL;
+	//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
+	int ret = 0;
+
 	buff = kmalloc(AED_STR_LEN, GFP_ATOMIC);
 	if (buff == NULL) {
 		CCCI_ERROR_LOG(md_id, FSM, "Fail alloc Mem for buff!\n");
@@ -65,9 +75,51 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	if (info_str_len > AED_STR_LEN)
 		/* Cut string length to AED_STR_LEN */
 		buff[AED_STR_LEN - 1] = '\0';
-	scnprintf(buff, AED_STR_LEN, "md%d:%s%s%s",
+	ret = scnprintf(buff, AED_STR_LEN, "md%d:%s%s%s",
 		md_id + 1, aed_str, mdee->ex_start_time, img_inf);
+	if (ret < 0 || ret >= AED_STR_LEN) {
+		CCCI_ERROR_LOG(md_id, FSM,
+			"%s-%d:scnprintf fail,ret = %d\n", __func__, __LINE__, ret);
+		goto err_exit1;
+	}
 	memset(mdee->ex_start_time, 0x0, sizeof(mdee->ex_start_time));
+	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+	#define MCU_CORE_MSG "(MCU_core"
+	aed_str_for_hash = aed_str;
+	if( aed_str_for_hash != NULL ) {
+		if( (strncmp(aed_str_for_hash, MCU_CORE_MSG, strlen(MCU_CORE_MSG)) == 0) ) {
+			while(aed_str_for_hash[0] != '\n') {
+				++aed_str_for_hash;
+			}
+			++aed_str_for_hash; //skip '\n'
+		}
+		hashId = BKDRHash(aed_str_for_hash, strlen(aed_str_for_hash));
+	}
+	else {
+		CCCI_ERROR_LOG(md_id, FSM, "aed_str_for_hash is null!!");
+	}
+	logBuf = vmalloc(BUF_LOG_LENGTH);
+	if ((logBuf != NULL)&&(aed_str_for_hash != NULL)) {
+		for (temp_i = 0 ; (temp_i < BUF_LOG_LENGTH) && (temp_i < strlen(aed_str_for_hash)) ; temp_i++) {
+			if(aed_str_for_hash[temp_i] == '\n') {
+				checkID++;
+				CCCI_ERROR_LOG(md_id, FSM, "checkID = %d",checkID);
+				if(2 == checkID) {
+					logBuf[temp_i] = '\0';
+					break;
+				}
+				logBuf[temp_i] = ' ';
+			} else {
+					logBuf[temp_i] = aed_str_for_hash[temp_i];
+			}
+			//end
+		}
+		logBuf[BUF_LOG_LENGTH - 1] = '\0';
+		CCCI_NORMAL_LOG(md_id, FSM, "modem crash wirte to critical log. hashid = %u, cause = %s.", hashId, logBuf);
+		mm_keylog_write_modemdump(hashId, logBuf, MODEM_MONITOR_ID, "modem");
+		vfree(logBuf);
+	}
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 	/* MD ID must sync with aee_dump_ccci_debug_info() */
  err_exit1:
 	if (dump_flag & CCCI_AED_DUMP_CCIF_REG) {
@@ -894,4 +946,3 @@ int mdee_dumper_v3_alloc(struct ccci_fsm_ee *mdee)
 	mdee->ops = &mdee_ops_v3;
 	return 0;
 }
-

@@ -6,7 +6,6 @@
 #include <linux/init.h>
 #include <linux/kern_levels.h>
 #include <linux/linkage.h>
-#include <linux/cache.h>
 #include <linux/ratelimit_types.h>
 
 extern const char linux_banner[];
@@ -16,6 +15,7 @@ extern int oops_in_progress;	/* If set, an oops, panic(), BUG() or die() is in p
 
 #define PRINTK_MAX_SINGLE_HEADER_LEN 2
 #ifdef CONFIG_MTK_PRINTK_DEBUG
+#include <linux/cache.h>
 int get_printk_wake_up_time(unsigned long long *t0, unsigned long long *t1);
 void set_printk_uart_status(int value);
 #endif
@@ -764,5 +764,24 @@ static inline void print_hex_dump_debug(const char *prefix_str, int prefix_type,
  */
 #define print_hex_dump_bytes(prefix_str, prefix_type, buf, len)	\
 	print_hex_dump_debug(prefix_str, prefix_type, 16, 1, buf, len, true)
+
+#ifdef CONFIG_PRINTK
+extern void __printk_safe_enter(void);
+extern void __printk_safe_exit(void);
+/*
+ * The printk_deferred_enter/exit macros are available only as a hack for
+ * some code paths that need to defer all printk console printing. Interrupts
+ * must be disabled for the deferred duration.
+ */
+#define printk_deferred_enter __printk_safe_enter
+#define printk_deferred_exit __printk_safe_exit
+#else
+static inline void printk_deferred_enter(void)
+{
+}
+static inline void printk_deferred_exit(void)
+{
+}
+#endif
 
 #endif

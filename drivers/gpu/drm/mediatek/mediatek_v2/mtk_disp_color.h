@@ -229,6 +229,8 @@ int mtk_drm_ioctl_read_sw_reg(struct drm_device *dev, void *data,
 		struct drm_file *file_priv);
 int mtk_drm_ioctl_write_sw_reg(struct drm_device *dev, void *data,
 		struct drm_file *file_priv);
+int mtk_drm_ioctl_set_paper_mode(int strength, int width,
+		int height, char *pRgba);
 
 
 // SW Reg

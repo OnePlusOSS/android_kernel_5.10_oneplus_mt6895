@@ -11,6 +11,21 @@
 #if IS_ENABLED(CONFIG_MTK_THERMAL_INTERFACE)
 #include <thermal_interface.h>
 #endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING)
+#include <linux/cpufreq_bouncing.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+#include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_ABNORMAL_FLAG)
+#include <../kernel/oplus_cpu/oplus_overload/task_overload.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_balance.h>
+#endif
 
 MODULE_LICENSE("GPL");
 
@@ -488,8 +503,18 @@ void check_for_migration(struct task_struct *p)
 	int new_cpu = -1, better_idle_cpu = -1;
 	int cpu = task_cpu(p);
 	struct rq *rq = cpu_rq(cpu);
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	bool need_up_migrate = false;
 
+	if (fbg_need_up_migration(p, rq))
+		need_up_migrate = true;
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	if (rq->misfit_task_load || need_up_migrate) {
+#else
 	if (rq->misfit_task_load) {
+#endif
 		struct em_perf_domain *pd;
 		struct cpufreq_policy *policy;
 		int opp_curr = 0, thre = 0, thre_idx = 0;
@@ -552,6 +577,27 @@ void check_for_migration(struct task_struct *p)
 
 void hook_scheduler_tick(void *data, struct rq *rq)
 {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_ABNORMAL_FLAG)
+	int ret;
+#endif /* #OPLUS_FEATURE_ABNORMAL_FLAG */
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING)
+	int this_cpu = cpu_of(rq);
+	struct cpufreq_policy *pol = cpufreq_cpu_get_raw(this_cpu);
+
+	if (pol)
+		cb_update(pol, ktime_get_ns());
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_ABNORMAL_FLAG)
+	ret = get_ux_state_type(rq->curr);
+	if (ret != UX_STATE_INHERIT && ret != UX_STATE_SCHED_ASSIST)
+		test_task_overload(rq->curr);
+#endif /* #OPLUS_FEATURE_ABNORMAL_FLAG */
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
+	if (__oplus_tick_balance(NULL, rq))
+		return;
+#endif
+
 	if (rq->curr->policy == SCHED_NORMAL)
 		check_for_migration(rq->curr);
 }
@@ -624,6 +670,14 @@ static inline bool rt_task_fits_capacity(struct task_struct *p, int cpu)
 static inline bool should_honor_rt_sync(struct rq *rq, struct task_struct *p,
 					bool sync)
 {
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	fbg_skip_rt_sync(rq, p, &sync);
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	sa_skip_rt_sync(rq, p, &sync);
+#endif
+
 	/*
 	 * If the waker is CFS, then an RT sync wakeup would preempt the waker
 	 * and force it to run for a likely small time after the RT wakee is
@@ -676,7 +730,11 @@ void mtk_select_task_rq_rt(void *data, struct task_struct *p, int source_cpu,
 
 	for_each_cpu_and(cpu, p->cpus_ptr,
 			cpu_active_mask) {
-		if (idle_cpu(cpu) && rt_task_fits_capacity(p, cpu)) {
+		if (idle_cpu(cpu) && rt_task_fits_capacity(p, cpu)
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+				&& fbg_rt_task_fits_capacity(p, cpu)
+#endif
+				) {
 			*target_cpu = cpu;
 			select_reason = LB_RT_IDLE;
 			break;
@@ -686,7 +744,14 @@ void mtk_select_task_rq_rt(void *data, struct task_struct *p, int source_cpu,
 		if (curr && (curr->policy == SCHED_NORMAL)
 				&& (curr->prio > lowest_prio)
 				&& (!task_may_not_preempt(curr, cpu))
-				&& (rt_task_fits_capacity(p, cpu))) {
+				&& (rt_task_fits_capacity(p, cpu))
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+				&& (fbg_rt_task_fits_capacity(p, cpu))
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+				&& !sa_rt_skip_ux_cpu(cpu)
+#endif
+				) {
 			lowest_prio = curr->prio;
 			lowest_cpu = cpu;
 		}
@@ -704,3 +769,19 @@ out:
 	trace_sched_select_task_rq_rt(p, select_reason, *target_cpu, sd_flag, sync);
 }
 
+unsigned int fake_cpuinfo_max_freq_cpu = -1;
+
+void op_show_cpuinfo_max_freq(void *data, struct cpufreq_policy *policy, unsigned int *max_freq)
+{
+	struct cpufreq_policy *bpolicy;
+
+	if (fake_cpuinfo_max_freq_cpu < 0 || fake_cpuinfo_max_freq_cpu > 6)
+	    return;
+
+	if (!cpumask_test_cpu(7,policy->related_cpus) || cpumask_weight(policy->related_cpus) > 1)
+	    return;
+
+	bpolicy = cpufreq_cpu_get(fake_cpuinfo_max_freq_cpu);
+	*max_freq = bpolicy->cpuinfo.max_freq;
+	cpufreq_cpu_put(bpolicy);
+}

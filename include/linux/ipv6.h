@@ -52,7 +52,7 @@ struct ipv6_devconf {
 	__s32		use_optimistic;
 #endif
 #ifdef CONFIG_IPV6_MROUTE
-	__s32		mc_forwarding;
+	atomic_t	mc_forwarding;
 #endif
 	__s32		disable_ipv6;
 	__s32		drop_unicast_in_l2_multicast;
@@ -80,7 +80,8 @@ struct ipv6_devconf {
 
 	struct ctl_table_header *sysctl_header;
 
-	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_USE(1, struct { __s32 accept_ra_min_lft; u32 padding; });
+
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);

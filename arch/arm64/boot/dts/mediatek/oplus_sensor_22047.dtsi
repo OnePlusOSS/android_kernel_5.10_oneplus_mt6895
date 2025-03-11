@@ -1,0 +1,182 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	consumer_ir_core: consumer_ir_core {
+		compatible = "oplus,kookong_ir_core";
+		status = "okay";
+		vdd-supply = <&mt6368_vmch>;
+		vdd-min-vol = <3060000>;
+		vdd-max-vol = <3060000>;
+	};
+	consumerIr: consumerIr {
+		compatible = "oplus,kookong_ir_pwm";
+		status = "okay";
+		pwm-num = <1>;
+	};
+	ssc_interactive: ssc_interactive {
+		report_brightness = <1>;
+		support_pwm_turbo = <1>;
+		support_bri_to_scp = <1>;
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA4XY,
+			SC7A20,
+			ICM4X6XX,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <5>;//bmi2xy
+			device_name = "bmi2xy";
+			i2c_num = <0>;
+			direction = <1>;
+			eint_num = <15>;
+			gyro_cali_version= <2>;
+			acc_cali_range= <300 300 300>;
+			gyro_cali_range = <350>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+			AKM09918,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <4>;//AKM09918
+			i2c_num = <0>;
+			i2c_addr = <0x0C>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <9490 0 544 0 67 0 281 0 9446 0 177 1 55 0 138 1 10673 0>;
+		};
+		msensor_2: msensor_2 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <0>;
+			i2c_addr = <48>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <10000 0 0 0 0 0 0 0 10000 0 0 0 0 0 0 0 10000 0>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <9>;//TCS3720
+			i2c_num = <2>;
+			i2c_addr = <0x39>;
+			direction = <4>;
+			eint_num = <17>;
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <400>;
+			high_limit = <600>;
+			dirty_low_step = <180>;
+			dirty_high_step = <280>;
+			ps_dirty_limit = <1800>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <800>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <100>;
+			step_div = <2000>;
+			anti_shake_delta = <120>;
+			dynamic_cali_max = <1500>;
+			raw2offset_radio = <1000>;
+			offset_max = <15000>;
+			offset_range_min = <0>;
+			offset_range_max = <65534>;
+			force_cali_limit = <0>;
+			cali_jitter_limit = <70>;
+			cal_offset_margin = <3000>;
+			ps_check_num = <3>;
+			sensor-reg = <0xD9 0xBA>;
+			double_ir = <1>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <9>;//TCS3720
+			i2c_num = <2>;
+			i2c_addr = <0x39>;
+			direction = <4>;
+			eint_num = <17>;
+			lb_bri_max = <4095>;
+			als_ratio = <110>;
+			cct_type = <0x02>; //0x01 CCT_NORMAL 0x02 CCT_WISE
+			device_name = "tcs3720";
+			available_sensor = <14>;
+		};
+		als_panel_boe_1: als_panel_boe_1 {
+			status = "okay";
+			device_name = "tcs3720";
+			decision_table_index = <3>;
+			als_delay = <550>;
+			support_panel = <2>; // 1-SAMSUNG, 2-BOE, 3-TIANMA
+			gold_cct_3k = <6213 3050 1533 9818 1001 1001>;
+			gold_cct_6k = <4153 3318 1918 8530 1001 1001>;
+		};
+		als_panel_tm_1: als_panel_tm_1 {
+			status = "okay";
+			device_name = "tcs3720";
+			decision_table_index = <4>;
+			als_delay = <500>;
+			support_panel = <3>; // 1-SAMSUNG, 2-BOE, 3-TIANMA
+			gold_cct_3k = <6049 2968 1372 9450 1001 1001>;
+			gold_cct_6k = <3888 3197 1648 8056 1001 1001>;
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		smart_prox: smart_prox {
+			status = "okay";
+			support_smart_prox = <1>;
+		};
+		pocket: pocket {
+			status = "okay";
+			support_pocket = <1>;
+			use_sub_accgyro = <0>;
+			need_als = <0>;
+		};
+	};
+/* sensor end */
+};

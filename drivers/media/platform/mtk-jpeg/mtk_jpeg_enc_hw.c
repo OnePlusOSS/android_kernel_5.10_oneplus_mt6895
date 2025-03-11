@@ -111,12 +111,17 @@ void mtk_jpeg_set_enc_dst(struct mtk_jpeg_ctx *ctx, void __iomem *base,
 	if (support_34bit)
 		writel(dma_addr >> 32, base + JPEG_ENC_DEST_ADDR0_EXT);
 #endif
+    #ifndef OPLUS_FEATURE_CAMERA_COMMON
 	writel((dma_addr + size) & ~0xf, base + JPEG_ENC_STALL_ADDR0);
 #ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
 	if (support_34bit)
 		writel(((dma_addr + size)>>32),
 			base + JPEG_ENC_STALL_ADDR0_EXT);
 #endif
+    #else /*OPLUS_FEATURE_CAMERA_COMMON*/
+        writel((dma_addr + size) & ~0xf, base + JPEG_ENC_STALL_ADDR0);
+        writel(((dma_addr + size)>>32), base + JPEG_ENC_STALL_ADDR0_EXT);
+    #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 }
 
 void mtk_jpeg_set_enc_params(struct mtk_jpeg_ctx *ctx,  void __iomem *base)

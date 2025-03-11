@@ -78,6 +78,8 @@ source "drivers/misc/mediatek/widevine_drm/Kconfig"
 source "drivers/misc/mediatek/mminfra/Kconfig"
 source "drivers/misc/mediatek/vmm_spm/Kconfig"
 source "drivers/misc/mediatek/vmm_dbg/Kconfig"
+source "drivers/misc/mediatek/wl2868c/Kconfig"
+source "drivers/misc/mediatek/aw37004/Kconfig"
 endmenu # MultiMedia, Display, Camera
 
 menu "Security"
@@ -173,6 +175,9 @@ source "drivers/misc/mediatek/irtx/Kconfig"
 source "drivers/misc/mediatek/pwm/Kconfig"
 source "drivers/misc/mediatek/sensor/Kconfig"
 source "drivers/misc/mediatek/gate_ic/Kconfig"
+#ifdef OPLUS_BUG_STABILITY
+source "drivers/misc/mediatek/boot_common/Kconfig"
+#endif
 endmenu # Other Peripheral
 
 menu "Performance"

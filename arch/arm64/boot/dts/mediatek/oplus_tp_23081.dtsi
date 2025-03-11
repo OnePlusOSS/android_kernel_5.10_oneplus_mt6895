@@ -1,0 +1,269 @@
+&spi2 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	touchscreen@0{
+		compatible = "focaltech-FT3683g";
+		reg = <0x0>;
+		chip-name = "FT3683G";
+		status = "disabled";
+		chip-num = <1>;
+		spi-max-frequency = <12000000>;
+		/* Interrupt && Irq-gpio */
+		interrupt-parent = <&pio>;
+		interrupts = <135 0x2002>;
+
+	/* Power Config */
+		vdd_2v8-supply  = <&wl2868c_ldo7a>;
+		vdd_2v8_volt = <3204000>;
+	//	enable2v8_gpio  = <&pio 164 0x1>;
+		vcc_1v8-supply  = <&mt6368_vmc>;
+		vcc_1v8_volt = <1800000>;
+//		cs-gpio = <&pio 110 0x01>;
+
+		/* Other HW Resource */
+		irq-gpio = <&pio 135 0x2002>;
+		reset-gpio = <&pio 212 0x1>;
+
+		pinctrl-names = "default",  "oplus_int_active",
+		"oplus_reset_active", "oplus_int_suspend",
+		"oplus_reset_suspend", "oplus_spi_active",
+		"oplus_spi_suspend";
+		pinctrl-0 = <&ctp_oplus_pins_default>;
+		pinctrl-1 = <&ctp_oplus_int_active>;
+		pinctrl-2 = <&ctp_oplus_reset_active>;
+		pinctrl-3 = <&ctp_oplus_int_suspend>;
+		pinctrl-4 = <&ctp_oplus_reset_suspend>;
+		pinctrl-5 = <&ctp_oplus_spi_active>;
+		pinctrl-6 = <&ctp_oplus_spi_suspend>;
+
+		touchpanel,max-num-support = <10>;
+		touchpanel,tx-rx-num = <17 37>;
+		earsense,tx-rx-num = <17 18>;
+		touchpanel,panel-coords = <17280 38592>;
+		touchpanel,display-coords = <1080 2412>;
+		touchpanel,touchmajor-limit = <128 216>;
+		touchpanel,elimination-range = <20 200 200>;
+		//touchpanel,int-mode = <1>; /*0: interrupt and disable, 1:interrupt and not disable*/
+		touchpanel,smooth-level = <0 110 115 120 140 155>;
+		touchpanel,smooth-level-charging = <0 110 115 120 140 155>;
+		touchpanel,sensitive-level = <0 19 16 13 11 10>;
+		touchpanel,tp-index = <0>;
+		touchpanel,high-frame-rate-time = <60>;
+		disable_suspend_irq_handler_support;
+
+		project_id = <23021>;
+		vid_len = <2>;
+		panel_type = <3 7>; /*type:3 BOE;  7 TIANMA*/
+		firmware_name = "0xAC160";
+		platform_support_project = <23081 23081>;
+		platform_support_project_dir = <23081 23081>;
+		platform_support_project_commandline = "ac160_p_3_a0004_cmd_panel","ac160_p_7_a0001_cmd_panel";
+
+		prevention,curved_screen_V2;
+		prevention,grip_disable_level = <6>;
+		prevention,updelay_time_ms = <30>;
+		prevention,makeup_cnt_weight = <4 1 2 2 2>;
+		prevention,large_corner_range = <1920 4800>;
+		prevention,large_corner_judge_condition = <500 300 1600 6 6>;
+		prevention,trx_reject_condition = <8 7 7>;
+		prevention,trx_strict_reject_condition = <7 6 6>;
+		prevention,large_judge_time_ms = <500 50 30>;
+		prevention,large_exit_condition = <15 12 2>;
+		prevention,single_channel_width = <512 512>;
+		prevention,normal_tap_condition = <10 300>;
+		prevention,long_edge_condition = <230 100 180 80>;
+		prevention,long_strict_edge_condition = <170 80>;
+		prevention,long_fingerhold_condition = <50 6 4 4>;
+		prevention,short_edge_condition = <230 100 180 80>;
+		prevention,short_strict_edge_condition = <160 60>;
+		prevention,large_strict_exit_condition = <5 5>;
+		prevention,top_corner_config = <800 2400 720>;
+		prevention,edge_swipe_config = <480 1600>;
+
+		prevention,curved_screen_V4;
+		prevention,long_eliminate_point_type = <2 17280 13280 420 38592 300 1>;
+		prevention,long_fingerhold_condition2 = <1120 3200 0 0>;
+		prevention,top_corner_config2 =<3 80 420 2400 0>;
+		prevention,hor_long_top_corner_config =<480 3200 0 0>;
+		prevention,top_middle_config =<17280 1600 1600 0>;
+		prevention,corner_eliminate_point_type =<0 1920 3200 1>;
+		prevention,finger_hold_differ_size = <1 0 720 300>;
+		prevention,finger_hold_max_rx_exit_distance = <5 7000 3400>;
+		prevention,max_rx_exit_distance = <1 5 90 700 2800>;
+		prevention,dynamic_finger_hold_exit_distance = <1 580 3400 780>;
+		prevention,edge_sliding_matched_support = <1 250 3 0>;
+
+		//grip v4.2 reclining mode
+		prevention,reclining_mode_support = <1>;
+		prevention,long_eliminate_point_type_recli = <2 17280 13280 420 38592 200 1>;
+		prevention,finger_hold_differ_size_recli = <1 0 720 300>;
+		prevention,finger_hold_max_rx_exit_distance_recli = <5 700 3400>;
+		prevention,max_rx_exit_distance_recli = <1 5 90 700 2800>;
+		prevention,dynamic_finger_hold_exit_distance_recli = <1 580 3400 780>;
+		prevention,edge_sliding_matched_support_recli = <1 200 3 0>;
+		prevention,long_edge_condition_recli = <120 100 150 100>;
+
+		/* SW Support Feature Control */
+		//esd_handle_support;
+		//register-is-16bit;
+		//wireless_charger_support;
+		headset_pump_support;
+		//fw_edge_limit_support;
+
+		health_monitor_v2_support;
+		black_gesture_support;
+		charger_pump_support;
+		lcd_tp_refresh_support;
+		fw_update_app_support;
+		smart_gesture_support;
+		game_switch_support;
+		report_flow_unlock_support;
+		kernel_grip_support;
+		fingerprint_underscreen_support;
+		pressure_report_support;
+		touchpanel,single-optimized-time = <8>;
+		//report_rate_white_list_support;
+		//auto_test_force_pass_support;
+		snr_read_support;
+		//high_resolution_support;
+		screenoff_fingerprint_info_support;
+		irq_need_dev_resume_ok;
+		sportify_aod_gesture_support;
+		black_gesture_indep_support;
+		thermal_detect_support;
+		exception_upload_support;
+		force_bus_ready_support;
+		tp_data_record_support;
+		palm_to_sleep_support;
+		fingerprint_not_report_in_suspend;
+		freq_hop_simulate_support;
+		health_monitor_support;
+		temperature_detect_shellback_support;
+
+		/*
+		 *Virtual Key Config:
+		 *1:touchpanel,button-type: <virtualkey_type  supportted_button-map>
+		 *virtualkey_type:
+		 *Type 1: using board_properties
+		 *Type 2: using same IC (button zone&& touch zone are seprate)
+		 *Type 3: using diffrent IC (button zone&& touch zone are seprate)
+		 *Type 4: No need of virtual key process
+		 *supportted_button-map:select|menu|home|back
+		 *
+		 *2:touchpanel,button-map 
+		 *type (X1,Y1)(X2,Y2)(X3,Y3)(Width_X,Hight_Y)--Only when button-type is 0
+		 */
+		touchpanel,button-type = <4>;
+		touchpanel.button-TRx = <0 0>;
+
+		FT3681 {
+			switch_report_rate;
+			report_rate_default = <60>;
+			report_rate_game_value = <0x02>;
+		};
+	};
+	hbp_spi_bus2:hbp_spi@0 {
+		compatible = "oplus,hbp_spi_bus";
+		reg = <0x0>;
+		status = "okay";
+
+		spi-max-frequency = <19000000>;
+		bus,spi-mode = <0>;
+		bus,rx-dummy = <0>;
+		bus,tx-dummy = <0>;
+	};
+};
+&soc {
+	focaltech:focaltech@0 {
+		compatible = "focaltech,ft3683g";
+		status = "okay";
+
+		device,id = <0>;
+		device,chip_name = "ft3683g";
+		device,resolution = <17280 38592>;
+
+		/*interrupt config*/
+		interrupt-parent = <&pio>;
+		interrupts = <135 0x2002>;
+		irq-gpio = <&pio 135 0x2002>;
+//		reset-gpio = <&pio 212 0x1>;
+		/* Power Config */
+		power,avdd-supply  = <&wl2868c_ldo7a>;
+		power,avdd_volt = <3204000>;
+//		enable2v8_gpio  = <&pio 164 0x1>;
+		power,vddi-supply  = <&mt6368_vmc>;
+		power,vddi_volt = <1800000>;
+//		cs-gpio = <&pio 110 0x01>;
+		pinctrl-names = "default",
+			"ts_reset_active",
+			"ts_reset_idle",
+			"ts_resume",
+			"ts_suspend";
+		pinctrl-0 = <&ctp_oplus_int_active &ctp_oplus_reset_active>;
+		pinctrl-1 = <&ctp_oplus_reset_active>;
+		pinctrl-2 = <&ctp_oplus_reset_suspend>;
+		pinctrl-3 = <&ctp_oplus_spi_active>;
+		pinctrl-4 = <&ctp_oplus_spi_suspend>;
+		device,attached_bus = <&hbp_spi_bus2>;
+	};
+
+	hbp:hbp@0 {
+		compatible = "oplus,hbp_core";
+		hbp,project = "omega-c2";
+		hbp,devices = <&focaltech>;
+	};
+};
+
+&pio {
+	ctp_oplus_pins_default: pins_default {
+	};
+	ctp_oplus_int_active: int1_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO135__FUNC_GPIO135>;
+			bias-disable;
+			input-enable;
+		};
+	};
+	ctp_oplus_reset_active: reset1_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO212__FUNC_GPIO212>;
+			output-high;
+		};
+	};
+	ctp_oplus_int_suspend: int1_suspend {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO135__FUNC_GPIO135>;
+			output-low;
+		};
+	};
+	ctp_oplus_reset_suspend: reset1_suspend {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO212__FUNC_GPIO212>;
+			output-low;
+		};
+	};
+	ctp_oplus_spi_active: spi_active {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO109__FUNC_SPI2_A_MI>,
+				<PINMUX_GPIO110__FUNC_SPI2_A_CSB>,
+				<PINMUX_GPIO111__FUNC_SPI2_A_MO>,
+				<PINMUX_GPIO112__FUNC_SPI2_A_CLK>;
+			bias-disable;
+			drive-strength = <4>;
+		};
+	};
+	ctp_oplus_spi_suspend: spi_suspend {
+		pins_cmd_dat {
+			pinmux = < PINMUX_GPIO109__FUNC_GPIO109>,
+				< PINMUX_GPIO110__FUNC_GPIO110>,
+				<PINMUX_GPIO111__FUNC_GPIO111>,
+				< PINMUX_GPIO112__FUNC_GPIO112>;
+			bias-disable;
+			output-low;
+			drive-strength = <4>;
+		};
+	};
+};
+

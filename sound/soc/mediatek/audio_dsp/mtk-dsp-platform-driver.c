@@ -26,7 +26,10 @@ static DEFINE_MUTEX(adsp_wakelock_lock);
 
 #define IPIMSG_SHARE_MEM (1024)
 #define DSP_IRQ_LOOP_COUNT (3)
-static int adsp_wakelock_count;
+//#ifdef OPLUS_ARCH_EXTENDS
+/* 2023/01/17, add patch for ALPS07829227 */
+static int adsp_wakelock_count = 0;
+//#endif
 static struct wakeup_source *adsp_audio_wakelock;
 static int ktv_status;
 
@@ -157,6 +160,29 @@ static int dsp_wakelock_get(struct snd_kcontrol *kcontrol,
 	ucontrol->value.integer.value[0] = adsp_wakelock_count;
 	return 0;
 }
+
+//#ifdef OPLUS_ARCH_EXTENDS
+/* 2023/01/17, add patch for ALPS07829227 */
+static int reset_dsp_wakelock_set(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	mutex_lock(&adsp_wakelock_lock);
+	pr_info("%s reset wakelock for audiohal reboot %d", __func__, adsp_wakelock_count);
+	if (adsp_wakelock_count > 0)
+	{
+		aud_wake_unlock(adsp_audio_wakelock);
+		adsp_wakelock_count = 0;
+	}
+	mutex_unlock(&adsp_wakelock_lock);
+	return 0;
+}
+
+static int reset_dsp_wakelock_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	return 0;
+}
+//#endif
 
 static int audio_dsp_version_set(struct snd_kcontrol *kcontrol,
 				 struct snd_ctl_elem_value *ucontrol)
@@ -297,6 +323,11 @@ static const struct snd_kcontrol_new dsp_platform_kcontrols[] = {
 		       ktv_status_get, ktv_status_set),
 	SOC_SINGLE_EXT("audio_dsp_wakelock", SND_SOC_NOPM, 0, 0x1, 0,
 		       dsp_wakelock_get, dsp_wakelock_set),
+//#ifdef OPLUS_ARCH_EXTENDS
+/* 2023/01/17, add patch for ALPS07829227 */
+	SOC_SINGLE_EXT("reset_audio_dsp_wakelock", SND_SOC_NOPM, 0, 0x1, 0,
+		       reset_dsp_wakelock_get, reset_dsp_wakelock_set),
+//#endif
 };
 
 static snd_pcm_uframes_t mtk_dsphw_pcm_pointer_ul
@@ -542,7 +573,6 @@ static bool mtk_dsp_check_exception(struct mtk_base_dsp *dsp,
 	if (ipi_msg && ipi_msg->param2 == ADSP_DL_CONSUME_UNDERFLOW) {
 		pr_info("%s() %s adsp underflow\n", __func__, task_name);
 		dsp->dsp_mem[id].underflowed = true;
-
 		snd_pcm_period_elapsed(dsp->dsp_mem[id].substream);
 
 		return true;
@@ -824,6 +854,7 @@ static int mtk_dsp_manage_copybuf(bool action,
 	return 0;
 }
 
+
 static int mtk_dsp_pcm_hw_params(struct snd_soc_component *component,
 		struct snd_pcm_substream *substream,
 		struct snd_pcm_hw_params *params)
@@ -870,6 +901,7 @@ static int mtk_dsp_pcm_hw_params(struct snd_soc_component *component,
 	}
 
 #ifdef DEBUG_VERBOSE
+
 	dump_audio_dsp_dram(&dsp_mem->msg_atod_share_buf);
 	dump_audio_dsp_dram(&dsp_mem->msg_dtoa_share_buf);
 	dump_audio_dsp_dram(&dsp_mem->dsp_ring_share_buf);
@@ -1056,7 +1088,7 @@ static int mtk_dsp_pcm_copy_dl(struct snd_pcm_substream *substream,
 	struct ringbuf_bridge *buf_bridge =
 		&(dsp_mem->adsp_buf.aud_buffer.buf_bridge);
 	unsigned long flags = 0;
-	void *dsp_copy_buf = dsp_mem->dsp_copy_buf;
+    void *dsp_copy_buf = dsp_mem->dsp_copy_buf;
 	spinlock_t *ringbuf_lock = &dsp_mem->ringbuf_lock;
 	const char *task_name = get_str_by_dsp_dai_id(id);
 
@@ -1081,11 +1113,7 @@ static int mtk_dsp_pcm_copy_dl(struct snd_pcm_substream *substream,
 		&dsp_mem->adsp_buf.aud_buffer.buf_bridge);
 
 	/* copy user space memory */
-	ret = copy_from_user(dsp_copy_buf, buf, copy_size);
-	if (ret) {
-		pr_info("%s copy_from_user fail line %d\n", __func__, __LINE__);
-		return -1;
-	}
+	copy_from_user(dsp_copy_buf, buf, copy_size);
 
 	spin_lock_irqsave(ringbuf_lock, flags);
 	availsize = RingBuf_getFreeSpace(ringbuf);
@@ -1269,17 +1297,20 @@ static void audio_dsp_tasklet(struct mtk_base_dsp *dsp, unsigned int core_id)
 	release_adsp_semaphore(SEMA_AUDIO);
 
 	return;
+
 }
 
 static void audio_dsp_tasklet_core0(struct tasklet_struct *t)
 {
 	struct mtk_base_dsp *dsp = from_tasklet(dsp, t, dsp_tasklet[ADSP_A_ID]);
+
 	audio_dsp_tasklet(dsp, ADSP_A_ID);
 }
 
 static void audio_dsp_tasklet_core1(struct tasklet_struct *t)
 {
 	struct mtk_base_dsp *dsp = from_tasklet(dsp, t, dsp_tasklet[ADSP_B_ID]);
+
 	audio_dsp_tasklet(dsp, ADSP_B_ID);
 }
 
@@ -1301,8 +1332,8 @@ void audio_irq_handler(int irq, void *data, int core_id)
 			dsp->core_share_mem.ap_adsp_core_mem[core_id]);
 		goto IRQ_ERROR;
 	}
-	audio_dsp_tasklet(dsp, core_id);
 
+	audio_dsp_tasklet(dsp, core_id);
 	return;
 IRQ_ERROR:
 	pr_info("IRQ_ERROR irq[%d] data[%p] core_id[%d] dsp[%p]\n",
@@ -1393,6 +1424,7 @@ static int mtk_dsp_probe(struct snd_soc_component *component)
 #ifdef CFG_RECOVERY_SUPPORT
 	adsp_register_notify(&adsp_audio_notifier);
 #endif
+
 	return ret;
 }
 

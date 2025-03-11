@@ -303,7 +303,10 @@ static inline void __check_racy_pte_update(struct mm_struct *mm, pte_t *ptep,
 	 * (ptep_set_access_flags safely changes valid ptes without going
 	 * through an invalid entry).
 	 */
-	VM_WARN_ONCE(!pte_young(pte),
+	 /*
+	  * split cont_pte(remove cont bit in pte ) will not change page young
+	  */
+	VM_WARN_ONCE(!pte_young(pte) && !IS_ENABLED(CONFIG_CONT_PTE_HUGEPAGE),
 		     "%s: racy access flag clearing: 0x%016llx -> 0x%016llx",
 		     __func__, pte_val(old_pte), pte_val(pte));
 	VM_WARN_ONCE(pte_write(old_pte) && !pte_dirty(pte),
@@ -323,6 +326,13 @@ static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 
 	__check_racy_pte_update(mm, ptep, pte);
 
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+#define UNALIGNED_CONT_PTE_WARN WARN_ON
+	/* 16 ptes of cont_pte should be set as a whole by copied cset_pte_at */
+	WARN_ON_ONCE((pte_cont(pte) || pte_cont(*ptep)) && current->mm);
+	UNALIGNED_CONT_PTE_WARN(pte_cont(pte) && ((pte_pfn(pte) & (CONT_PTES - 1)) !=
+			((unsigned long)ptep & (sizeof(pte) * CONT_PTES - 1)) / sizeof(pte)));
+#endif
 	set_pte(ptep, pte);
 }
 
@@ -522,13 +532,12 @@ extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 
 #define pmd_none(pmd)		(!pmd_val(pmd))
 
-#define pmd_bad(pmd)		(!(pmd_val(pmd) & PMD_TABLE_BIT))
-
 #define pmd_table(pmd)		((pmd_val(pmd) & PMD_TYPE_MASK) == \
 				 PMD_TYPE_TABLE)
 #define pmd_sect(pmd)		((pmd_val(pmd) & PMD_TYPE_MASK) == \
 				 PMD_TYPE_SECT)
-#define pmd_leaf(pmd)		pmd_sect(pmd)
+#define pmd_leaf(pmd)		(pmd_present(pmd) && !pmd_table(pmd))
+#define pmd_bad(pmd)		(!pmd_table(pmd))
 
 #if defined(CONFIG_ARM64_64K_PAGES) || CONFIG_PGTABLE_LEVELS < 3
 static inline bool pud_sect(pud_t pud) { return false; }
@@ -619,9 +628,9 @@ static inline unsigned long pmd_page_vaddr(pmd_t pmd)
 	pr_err("%s:%d: bad pmd %016llx.\n", __FILE__, __LINE__, pmd_val(e))
 
 #define pud_none(pud)		(!pud_val(pud))
-#define pud_bad(pud)		(!(pud_val(pud) & PUD_TABLE_BIT))
+#define pud_bad(pud)		(!pud_table(pud))
 #define pud_present(pud)	pte_present(pud_pte(pud))
-#define pud_leaf(pud)		pud_sect(pud)
+#define pud_leaf(pud)		(pud_present(pud) && !pud_table(pud))
 #define pud_valid(pud)		pte_valid(pud_pte(pud))
 
 static inline void set_pud(pud_t *pudp, pud_t pud)
@@ -651,9 +660,9 @@ static inline phys_addr_t pud_page_paddr(pud_t pud)
 	return __pud_to_phys(pud);
 }
 
-static inline unsigned long pud_page_vaddr(pud_t pud)
+static inline pmd_t *pud_pgtable(pud_t pud)
 {
-	return (unsigned long)__va(pud_page_paddr(pud));
+	return (pmd_t *)__va(pud_page_paddr(pud));
 }
 
 /* Find an entry in the second-level page table. */
@@ -712,9 +721,9 @@ static inline phys_addr_t p4d_page_paddr(p4d_t p4d)
 	return __p4d_to_phys(p4d);
 }
 
-static inline unsigned long p4d_page_vaddr(p4d_t p4d)
+static inline pud_t *p4d_pgtable(p4d_t p4d)
 {
-	return (unsigned long)__va(p4d_page_paddr(p4d));
+	return (pud_t *)__va(p4d_page_paddr(p4d));
 }
 
 /* Find an entry in the frst-level page table. */
@@ -762,6 +771,12 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 	if (pte_hw_dirty(pte))
 		pte = pte_mkdirty(pte);
 	pte_val(pte) = (pte_val(pte) & ~mask) | (pgprot_val(newprot) & mask);
+	/*
+	 * If we end up clearing hw dirtiness for a sw-dirty PTE, set hardware
+	 * dirtiness again.
+	 */
+	if (pte_sw_dirty(pte))
+		pte = pte_mkdirty(pte);
 	return pte;
 }
 

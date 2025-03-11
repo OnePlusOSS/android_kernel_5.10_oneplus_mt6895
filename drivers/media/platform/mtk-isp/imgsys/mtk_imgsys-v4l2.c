@@ -2801,12 +2801,10 @@ static int mtk_imgsys_probe(struct platform_device *pdev)
 				DL_FLAG_PM_RUNTIME | DL_FLAG_STATELESS);
 		if (!link)
 			dev_info(imgsys_dev->dev, "unable to link SMI LARB idx %d\n", i);
-
 		larb_devs[i] = &larb_pdev->dev;
 	}
 	imgsys_dev->larbs = larb_devs;
 	imgsys_dev->larbs_num = larbs_num;
-
 	atomic_set(&imgsys_dev->imgsys_enqueue_cnt, 0);
 	atomic_set(&imgsys_dev->imgsys_user_cnt, 0);
 	atomic_set(&imgsys_dev->num_composing, 0);

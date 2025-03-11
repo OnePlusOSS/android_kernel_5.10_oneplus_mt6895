@@ -1,0 +1,143 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+       		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA2X2,
+			ICM4X6XX,
+			BMI220,
+			BMI3XY,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <10>;//BMI3XY
+			device_name = "bmi3xy";
+			i2c_num = <0>;
+			i2c_addr = <0>;
+			direction = <7>;
+			eint_num = <15>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <200 200 200>;
+		};
+		gsensor_2: gsensor_2 {
+			status = "okay";
+			sensor_name = <9>;//BMI220
+			device_name = "bmi220";
+			i2c_num = <0>;
+			i2c_addr = <0>;
+			direction = <7>;
+			eint_num = <15>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <200 200 200>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+			AKM09918,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <4>;//AKM09918
+			i2c_num = <0>;
+			i2c_addr = <12>;
+			direction = <7>;
+			eint_num = <0>;
+			soft-mag-parameter = <10657 0 663 0 151 1 1197 0 8674 0 200 1 125 0 187 1 10695 0>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+			MN78911,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <8>;//MN78911
+			i2c_num = <2>;
+			i2c_addr = <65>;
+			direction = <4>;
+			eint_num = <17>;
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <400>;
+			high_limit = <600>;
+			dirty_low_step = <180>;
+			dirty_high_step = <250>;
+			ps_dirty_limit = <1023>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <600>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <110>;
+			step_div = <1500>;
+			anti_shake_delta = <80>;
+			dynamic_cali_max = <1024>;
+			raw2offset_radio = <20800>;
+			offset_max = <250>;
+			offset_range_min = <255>;
+			offset_range_max = <255>;
+			force_cali_limit = <2000>;
+			cali_jitter_limit = <30>;
+			cal_offset_margin = <120>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <8>;//MN78911
+			i2c_num = <0>;
+			i2c_addr = <65>;
+			direction = <4>;
+			eint_num = <17>;
+			als_ratio = <200>;
+			als_buffer_length = <10>;
+			als_type = <1>;
+			device_name = "mn78911";
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		pocket: pocket {
+			status = "okay";
+			support_pocket = <1>;
+                        use_sub_accgyro = <0>;
+			need_als = <0>;
+		};
+	};
+/* sensor end */
+};

@@ -23,7 +23,8 @@
 #include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
-
+#include <soc/oplus/system/oplus_project.h>
+//#endif
 #include "mtk-eint.h"
 
 #define MTK_EINT_EDGE_SENSITIVE           0
@@ -457,14 +458,17 @@ static struct irq_chip mtk_eint_irq_chip = {
  */
 static unsigned int mtk_eint_hw_init(struct mtk_eint *eint)
 {
-	void __iomem *reg;
+	void __iomem *reg_dom_en, *reg_mask_set;
 	unsigned int i, j;
 
 	for (i = 0; i < eint->instance_number; i++) {
-		reg = eint->instances[i].base + eint->comp->regs->dom_en;
+		reg_dom_en = eint->instances[i].base + eint->comp->regs->dom_en;
+		reg_mask_set = eint->instances[i].base + eint->comp->regs->mask_set;
 		for (j = 0; j < eint->instances[i].number; j += 32) {
-			writel(0xffffffff, reg);
-			reg += 4;
+			writel(0xffffffff, reg_dom_en);
+			writel(0xffffffff, reg_mask_set);
+			reg_dom_en += 4;
+			reg_mask_set +=4;
 		}
 	}
 
@@ -648,7 +652,11 @@ int mtk_eint_set_debounce(struct mtk_eint *eint, unsigned long eint_num,
 	reg = eint->instances[instance].base;
 	set_offset = (index / 4) * 4 + eint->comp->regs->dbnc_set;
 	clr_offset = (index / 4) * 4 + eint->comp->regs->dbnc_clr;
-
+	if ((get_project() == 22021 || get_project() == 22221) && (eint_num == 15)) {
+		dev_err(eint->dev, "litre: %s  the project is 22021,not need to set sdio debounce %d\n",
+			__func__,eint_num);
+		return -EINVAL;
+	}
 	if (!mtk_eint_can_en_debounce(eint, eint_num))
 		return -EINVAL;
 

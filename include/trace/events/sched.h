@@ -8,7 +8,7 @@
 #include <linux/sched/numa_balancing.h>
 #include <linux/tracepoint.h>
 #include <linux/binfmts.h>
-
+#include <linux/cgroup.h>
 /*
  * Tracepoint for calling kthread_stop, performed to end a kthread:
  */
@@ -130,11 +130,35 @@ static inline long __trace_sched_switch_state(bool preempt, struct task_struct *
 
 	return state ? (1 << (state - 1)) : state;
 }
-#endif /* CREATE_TRACE_POINTS */
+//#ifdef CONFIG_OPLUS_SCHED_SWTICH_DEBUG
+#define PRIO_MAX_TASK_PRIO 1000
+#define PRIO_MAX_CPUCTL 29
+#define PRIO_MAX_CPUSET 100
 
 /*
  * Tracepoint for task switches, performed by the scheduler:
  */
+static int get_compound_prio(struct task_struct *p)
+{
+	struct css_set *cset;
+	int prio, cpu_cid, cpuset_cid;
+	prio = p->prio;
+
+	cset = task_css_set(p);
+	cpu_cid = cset->subsys[cpu_cgrp_id] ? cset->subsys[cpu_cgrp_id]->id : 0;
+	cpuset_cid = cset->subsys[cpuset_cgrp_id] ? cset->subsys[cpuset_cgrp_id]->id : 0;
+	if (cpu_cid >= PRIO_MAX_CPUCTL)
+		cpu_cid = 0;
+	if (cpuset_cid >= PRIO_MAX_CPUSET)
+		cpuset_cid = 0;
+
+	prio += cpuset_cid * PRIO_MAX_TASK_PRIO;
+	prio += cpu_cid * PRIO_MAX_TASK_PRIO * PRIO_MAX_CPUSET;
+	prio += (int)((u8)cpumask_bits(&p->cpus_mask)[0]) * PRIO_MAX_TASK_PRIO * PRIO_MAX_CPUCTL * PRIO_MAX_CPUSET;
+	return prio;
+}
+#endif /* CREATE_TRACE_POINTS */
+
 TRACE_EVENT(sched_switch,
 
 	TP_PROTO(bool preempt,
@@ -160,7 +184,8 @@ TRACE_EVENT(sched_switch,
 		__entry->prev_state	= __trace_sched_switch_state(preempt, prev);
 		memcpy(__entry->prev_comm, prev->comm, TASK_COMM_LEN);
 		__entry->next_pid	= next->pid;
-		__entry->next_prio	= next->prio;
+//#ifdef CONFIG_OPLUS_SCHED_SWTICH_DEBUG
+		__entry->next_prio	= get_compound_prio(next);
 		/* XXX SCHED_DEADLINE */
 	),
 
@@ -418,15 +443,25 @@ TRACE_EVENT(sched_blocked_reason,
 		__field( pid_t,	pid	)
 		__field( void*, caller	)
 		__field( bool, io_wait	)
+		__field( void*, layer1  )
+		__field( void*, layer2  )
+		__field( void*, layer3  )
+		__field( void*, layer4  )
 	),
 
 	TP_fast_assign(
 		__entry->pid	= tsk->pid;
 		__entry->caller = (void *)get_wchan(tsk);
 		__entry->io_wait = tsk->in_iowait;
+		__entry->layer1 = (void *)get_backtrace(tsk, 0);
+		__entry->layer2 = (void *)get_backtrace(tsk, 1);
+		__entry->layer3 = (void *)get_backtrace(tsk, 2);
+		__entry->layer4 = (void *)get_backtrace(tsk, 3);
 	),
 
-	TP_printk("pid=%d iowait=%d caller=%pS", __entry->pid, __entry->io_wait, __entry->caller)
+	TP_printk("pid=%d iowait=%d caller=%pS layer1=%pS layer2=%pS layer3=%pS layer4=%pS",
+	__entry->pid, __entry->io_wait, __entry->caller, __entry->layer1,
+	__entry->layer2, __entry->layer3, __entry->layer4)
 );
 
 /*

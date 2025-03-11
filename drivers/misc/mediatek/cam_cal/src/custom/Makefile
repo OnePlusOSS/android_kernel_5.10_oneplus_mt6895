@@ -40,7 +40,7 @@ camera_eeprom-objs += ../common/$(COMMON_VERSION)/eeprom_utils.o
 # Platform code
 camera_eeprom-objs += eeprom_i2c_custom_driver.o
 camera_eeprom-objs += cam_cal_list.o
-
+camera_eeprom-objs += otp_insensor_dev.o
 comma := ,
 empty :=
 space := $(empty) $(empty)

@@ -31,14 +31,14 @@
 #include "kd_imgsensor_define_v4l2.h"
 #include "kd_imgsensor_errcode.h"
 #include "imx766mipiraw_Sensor.h"
-
+#include "imx766_eeprom.h"
 #include "adaptor-subdrv.h"
 #include "adaptor-i2c.h"
 
 #define Sleep(ms) mdelay(ms)
 
-#define IMX766_EEPROM_READ_ID  0xA0
-#define IMX766_EEPROM_WRITE_ID 0xA1
+#define IMX766_EEPROM_READ_ID  0xA1
+#define IMX766_EEPROM_WRITE_ID 0xA0
 #define IMX766_I2C_SPEED       100
 #define IMX766_MAX_OFFSET      0x8000
 
@@ -76,27 +76,11 @@ static struct EEPROM_PDAF_INFO eeprom_pdaf_info[] = {
 
 static DEFINE_MUTEX(gimx766_eeprom_mutex);
 
-static bool selective_read_eeprom(struct subdrv_ctx *ctx, kal_uint16 addr, BYTE *data)
-{
-	if (addr > IMX766_MAX_OFFSET)
-		return false;
-
-	if (adaptor_i2c_rd_u8(ctx->i2c_client,
-			IMX766_EEPROM_READ_ID >> 1, addr, data) < 0) {
-		return false;
-	}
-	return true;
-}
-
 static bool read_imx766_eeprom(struct subdrv_ctx *ctx, kal_uint16 addr, BYTE *data, int size)
 {
-	int i = 0;
-	int offset = addr;
-
-	for (i = 0; i < size; i++) {
-		if (!selective_read_eeprom(ctx, offset, &data[i]))
-			return false;
-		offset++;
+	if (adaptor_i2c_rd_p8(ctx->i2c_client,
+			IMX766_EEPROM_READ_ID >> 1, addr, data, size) < 0) {
+		return false;
 	}
 	return true;
 }
@@ -165,3 +149,35 @@ unsigned int read_imx766_DCC(struct subdrv_ctx *ctx, BYTE *data)
 	return readed_size;
 }
 
+struct eeprom_map_info imx766_eeprom_info[] = {
+	{ EEPROM_META_MODULE_ID, 0x0000, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_SENSOR_ID, 0x0006, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_LENS_ID, 0x0008, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_VCM_ID, 0x000A, 0x000F, 0x0010, 2, true },
+	{ EEPROM_META_MIRROR_FLIP, 0x000E, 0x000F, 0x0010, 1, true },
+	{ EEPROM_META_MODULE_SN, 0x00B0, 0x000F, 0x0010, 17, true },
+	{ EEPROM_META_AF_CODE, 0x0092, 0x0098, 0x0099, 6, true },
+	{ EEPROM_META_STEREO_DATA, 0x0000, 0x0000, 0x0000, 0, false },
+	{ EEPROM_META_STEREO_MW_MAIN_DATA, 0x2B00, 0x3199, 0x319A, CALI_DATA_MASTER_LENGTH, true },
+	{ EEPROM_META_STEREO_MT_MAIN_DATA, 0x31C0, 0x3859, 0x385A, CALI_DATA_MASTER_LENGTH, true },
+};
+
+unsigned int read_imx766_eeprom_info(struct subdrv_ctx *ctx, kal_uint16 meta_id,
+				     BYTE *data, int size)
+{
+	kal_uint16 addr;
+	int readsize;
+
+	if (meta_id != imx766_eeprom_info[meta_id].meta)
+		return -1;
+
+	if (size != imx766_eeprom_info[meta_id].size)
+		return -1;
+
+	addr = imx766_eeprom_info[meta_id].start;
+	readsize = imx766_eeprom_info[meta_id].size;
+
+	read_imx766_eeprom(ctx, addr, data, readsize);
+
+	return 0;
+}

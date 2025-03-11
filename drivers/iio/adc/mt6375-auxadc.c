@@ -658,6 +658,7 @@ static int auxadc_add_irq_chip(struct mt6375_priv *priv)
 			dev_name(priv->dev), ret);
 		goto err_irq;
 	}
+	enable_irq_wake(priv->irq);
 
 	enable_irq_wake(priv->irq);
 	return 0;

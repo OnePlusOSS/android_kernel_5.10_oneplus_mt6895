@@ -10,8 +10,31 @@
 #include "common.h"
 #include <linux/stop_machine.h>
 #include <linux/kthread.h>
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_fair.h>
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+#include <../kernel/oplus_cpu/sched/eas_opt/oplus_cap.h>
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+#include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_balance.h>
+#endif
+
 #if IS_ENABLED(CONFIG_MTK_THERMAL_INTERFACE)
 #include <thermal_interface.h>
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_audio.h>
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_pipeline.h>
 #endif
 
 #define CREATE_TRACE_POINTS
@@ -206,6 +229,14 @@ mtk_compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 	unsigned long energy_base = 0, energy_cur = 0, energy_delta = 0;
 	int cpu;
 	int cpu_temp[NR_CPUS];
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+	struct rq* rq = NULL;
+	unsigned int avg_nr_running = 1;
+	unsigned int count_cpu = 0;
+	int cluster_id = topology_physical_package_id(cpumask_first(pd_mask));
+	unsigned long util_thresh = 0;
+	unsigned long capacity = cpu_cap;
+#endif
 
 	/*
 	 * The capacity state of CPUs of the current rd can be driven by CPUs
@@ -308,7 +339,31 @@ mtk_compute_energy(struct task_struct *p, int dst_cpu, struct perf_domain *pd)
 		cpu_temp[cpu] = get_cpu_temp(cpu);
 		cpu_temp[cpu] /= 1000;
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+		rq = cpu_rq(cpu);
+		avg_nr_running += rq->nr_running;
+		count_cpu++;
+#endif
 	}
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+	if (eas_opt_enable && (util_thresh_percent[cluster_id] != 100) && count_cpu) {
+		unsigned long max_util_base_bak = max_util_base;
+		unsigned long max_util_cur_bak = max_util_cur;
+		util_thresh = capacity * util_thresh_cvt[cluster_id] >> SCHED_CAPACITY_SHIFT;
+		avg_nr_running = mult_frac(avg_nr_running, 1, count_cpu);
+		max_util_base = (util_thresh < max_util_base) ?
+			(util_thresh + ((avg_nr_running * (max_util_base - util_thresh)* nr_oplus_cap_multiple[cluster_id]) >> SCHED_CAPACITY_SHIFT)) : max_util_base;
+		max_util_cur = (util_thresh < max_util_cur) ?
+			(util_thresh + ((avg_nr_running * (max_util_cur - util_thresh)* nr_oplus_cap_multiple[cluster_id]) >> SCHED_CAPACITY_SHIFT)) : max_util_cur;
+		if (unlikely(eas_opt_debug_enable))
+			trace_printk("[eas_opt]: cluster_id: %d, capacity: %d, util_thresh: %d, avg_nr_running: %d, "
+			"origin_max_util_base: %d, max_util_base: %d, origin_max_util_cur: %d, max_util_cur: %d, util_thresh_percent: %d\n",
+			cluster_id, capacity, util_thresh, avg_nr_running, max_util_base_bak,
+			max_util_base, max_util_cur_bak, max_util_cur, util_thresh_percent[cluster_id]);
+	}
+#endif
 
 	energy_base = mtk_em_cpu_energy(pd->em_pd, max_util_base, sum_util_base, cpu_temp);
 	energy_cur = mtk_em_cpu_energy(pd->em_pd, max_util_cur, sum_util_cur, cpu_temp);
@@ -394,14 +449,45 @@ void mtk_find_energy_efficient_cpu(void *data, struct task_struct *p, int prev_c
 	struct cpuidle_state *idle;
 	struct perf_domain *pd;
 	int select_reason = -1;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+	int pipeline_cpu;
+#endif
 
 	rcu_read_lock();
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+	pipeline_cpu = oplus_get_task_pipeline_cpu(p);
+	if (pipeline_cpu != -1) {
+		bool ctc = cpumask_test_cpu(pipeline_cpu, p->cpus_ptr);
+		bool ca = cpu_active(pipeline_cpu);
+		bool nllt = !oplus_pipeline_low_latency_task(pipeline_cpu);
+		bool pipeline_success = ctc && ca && nllt;
+
+		/*
+		trace_printk("comm=%s, pid=%d, tid=%d, ctc=%d, ca=%d, nllt=%d, pipeline_cpu=%d, pipeline_success=%d\n",
+			p->comm, p->pid, p->tgid, ctc, ca, nllt, pipeline_cpu, pipeline_success);
+		*/
+
+		if (pipeline_success) {
+			rcu_read_unlock();
+			*new_cpu = pipeline_cpu;
+			select_reason = LB_PIPELINE;
+			goto pipeline_out;
+		}
+	}
+#endif
+
 	if (!uclamp_min_ls)
 		latency_sensitive = uclamp_latency_sensitive(p);
 	else {
 		latency_sensitive = (p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0) ||
 					uclamp_latency_sensitive(p);
 	}
+
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+	oplus_sched_assist_audio_latency_sensitive(p, &latency_sensitive);
+#endif
+
 
 	pd = rcu_dereference(rd->pd);
 	if (!pd || READ_ONCE(rd->overutilized)) {
@@ -452,6 +538,16 @@ void mtk_find_energy_efficient_cpu(void *data, struct task_struct *p, int prev_c
 
 			if (!cpumask_test_cpu(cpu, p->cpus_ptr))
 				continue;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+			if (should_ux_task_skip_cpu(p, cpu))
+				continue;
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+			if (adjust_group_task(p, cpu))
+				continue;
+#endif
 
 			if (cpu_rq(cpu)->rt.rt_nr_running >= 1)
 				continue;
@@ -583,6 +679,19 @@ fail:
 
 	*new_cpu = -1;
 done:
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+	if (set_frame_group_task_to_perfer_cpu(p, new_cpu))
+		select_reason = LB_FBT_PREFER;
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (set_ux_task_to_prefer_cpu(p, new_cpu)) {
+		select_reason = LB_UX_PREFER;
+	}
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+	pipeline_out:
+#endif
 	trace_sched_find_energy_efficient_cpu(best_delta, best_energy_cpu,
 			best_idle_cpu, idle_max_spare_cap_cpu, sys_max_spare_cap_cpu);
 	trace_sched_select_task_rq(p, select_reason, prev_cpu, *new_cpu,
@@ -616,14 +725,27 @@ static struct task_struct *detach_a_hint_task(struct rq *src_rq, int dst_cpu)
 		if (task_running(src_rq, p))
 			continue;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+		if (should_ux_task_skip_cpu(p, dst_cpu))
+			continue;
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
+		if (fbg_skip_migration(p, cpu_of(src_rq), dst_cpu))
+			continue;
+#endif
 		task_util = uclamp_task_util(p);
 
 		if (!uclamp_min_ls)
 			latency_sensitive = uclamp_latency_sensitive(p);
 		else {
 			latency_sensitive = (p->uclamp_req[UCLAMP_MIN].value > 0 ? 1 : 0) ||
-					uclamp_latency_sensitive(p);
+						uclamp_latency_sensitive(p);
 		}
+
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+		oplus_sched_assist_audio_latency_sensitive(p, &latency_sensitive);
+#endif
 
 		if (latency_sensitive &&
 			task_util <= dst_capacity) {
@@ -725,6 +847,11 @@ int migrate_running_task(int this_cpu, struct task_struct *p, struct rq *target,
 	int active_balance = false;
 	unsigned long flags;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+	if (oplus_pipeline_task_skip_cpu(p, this_cpu))
+		return true;
+#endif
+
 	raw_spin_lock_irqsave(&target->lock, flags);
 	if (!target->active_balance &&
 		(task_rq(p) == target) && p->state != TASK_DEAD) {
@@ -757,6 +884,11 @@ void mtk_sched_newidle_balance(void *data, struct rq *this_rq, struct rq_flags *
 	unsigned long misfit_load = 0;
 	u64 now_ns;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
+	if (__oplus_newidle_balance(data, this_rq, rf, pulled_task, done))
+		return;
+#endif
+
 	/*
 	 * We must set idle_stamp _before_ calling idle_balance(), such that we
 	 * measure the duration of idle_balance() as idle time.
@@ -786,9 +918,14 @@ void mtk_sched_newidle_balance(void *data, struct rq *this_rq, struct rq_flags *
 	 * re-start the picking loop.
 	 */
 	rq_unpin_lock(this_rq, rf);
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+	if (oplus_sched_assist_audio_idle_balance(this_rq))
+		goto audio_pulled;
+#endif
 	raw_spin_unlock(&this_rq->lock);
 
 	this_cpu = this_rq->cpu;
+	rcu_read_lock();
 	for_each_cpu(cpu, cpu_active_mask) {
 		if (cpu == this_cpu)
 			continue;
@@ -840,7 +977,11 @@ void mtk_sched_newidle_balance(void *data, struct rq *this_rq, struct rq_flags *
 					misfit_task_rq, MIGR_IDLE_PULL_MISFIT_RUNNING);
 	if (best_running_task)
 		put_task_struct(best_running_task);
+	rcu_read_unlock();
 	raw_spin_lock(&this_rq->lock);
+#if IS_ENABLED(CONFIG_OPLUS_CPU_AUDIO_PERF)
+audio_pulled:
+#endif
 	/*
 	 * While browsing the domains, we released the rq lock, a task could
 	 * have been enqueued in the meantime. Since we're not going idle,

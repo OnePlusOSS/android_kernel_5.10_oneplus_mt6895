@@ -4,11 +4,22 @@
 #include <linux/pm_runtime.h>
 
 #include "kd_imgsensor_define_v4l2.h"
+#include "kd_imgsensor.h"
 #include "imgsensor-user.h"
 #include "adaptor.h"
 #include "adaptor-ioctl.h"
 #include "adaptor-common-ctrl.h"
+#include "adaptor-fsync-ctrls.h"
 #include "adaptor-i2c.h"
+
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+#include <linux/delay.h>
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+extern int adaptor_hw_aon_power_on(struct adaptor_ctx *ctx);
+extern int adaptor_hw_aon_power_off(struct adaptor_ctx *ctx);
+int aon_power_status = 0;
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 #define GAIN_TBL_SIZE 4096
 #define sd_to_ctx(__sd) container_of(__sd, struct adaptor_ctx, sd)
@@ -181,8 +192,14 @@ static void frame_desc_to_vcinfo2(
 		vc->VC_DataType = entry->data_type;
 		vc->VC_SIZEH_PIXEL = entry->hsize;
 		vc->VC_SIZEV = entry->vsize;
-		vc->VC_SIZEH_BYTE = vc->VC_DataType != 0x2b ?
-			vc->VC_SIZEH_PIXEL : vc->VC_SIZEH_PIXEL * 10 / 8;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		vc->DT_REMAP_TO_TYPE = entry->dt_remap_to_type;
+		if (vc->VC_DataType == 0x2b ||
+			vc->DT_REMAP_TO_TYPE == MTK_MBUS_FRAME_DESC_REMAP_TO_RAW10) {
+			vc->VC_SIZEH_BYTE = vc->VC_SIZEH_PIXEL * 10 / 8;
+		} else
+			vc->VC_SIZEH_BYTE = vc->VC_SIZEH_PIXEL;
+#endif
 	}
 }
 #else /* IMGSENSOR_VC_ROUTING */
@@ -1172,6 +1189,34 @@ static int g_fine_integ_line_by_scenario(struct adaptor_ctx *ctx, void *arg)
 	return 0;
 }
 
+static int g_fsync_frame_length_info(struct adaptor_ctx *ctx, void *arg)
+{
+	struct mtk_fs_frame_length_info *p_fs_fl_info = NULL;
+	int ret = 0;
+
+	if (unlikely(arg == NULL)) {
+		ret = -ENOIOCTLCMD;
+		adaptor_logi(ctx,
+			"ERROR: VIDIOC_MTK_G_FS_FRAME_LENGTH_INFO, get input pointer arg:%p, return\n",
+			arg);
+		return ret;
+	}
+
+	p_fs_fl_info = arg;
+
+	notify_fsync_mgr_g_fl_record_info(ctx, p_fs_fl_info);
+
+	dev_info(ctx->dev,
+		"[%s] VIDIOC_MTK_G_FS_FRAME_LENGTH_INFO, idx:%u, target_min_fl_us:%u, out_fl_us:%u, ret:%d\n",
+		__func__,
+		ctx->idx,
+		p_fs_fl_info->target_min_fl_us,
+		p_fs_fl_info->out_fl_us,
+		ret);
+
+	return ret;
+}
+
 
 static int s_video_framerate(struct adaptor_ctx *ctx, void *arg)
 {
@@ -1343,7 +1388,296 @@ static int s_tg(struct adaptor_ctx *ctx, void *arg)
 
 	return 0;
 }
+//Renjianlin add for camerasn
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+static int g_get_camerasn(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_get_camera_sn *temp = arg;
+	subdrv_call(ctx, feature_control,
+	SENSOR_FEATURE_GET_EEPROM_COMDATA,
+	temp->data,&(temp->len));
+	return 0;
+}
 
+static int g_get_camera_eeprom_common_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_get_eeprom_common_data *temp = arg;
+	unsigned int  arg_length = sizeof(struct oplus_get_eeprom_common_data);
+	subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_EEPROM_COMDATA,
+		temp->header, &arg_length);
+	return 0;
+}
+
+static int g_get_stereo_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_calc_eeprom_info *info = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, info->p_buf, info->size, F_READ | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_EEPROM_STEREODATA,
+		workbuf.kbuf, &(info->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_get_unique_sensorid(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_get_unique_sensorid *data = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, data->p_buf, data->size,  F_ZERO | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_UNIQUE_SENSORID,
+		workbuf.kbuf, &(data->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_set_cali_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_set_cali_data *info = arg;
+	struct workbuf workbuf;
+	int ret;
+	ret = workbuf_get(&workbuf, info->p_buf, (info->size) + 2, F_READ);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_SET_CALI_DATA,
+		workbuf.kbuf, &info->size);
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_cloud_otp_info(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_cloud_otp_info *info = arg;
+	union feature_para para;
+	u32 len;
+	struct SENSOR_OTP_INFO_STRUCT cloudinfo;
+	para.u64[0] = info->otp_type;
+	para.u64[1] = (u64)&cloudinfo;
+	memset(&cloudinfo, 0, sizeof(cloudinfo));
+
+	subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_CLOUD_OTP_INFO,
+		para.u8, &len);
+	if (copy_to_user((void *)info->p_cloud_info, &cloudinfo, sizeof(cloudinfo)))
+		return -EFAULT;
+	return 0;
+}
+
+static int g_get_eeprom_probe_state(struct adaptor_ctx *ctx, void *arg)
+{
+	int ret;
+	u32 len;
+	int *eeprom_probe_state = arg;
+	union feature_para para;
+	para.u32[0] = 0;
+	ret = subdrv_call(ctx, feature_control, SENSOR_FEATURE_GET_EEPROM_PROBE_STATE, para.u8, &len);
+	*eeprom_probe_state = para.u32[0];
+
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_get_otp_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_calc_eeprom_info *info = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, info->p_buf, info->size, F_ZERO | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_SENSOR_OTP_ALL,
+		workbuf.kbuf, &(info->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int g_get_distortionparams_data(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_distortion_data *data = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, data->p_buf, data->size,  F_ZERO | F_WRITE);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_DISTORTIONPARAMS,
+		workbuf.kbuf, &(data->size));
+	if (ret)
+		return ret;
+
+	ret = workbuf_put(&workbuf);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+static int s_calibration_eeprom(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_calc_eeprom_info *info = arg;
+	struct workbuf workbuf;
+	int ret;
+
+	ret = workbuf_get(&workbuf, info->p_buf, info->size, F_READ);
+	if (ret)
+		return ret;
+
+	ret = subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_SET_SENSOR_OTP,
+		workbuf.kbuf, &info->size);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+
+int cam_aon_irq_power_up(struct adaptor_ctx *ctx, void *arg)
+{
+	int i = 0;
+	dev_dbg(ctx->dev,"cam_aon_irq_power_up E");
+	if(arg != NULL){
+		if (copy_from_user(&ctx->pid,
+			(void __user *) arg,sizeof(int))) {
+			dev_err(ctx->dev, "Failed Copy from User");
+		}
+		dev_dbg(ctx->dev,"pid: %d", ctx->pid);
+	}
+
+	dev_dbg(ctx->dev, "%s aon_power_status = %d irq:%d\n", __func__, aon_power_status, gpio_to_irq(ctx->aon_irq_gpio));
+
+	mutex_lock(&ctx->hw_mutex);
+	if (aon_power_status) {
+		mutex_unlock(&ctx->hw_mutex);
+		dev_info(ctx->dev, "%s already powered skip, aon_power_status = %d\n", __func__, aon_power_status);
+		return 0;
+	}
+	enable_irq(gpio_to_irq(ctx->aon_irq_gpio));
+	enable_irq_wake(gpio_to_irq(ctx->aon_irq_gpio));
+	adaptor_hw_aon_power_on(ctx);
+	ctx->irq_cnt = 0;
+	aon_power_status = 1;
+	adaptor_i2c_wr_regs_u8(ctx->subctx.i2c_client, ctx->subctx.i2c_write_id >> 1, ctx->subctx.aonhemd_setting_table, ctx->subctx.aonhemd_setting_len);
+	msleep(5);
+
+	for (i = 0; i < ctx->subdrv->aon_pw_seq_cnt; i++) {
+		const struct subdrv_pw_seq_entry *ent;
+		struct adaptor_hw_ops *op;
+		ent = &ctx->subdrv->aon_pw_seq[i];
+		op = &ctx->hw_ops[ent->id];
+		if (!op->unset) {
+			dev_dbg(ctx->dev, "cannot unset comp %d val %d\n",
+				ent->id, ent->val);
+			continue;
+		}
+		if (ent->id == HW_ID_MCLK) {
+			dev_info(ctx->dev, "mclk unset");
+			op->unset(ctx, op->data, ent->val);
+		}
+	}
+	mutex_unlock(&ctx->hw_mutex);
+	dev_dbg(ctx->dev,"cam_aon_irq_power_up X");
+	return 0;
+}
+
+int cam_aon_irq_power_down(struct adaptor_ctx *ctx, void *arg)
+{
+	dev_dbg(ctx->dev,"cam_aon_irq_power_down E");
+	mutex_lock(&ctx->hw_mutex);
+	if (aon_power_status == 0) {
+		mutex_unlock(&ctx->hw_mutex);
+		dev_info(ctx->dev, "%s skip due to aon_power_status = %d\n", __func__, aon_power_status);
+		return 0;
+	}
+
+	adaptor_hw_aon_power_off(ctx);
+	aon_power_status = 0;
+	disable_irq_wake(gpio_to_irq(ctx->aon_irq_gpio));
+	disable_irq(gpio_to_irq(ctx->aon_irq_gpio));
+	ctx->irq_cnt = 0;
+	mutex_unlock(&ctx->hw_mutex);
+	dev_dbg(ctx->dev,"cam_aon_irq_power_down X");
+	return 0;
+}
+
+int cam_aon_irq_query_info(struct adaptor_ctx *ctx, void *arg) {
+	int sensorid = 0;
+	if(ctx != NULL)
+	{
+		sensorid = ctx->subdrv->id;
+		if(sensorid == IMX709_SENSOR_ID_22017 || sensorid == IMX709_SENSOR_ID) {
+			if(copy_to_user((void __user *)arg, &sensorid,sizeof(sensorid))) {
+				dev_err(ctx->dev,"Failed to copy to user_ptr=%pK",(void __user *)arg);
+			}
+		}
+	}
+	aon_power_status = 0;
+	return 0;
+}
+static int g_sensor_setting_info(struct adaptor_ctx *ctx, void *arg)
+{
+	struct oplus_sensor_setting_info *info = arg;
+	union feature_para para;
+	u32 len;
+	struct SENSOR_SETTING_INFO_STRUCT sensorinfo;
+	para.u64[0] = info->scenario_id;
+	para.u64[1] = (u64)&sensorinfo;
+	memset(&sensorinfo, 0, sizeof(sensorinfo));
+
+	subdrv_call(ctx, feature_control,
+		SENSOR_FEATURE_GET_SENSOR_SETTING_INFO,
+		para.u8, &len);
+	if (copy_to_user((void *)info->p_sensor_info, &sensorinfo, sizeof(sensorinfo)))
+		return -EFAULT;
+	return 0;
+}
+
+#endif
 struct ioctl_entry {
 	unsigned int cmd;
 	int (*func)(struct adaptor_ctx *ctx, void *arg);
@@ -1386,9 +1720,22 @@ static const struct ioctl_entry ioctl_list[] = {
 	{VIDIOC_MTK_G_CUSTOM_READOUT_BY_SCENARIO, g_custom_readout},
 	{VIDIOC_MTK_G_STAGGER_SCENARIO, g_stagger_scenario_ioctl},
 	{VIDIOC_MTK_G_MAX_EXPOSURE, g_max_exposure_ioctl},
+	//Renjianlin add for camerasn
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	{VIDIOC_MTK_G_CAMERA_SN,g_get_camerasn},
+	{VIDIOC_MTK_G_STEREO_DATA, g_get_stereo_data},
+	{VIDIOC_MTK_G_OTP_DATA, g_get_otp_data},
+	{VIDIOC_MTK_G_DISTORTIONPARAMS_DATA, g_get_distortionparams_data},
+	{VIDIOC_MTK_G_CAMERA_EEPROM_COMMON, g_get_camera_eeprom_common_data},
+	{VIDIOC_MTK_G_SENSOR_SETTING_INFO, g_sensor_setting_info},
+	{VIDIOC_MTK_G_UNIQUE_SENSORID, g_get_unique_sensorid},
+	{VIDIOC_MTK_G_EEPROM_PROBE_STATE, g_get_eeprom_probe_state},
+	{VIDIOC_MTK_G_CLOUD_OTP_INFO, g_cloud_otp_info},
+	#endif
 	{VIDIOC_MTK_G_OUTPUT_FORMAT_BY_SCENARIO, g_output_format_by_scenario},
 	{VIDIOC_MTK_G_FINE_INTEG_LINE_BY_SCENARIO, g_fine_integ_line_by_scenario},
 	{VIDIOC_MTK_G_MAX_EXPOSURE_LINE, g_max_exposure_line_ioctl},
+	{VIDIOC_MTK_G_FS_FRAME_LENGTH_INFO, g_fsync_frame_length_info},
 	/* SET */
 	{VIDIOC_MTK_S_VIDEO_FRAMERATE, s_video_framerate},
 	{VIDIOC_MTK_S_MAX_FPS_BY_SCENARIO, s_max_fps_by_scenario},
@@ -1400,13 +1747,19 @@ static const struct ioctl_entry ioctl_list[] = {
 	{VIDIOC_MTK_S_LSC_TBL, s_lsc_tbl},
 	{VIDIOC_MTK_S_CONTROL, s_control},
 	{VIDIOC_MTK_S_TG, s_tg},
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	{VIDIOC_MTK_S_CALIBRATION_EEPROM, s_calibration_eeprom},
+	{VIDIOC_MTK_S_AON_HE_POWER_UP, cam_aon_irq_power_up},
+	{VIDIOC_MTK_S_AON_HE_POWER_DOWN, cam_aon_irq_power_down},
+	{VIDIOC_MTK_S_AON_HE_QUERY_INFO, cam_aon_irq_query_info},
+	{VIDIOC_MTK_S_CALI_DATA, g_set_cali_data},
+	#endif
 };
 
 long adaptor_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
 	int i, ret = -ENOIOCTLCMD;
 	struct adaptor_ctx *ctx = sd_to_ctx(sd);
-
 	/* dispatch ioctl request */
 	for (i = 0; i < ARRAY_SIZE(ioctl_list); i++) {
 		if (ioctl_list[i].cmd == cmd) {

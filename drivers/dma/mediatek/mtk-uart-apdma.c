@@ -146,8 +146,32 @@ static void mtk_uart_apdma_start_tx(struct mtk_chan *c)
 				to_mtk_uart_apdma_dev(c->vc.chan.device);
 	struct mtk_uart_apdma_desc *d = c->desc;
 	unsigned int wpt, vff_sz;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic 2022/12/2 add for FTM lost 2 characters*/
+	unsigned int rst_status;
+#endif
 
 	vff_sz = c->cfg.dst_port_window_size;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+/*BSP.CHG.Basic 2022/12/2 add for FTM lost 2 characters*/
+  	wpt = mtk_uart_apdma_read(c, VFF_ADDR);
+  	if (wpt == ((unsigned int)d->addr)) {
+ 		pr_info("%s: d->addr[%d] \n", __func__, (unsigned int)d->addr);
+  		mtk_uart_apdma_write(c, VFF_ADDR, 0);
+  		mtk_uart_apdma_write(c, VFF_THRE, 0);
+  		mtk_uart_apdma_write(c, VFF_LEN, 0);
+  		mtk_uart_apdma_write(c, VFF_RST, VFF_WARM_RST_B);
+  		/* Make sure cmd sequence */
+  		mb();
+  		udelay(1);
+  		rst_status = mtk_uart_apdma_read(c, VFF_RST);
+  		if (rst_status != 0) {
+ 			udelay(5);
+  			pr_info("%s: apdma: rst_status: 0x%x, new rst_status: 0x%x!\n",
+ 				__func__, rst_status, mtk_uart_apdma_read(c, VFF_RST));
+  		}
+  	}
+#endif
 	if (!mtk_uart_apdma_read(c, VFF_LEN)) {
 		mtk_uart_apdma_write(c, VFF_ADDR, d->addr);
 		mtk_uart_apdma_write(c, VFF_LEN, vff_sz);
@@ -287,7 +311,7 @@ static int mtk_uart_apdma_alloc_chan_resources(struct dma_chan *chan)
 	unsigned int status;
 	int ret;
 
-	ret = pm_runtime_get_sync(mtkd->ddev.dev);
+	ret = pm_runtime_resume_and_get(mtkd->ddev.dev);
 	if (ret < 0) {
 		pm_runtime_put_noidle(chan->device->dev);
 		return ret;
@@ -301,18 +325,21 @@ static int mtk_uart_apdma_alloc_chan_resources(struct dma_chan *chan)
 	ret = readx_poll_timeout(readl, c->base + VFF_EN,
 			  status, !status, 10, 100);
 	if (ret)
-		return ret;
+		goto err_pm;
 
 	ret = request_irq(c->irq, mtk_uart_apdma_irq_handler,
 			  IRQF_TRIGGER_NONE, KBUILD_MODNAME, chan);
 	if (ret < 0) {
 		dev_err(chan->device->dev, "Can't request dma IRQ\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_pm;
 	}
 
 	if (mtkd->support_bits > VFF_ORI_ADDR_BITS_NUM)
 		mtk_uart_apdma_write(c, VFF_4G_SUPPORT, VFF_4G_SUPPORT_CLR_B);
 
+err_pm:
+	pm_runtime_put_noidle(mtkd->ddev.dev);
 	return ret;
 }
 
@@ -475,9 +502,8 @@ static int mtk_uart_apdma_device_pause(struct dma_chan *chan)
 	mtk_uart_apdma_write(c, VFF_EN, VFF_EN_CLR_B);
 	mtk_uart_apdma_write(c, VFF_INT_EN, VFF_INT_EN_CLR_B);
 
-	synchronize_irq(c->irq);
-
 	spin_unlock_irqrestore(&c->vc.lock, flags);
+	synchronize_irq(c->irq);
 
 	return 0;
 }

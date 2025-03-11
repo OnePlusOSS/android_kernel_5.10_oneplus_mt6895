@@ -1,0 +1,255 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	consumer_ir_core: consumer_ir_core {
+		compatible = "oplus,kookong_ir_core";
+		status = "okay";
+		vdd-supply = <&mt6368_vmch>;
+		vdd-min-vol = <3100000>;
+		vdd-max-vol = <3100000>;
+	};
+	consumerIr: consumerIr {
+		compatible = "oplus,kookong_ir_pwm";
+		status = "okay";
+		pwm-num = <1>;
+	};
+	ssc_interactive: ssc_interactive {
+		report_brightness = <1>;
+		support_pwm_turbo = <1>;
+		support_bri_to_scp = <1>;
+		need_to_sync_lcd_rate = <0>;
+		report_blank_mode = <1>;
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA4XY,
+			SC7A20,
+			ICM4X6XX,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <5>;//bmi2xy
+			device_name = "bmi2xy";
+			i2c_num = <0>;
+			direction = <1>;
+			eint_num = <15>;
+			gyro_cali_version= <2>;
+			acc_cali_range= <300 300 300>;
+			gyro_cali_range = <350>;
+			sup_range_change = <1>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+			AKM09918,
+			AKM09919,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <0>;
+			i2c_addr = <48>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <9880 0 1437 0 543 0 657 0 10794 0 152 0 232 0 430 1 11535 0>;
+		};
+		msensor_2: msensor_2 {
+                        status = "okay";
+                        sensor_name = <5>;//AKM09919
+                        i2c_num = <0>;
+                        i2c_addr = <14>;
+                        direction = <0>;
+                        eint_num = <0>;
+                        soft-mag-parameter = <8685 0 1621 0 56 0 897 0 9967 0 129 1 543 0 722 1 10661 0>;
+                };
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <9>;//TCS3720
+			i2c_num = <2>;
+			i2c_addr = <0x39>;
+			direction = <4>;
+			eint_num = <17>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <100>;
+			step_div = <2000>;
+			sensor-reg = <0xD9 0xB1 0x82 0xEE>;
+		};
+		ps_panel_P_3_1: ps_panel_P_3_1 {
+			status = "okay";
+			device_name = "tcs3720";
+			low_step = <250>;
+			high_step = <350>;
+			low_limit = <250>;
+			high_limit = <350>;
+			dirty_low_step = <180>;
+			dirty_high_step = <280>;
+			ps_dirty_limit = <1800>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <800>;
+			anti_shake_delta = <120>;
+			dynamic_cali_max = <3000>;
+			raw2offset_radio = <1000>;
+			offset_max = <15000>;
+			offset_range_min = <0>;
+			offset_range_max = <65534>;
+			force_cali_limit = <0>;
+			cali_jitter_limit = <70>;
+			cal_offset_margin = <3000>;
+			60hz_psd_us = <5700>;
+			90hz_psd_us = <5700>;
+			120hz_psd_us = <5700>;
+			ps_check_num = <3>;
+			ps_power_config = <3>;
+		};
+		ps_panel_P_7_1: ps_panel_P_7_1 {
+			status = "okay";
+			device_name = "tcs3720";
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <300>;
+			high_limit = <400>;
+			dirty_low_step = <180>;
+			dirty_high_step = <280>;
+			ps_dirty_limit = <1800>;
+			ps_ir_limit = <500>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <800>;
+			anti_shake_delta = <120>;
+			dynamic_cali_max = <3000>;
+			raw2offset_radio = <1000>;
+			offset_max = <15000>;
+			offset_range_min = <0>;
+			offset_range_max = <65534>;
+			force_cali_limit = <0>;
+			cali_jitter_limit = <70>;
+			cal_offset_margin = <3000>;
+			60hz_psd_us = <5700>;
+			90hz_psd_us = <5700>;
+			120hz_psd_us = <5700>;
+			ps_check_num = <3>;
+			ps_power_config = <4>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <9>;//TCS3720
+			i2c_num = <2>;
+			i2c_addr = <0x39>;
+			direction = <0>;
+			eint_num = <17>;
+			als_ratio = <110>;
+			cct_type = <0x02>; //0x01 CCT_NORMAL 0x02 CCT_WISE
+			device_name = "tcs3720";
+			gold_cct_3k = <2107 929 495 3227 1001 1001>;
+			gold_cct_6k = <1481 1004 635 2875 1001 1001>;
+			lb_bri_max = <4096>;
+			ir_ratio = <10>; // *1000
+			als_delay = <390>;
+			available_sensor = <14>;
+			gold_cct_factor = <941 946 924 966 1001 1001>;
+			high_pwm_cct = <1>;
+			als_timer_ms = <100>;
+			als_buffer_length = <2>;
+		};
+		als_panel_P_3_1: als_panel_P_3_1 {
+			status = "okay";
+			device_name = "tcs3720";
+			decision_table_index = <9>;
+			support_panel = <7>; // boe
+			gold_cct_3k = <2107 929 495 3227 1001 1001>;
+			gold_cct_6k = <1481 1004 635 2875 1001 1001>;
+		};
+		als_panel_P_7_1: als_panel_P_7_1 {
+			status = "okay";
+			device_name = "tcs3720";
+			decision_table_index = <10>;
+			support_panel = <12>; // tianma
+			gold_cct_3k = <2474 1174 601 3919 1001 1001>;
+			gold_cct_6k = <1718 1276 787 3518 1001 1001>;
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		pocket: pocket {
+			status = "okay";
+			support_pocket = <1>;
+		};
+		free_fall: free_fall{
+			status = "okay";
+			static_judge_length = <400>;
+			static_judge_acc_thresh = <1>;
+			freefall_judge_length = <80>;
+			freefall_judge_acc_thresh = <20>;
+			move_judge_length = <60>;
+			move_judge_acc_thresh = <1>;
+			freefall_start_judge_length  = <50>;
+			freefall_start_acc_thresh = <70>;
+			freefall_throw_judge_length = <700>;
+			freefall_throw_acc_thresh = <50>;
+			freefall_end_acc_thresh = <30>;
+			freefall_valid_time_length = <1000>;
+			freefall_peek_time_length = <200>;
+			freefall_peek_acc_thresh = <98>;
+			freefall_material_thresh = <900>;
+			valid_peek_interval_thresh = <10000>;
+		};
+		lay_detect: lay_detect{
+			status = "okay";
+			max_angel = <90>;
+			min_angel = <30>;
+			lay_in_time = <10>;
+			lay_out_time = <3>;
+		};
+		oplus_measurement: oplus_measurement{
+			status = "okay";
+			support_oplus_measurement = <1>;
+		};
+                smart_prox: smart_prox {
+			status = "okay";
+			support_smart_prox = <1>;
+		};
+	};
+/* sensor end */
+};

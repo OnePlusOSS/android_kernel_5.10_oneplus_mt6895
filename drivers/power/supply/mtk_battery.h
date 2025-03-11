@@ -45,21 +45,21 @@ do {\
 
 #define bm_warn(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_WARNING_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
 
 #define bm_notice(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_NOTICE_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
 
 #define bm_info(fmt, args...)   \
 do {\
-	if (bat_get_debug_level() >= BMLOG_INFO_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args); \
 	}								   \
 } while (0)
@@ -73,7 +73,7 @@ do {\
 
 #define bm_trace(fmt, args...)\
 do {\
-	if (bat_get_debug_level() >= BMLOG_TRACE_LEVEL) {\
+	if (bat_get_debug_level() >= BMLOG_ERROR_LEVEL) {\
 		pr_notice(fmt, ##args);\
 	}						\
 } while (0)
@@ -811,7 +811,7 @@ struct simulator_log {
 #define SHUTDOWN_TIME 40
 #define AVGVBAT_ARRAY_SIZE 30
 #define INIT_VOLTAGE 3450
-#define BATTERY_SHUTDOWN_TEMPERATURE 60
+#define BATTERY_SHUTDOWN_TEMPERATURE 90
 
 struct shutdown_condition {
 	bool is_overheat;
@@ -920,6 +920,13 @@ struct mtk_battery {
 	bool disableGM30;
 	bool ntc_disable_nafg;
 	bool cmd_disable_nafg;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/*fcc*/
+	int removed_bat_decidegc;
+	int prev_batt_fcc;
+	int prev_batt_remaining_capacity;
+	struct delayed_work	 oplus_startup_rm_check_work;
+#endif /* OPLUS_FEATURE_CHG_BASIC */
 
 	/*battery plug in out*/
 	int chr_type;
@@ -939,6 +946,9 @@ struct mtk_battery {
 	int tbat;
 	int soc;
 	int ui_soc;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	int tbat_precise;
+#endif
 	ktime_t uisoc_oldtime;
 	int d_saved_car;
 	struct zcv_filter zcvf;

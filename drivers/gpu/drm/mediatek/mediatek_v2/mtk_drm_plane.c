@@ -149,6 +149,10 @@ static struct mtk_drm_property mtk_plane_property[PLANE_PROP_MAX] = {
 	{DRM_MODE_PROP_ATOMIC, "DIM_COLOR", 0, UINT_MAX, 0},
 	{DRM_MODE_PROP_ATOMIC, "IS_MML", 0, UINT_MAX, 0},
 	{DRM_MODE_PROP_ATOMIC, "MML_SUBMIT", 0, ULONG_MAX, 0},
+	/* #ifdef OPLUS_BUG_STABILITY */
+	{DRM_MODE_PROP_ATOMIC, "IS_BT2020", 0, UINT_MAX, 0},
+	/* #endif OPLUS_BUG_STABILITY */
+
 };
 
 static void mtk_plane_reset(struct drm_plane *plane)

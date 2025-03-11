@@ -18,6 +18,11 @@
 #include "blk-mq-debugfs.h"
 #include "blk-wbt.h"
 
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+#define UFS_QUEUE_MAX_DISCARD_SEGMENTS 32
+#define UFS_QUEUE_MIN_DISCARD_SEGMENTS 1
+#endif
+
 struct queue_sysfs_entry {
 	struct attribute attr;
 	ssize_t (*show)(struct request_queue *, char *);
@@ -125,6 +130,42 @@ static ssize_t queue_max_discard_segments_show(struct request_queue *q,
 {
 	return queue_var_show(queue_max_discard_segments(q), (page));
 }
+
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+static ssize_t queue_max_fastdiscard_segments_show(struct request_queue *q,
+				       char *page)
+{
+	return queue_var_show(queue_max_discard_segments(q), (page));
+}
+
+
+static ssize_t queue_max_fastdiscard_segments_store(struct request_queue *q,
+				       const char *page, size_t count)
+{
+	unsigned long max_discard_segments = 0;
+	unsigned long origin_discard_segments = q->limits.max_discard_segments;
+	ssize_t ret = queue_var_store(&max_discard_segments, page, count);
+
+	if (ret < 0)
+		return ret;
+
+	if(blk_queue_reserve_device(q)) {
+		if (origin_discard_segments == UFS_QUEUE_MIN_DISCARD_SEGMENTS && 
+			max_discard_segments > origin_discard_segments)
+			return -EINVAL;
+
+		if (origin_discard_segments > UFS_QUEUE_MIN_DISCARD_SEGMENTS && 
+			max_discard_segments > origin_discard_segments)
+			return -EINVAL;
+
+		if (max_discard_segments > UFS_QUEUE_MAX_DISCARD_SEGMENTS)
+			max_discard_segments = UFS_QUEUE_MAX_DISCARD_SEGMENTS;
+
+		q->limits.max_discard_segments = max_discard_segments;
+	}
+	return ret;
+}
+#endif
 
 static ssize_t queue_max_integrity_segments_show(struct request_queue *q, char *page)
 {
@@ -548,6 +589,38 @@ static ssize_t queue_dax_show(struct request_queue *q, char *page)
 	return queue_var_show(blk_queue_dax(q), page);
 }
 
+#ifdef CONFIG_DEVICE_XCOPY
+static ssize_t queue_max_copy_blks_show(struct request_queue *q, char *page)
+{
+	struct para_limit *limit = (struct para_limit *) q->limits.android_kabi_reserved1;
+
+	if (limit ==  NULL)
+		return sprintf(page, "not support\n");
+
+	return queue_var_show(limit->max_copy_blks, page);
+}
+
+static ssize_t queue_min_copy_blks_show(struct request_queue *q, char *page)
+{
+	struct para_limit *limit = (struct para_limit *) q->limits.android_kabi_reserved1;
+
+	if (limit ==  NULL)
+		return sprintf(page, "not support\n");
+
+	return queue_var_show(limit->min_copy_blks, page);
+}
+
+static ssize_t queue_max_copy_entr_show(struct request_queue *q, char *page)
+{
+	struct para_limit *limit = (struct para_limit *) q->limits.android_kabi_reserved1;
+
+	if (limit ==  NULL)
+		return sprintf(page, "not support\n");
+
+	return queue_var_show(limit->max_copy_entr, page);
+}
+#endif
+
 #define QUEUE_RO_ENTRY(_prefix, _name)			\
 static struct queue_sysfs_entry _prefix##_entry = {	\
 	.attr	= { .name = _name, .mode = 0444 },	\
@@ -577,6 +650,9 @@ QUEUE_RO_ENTRY(queue_io_min, "minimum_io_size");
 QUEUE_RO_ENTRY(queue_io_opt, "optimal_io_size");
 
 QUEUE_RO_ENTRY(queue_max_discard_segments, "max_discard_segments");
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+QUEUE_RW_ENTRY(queue_max_fastdiscard_segments, "fastdiscard_max_segments");
+#endif
 QUEUE_RO_ENTRY(queue_discard_granularity, "discard_granularity");
 QUEUE_RO_ENTRY(queue_discard_max_hw, "discard_max_hw_bytes");
 QUEUE_RW_ENTRY(queue_discard_max, "discard_max_bytes");
@@ -616,6 +692,12 @@ QUEUE_RW_ENTRY(queue_iostats, "iostats");
 QUEUE_RW_ENTRY(queue_random, "add_random");
 QUEUE_RW_ENTRY(queue_stable_writes, "stable_writes");
 
+#ifdef CONFIG_DEVICE_XCOPY
+QUEUE_RO_ENTRY(queue_max_copy_blks, "max_copy_blks");
+QUEUE_RO_ENTRY(queue_min_copy_blks, "min_copy_blks");
+QUEUE_RO_ENTRY(queue_max_copy_entr, "max_copy_entr");
+#endif
+
 static struct attribute *queue_attrs[] = {
 	&queue_requests_entry.attr,
 	&queue_ra_entry.attr,
@@ -623,6 +705,9 @@ static struct attribute *queue_attrs[] = {
 	&queue_max_sectors_entry.attr,
 	&queue_max_segments_entry.attr,
 	&queue_max_discard_segments_entry.attr,
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	&queue_max_fastdiscard_segments_entry.attr,
+#endif
 	&queue_max_integrity_segments_entry.attr,
 	&queue_max_segment_size_entry.attr,
 	&elv_iosched_entry.attr,
@@ -658,6 +743,11 @@ static struct attribute *queue_attrs[] = {
 	&queue_io_timeout_entry.attr,
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	&blk_throtl_sample_time_entry.attr,
+#endif
+#ifdef CONFIG_DEVICE_XCOPY
+	&queue_max_copy_blks_entry.attr,
+	&queue_min_copy_blks_entry.attr,
+	&queue_max_copy_entr_entry.attr,
 #endif
 	NULL,
 };
@@ -726,6 +816,8 @@ static void blk_free_queue_rcu(struct rcu_head *rcu_head)
 {
 	struct request_queue *q = container_of(rcu_head, struct request_queue,
 					       rcu_head);
+
+	percpu_ref_exit(&q->q_usage_counter);
 	kmem_cache_free(blk_requestq_cachep, q);
 }
 

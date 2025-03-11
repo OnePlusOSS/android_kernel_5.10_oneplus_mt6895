@@ -1,0 +1,5 @@
+#project         hardware_name     fake_name        des
+OmegaC2_23081    IMX882            omegac2main      main cam
+OmegaC2_23081    S5KJN5            omegac2front     front cam
+OmegaC2_23081    IMX355            omegac2wide      wide cam
+OmegaC2_23081    S5KJN5            omegac2tele      tele pre cam

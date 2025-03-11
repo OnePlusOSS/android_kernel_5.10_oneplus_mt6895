@@ -384,6 +384,30 @@ static struct mtk_fence_buf_info *mtk_get_buf_info(void)
 	return info;
 }
 
+int mtk_fence_curr_idx(unsigned int session_id, unsigned int layer_id)
+{
+	int current_timeline_idx = 0;
+	struct mtk_fence_info *layer_info = NULL;
+	struct mtk_fence_session_sync_info *session_info = NULL;
+
+	session_info = _get_session_sync_info(session_id);
+	layer_info = _disp_sync_get_sync_info(session_id, layer_id);
+
+	if (layer_info == NULL) {
+		DDPFENCE("%s:%d layer_info is null\n", __func__, __LINE__);
+		return 0;
+	}
+
+	if (layer_info->timeline == NULL)
+		return 0;
+
+	mutex_lock(&layer_info->sync_lock);
+	current_timeline_idx = layer_info->timeline_idx;
+	mutex_unlock(&layer_info->sync_lock);
+
+	return current_timeline_idx;
+}
+
 /**
  * signal fence and release buffer
  * layer: set layer

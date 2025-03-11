@@ -44,6 +44,7 @@ obj-$(CONFIG_REGULATOR_DA9211) += da9211-regulator.o
 obj-$(CONFIG_REGULATOR_DBX500_PRCMU) += dbx500-prcmu.o
 obj-$(CONFIG_REGULATOR_DB8500_PRCMU) += db8500-prcmu.o
 obj-$(CONFIG_REGULATOR_FAN53555) += fan53555.o
+obj-$(CONFIG_REGULATOR_FAN53870) += fan53870.o
 obj-$(CONFIG_REGULATOR_FAN53880) += fan53880.o
 obj-$(CONFIG_REGULATOR_GPIO) += gpio-regulator.o
 obj-$(CONFIG_REGULATOR_HI6421) += hi6421-regulator.o
@@ -172,9 +173,12 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x-ldo.o
 obj-$(CONFIG_REGULATOR_WM8350) += wm8350-regulator.o
 obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
 obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
+obj-$(CONFIG_PMIC_FAN53870) += fan53870-regulator.o
 obj-$(CONFIG_REGULATOR_WL2868C) += wl2868c-regulator.o
+obj-$(CONFIG_REGULATOR_WL28681C) += wl28681c-regulator.o
 obj-$(CONFIG_REGULATOR_WL2864C) += wl2864c-regulator.o
 obj-$(CONFIG_REGULATOR_FAN53870) += fan53870-ldo.o
+obj-$(CONFIG_REGULATOR_MULTI_REG) += multi_regulator.o
 obj-$(CONFIG_REGULATOR_ALPHA_FOLDABLE_SUPPORT_ET5904) += et5904.o
 
 

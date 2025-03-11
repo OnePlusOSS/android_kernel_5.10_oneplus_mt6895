@@ -19,7 +19,7 @@
 #include <linux/errno.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-
+#include <soc/oplus/system/oplus_project.h>
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 #endif
@@ -61,6 +61,12 @@ static int pt_strict; /* always be zero in C standard */
 static int pt_is_low(int pt_low_vol, int pt_low_bat, int pt_over_cur);
 #endif
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
+#define OPLUS_FEATURE_CAMERA_COMMON
+#endif
+const struct flashlight_device_id *flashlight_id;
+extern const struct flashlight_device_id flashlight_id_24267[];
+int flashlight_device_num = 0;
 /******************************************************************************
  * Flashlight operations
  *****************************************************************************/
@@ -98,6 +104,35 @@ static int fl_set_level(struct flashlight_dev *fdev, int level)
 
 	return 0;
 }
+
+static int select_lednum(struct flashlight_dev *fdev, int lednum)
+{
+	struct flashlight_dev_arg fl_dev_arg;
+	if (!fdev || !fdev->ops) {
+		pr_info("Failed with no flashlight ops\n");
+		return -EINVAL;
+	}
+
+	if (fdev->sw_disable_status == FLASHLIGHT_SW_DISABLE_ON) {
+		pr_info("Sw disable on\n");
+		return 0;
+	}
+
+	fl_dev_arg.channel = fdev->dev_id.channel;
+	fl_dev_arg.arg = lednum;
+
+	if (fdev->ops->flashlight_ioctl(OPLUS_FLASH_IOC_SELECT_LED_NUM,
+				(unsigned long)&fl_dev_arg)) {
+		pr_info("Failed to select led nums \n");
+		return -EFAULT;
+	}
+
+	fdev->enable = 1;
+
+	return 0;
+
+}
+
 
 static int fl_enable(struct flashlight_dev *fdev, int enable)
 {
@@ -334,7 +369,10 @@ int flashlight_dev_register(
 	struct flashlight_dev *fdev;
 	int type_index, ct_index, part_index;
 	int i;
-
+	if (is_project(24267) || is_project(24268) || is_project(24269)) {
+		flashlight_id = flashlight_id_24267;
+		flashlight_device_num = 1;
+	}
 	for (i = 0; i < flashlight_device_num; i++) {
 		if (!strncmp(name, flashlight_id[i].name,
 					FLASHLIGHT_NAME_SIZE)) {
@@ -607,6 +645,7 @@ static int pt_trigger(void)
 	return 0;
 }
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 static void pt_low_vol_callback(enum LOW_BATTERY_LEVEL_TAG level)
 {
 	if (level == LOW_BATTERY_LEVEL_0) {
@@ -633,6 +672,7 @@ static void pt_low_bat_callback(enum BATTERY_PERCENT_LEVEL_TAG level)
 		/* unlimited cpu and gpu*/
 	}
 }
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 static void pt_oc_callback(enum BATTERY_OC_LEVEL_TAG level)
 {
@@ -814,6 +854,14 @@ static long _flashlight_ioctl(
 				type, ct, part, fl_arg.arg);
 		mutex_lock(&fl_mutex);
 		ret = fl_enable(fdev, fl_arg.arg);
+		mutex_unlock(&fl_mutex);
+		break;
+
+	case OPLUS_FLASH_IOC_SELECT_LED_NUM:
+		pr_info("OPLUS_FLASH_IOC_SELECT_LED_NUM(%d,%d,%d): %d\n",
+				type, ct, part, fl_arg.arg);
+		mutex_lock(&fl_mutex);
+		ret = select_lednum(fdev, fl_arg.arg);
 		mutex_unlock(&fl_mutex);
 		break;
 
@@ -1084,8 +1132,10 @@ static ssize_t flashlight_pt_store(struct device *dev,
 
 	/* call callback function */
 	pt_strict = strict;
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	pt_low_vol_callback(low_vol);
 	pt_low_bat_callback(low_bat);
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	pt_oc_callback(over_cur);
 #endif
 
@@ -1525,6 +1575,7 @@ unlock:
 }
 static DEVICE_ATTR_RW(flashlight_current);
 
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 /* flashlight fault sysfs */
 static ssize_t flashlight_fault_show(
 		struct device *dev, struct device_attribute *attr, char *buf)
@@ -1682,7 +1733,7 @@ unlock:
 	return ret;
 }
 static DEVICE_ATTR_RW(flashlight_sw_disable);
-
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 /******************************************************************************
  * Platform device and driver
  *****************************************************************************/
@@ -1791,6 +1842,7 @@ static int flashlight_probe(struct platform_device *dev)
 		pr_info("Failed to create device file(current)\n");
 		goto err_create_current_device_file;
 	}
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	if (device_create_file(flashlight_device, &dev_attr_flashlight_fault)) {
 		pr_info("Failed to create device file(fault)\n");
 		goto err_create_fault_device_file;
@@ -1800,6 +1852,7 @@ static int flashlight_probe(struct platform_device *dev)
 		pr_info("Failed to create device file(sw_disable)\n");
 		goto err_create_sw_disable_device_file;
 	}
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	if (device_create_file(flashlight_device,
 				&dev_attr_flashlight_torch)) {
 		pr_info("Failed to create device file(torch)\n");
@@ -1815,10 +1868,12 @@ static int flashlight_probe(struct platform_device *dev)
 
 err_create_torch_device_file:
 	device_remove_file(flashlight_device, &dev_attr_flashlight_torch);
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 err_create_sw_disable_device_file:
 	device_remove_file(flashlight_device, &dev_attr_flashlight_sw_disable);
 err_create_fault_device_file:
 	device_remove_file(flashlight_device, &dev_attr_flashlight_fault);
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 err_create_current_device_file:
 	device_remove_file(flashlight_device, &dev_attr_flashlight_capability);
 err_create_capability_device_file:
@@ -1846,8 +1901,10 @@ static int flashlight_remove(struct platform_device *dev)
 
 	/* remove device file */
 	device_remove_file(flashlight_device, &dev_attr_flashlight_torch);
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	device_remove_file(flashlight_device, &dev_attr_flashlight_sw_disable);
 	device_remove_file(flashlight_device, &dev_attr_flashlight_fault);
+#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 	device_remove_file(flashlight_device, &dev_attr_flashlight_current);
 	device_remove_file(flashlight_device, &dev_attr_flashlight_capability);
 	device_remove_file(flashlight_device, &dev_attr_flashlight_charger);
@@ -1922,10 +1979,12 @@ static int __init flashlight_init(void)
 	}
 
 #ifdef CONFIG_MTK_FLASHLIGHT_PT
+#ifndef OPLUS_FEATURE_CAMERA_COMMON
 	register_low_battery_notify(
 			&pt_low_vol_callback, LOW_BATTERY_PRIO_FLASHLIGHT);
 	register_bp_thl_notify(
 			&pt_low_bat_callback, BATTERY_PERCENT_PRIO_FLASHLIGHT);
+#endif // OPLUS_FEATURE_CAMERA_COMMON
 	register_battery_oc_notify(
 			&pt_oc_callback, BATTERY_OC_PRIO_FLASHLIGHT);
 #endif

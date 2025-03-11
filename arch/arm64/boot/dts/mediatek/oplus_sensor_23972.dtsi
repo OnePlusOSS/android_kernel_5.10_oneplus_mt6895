@@ -1,0 +1,6 @@
+#include "mediatek/oplus_sensor_23971.dtsi"
+
+&sar_1 {
+	reg_table_num = <1>; //LTE
+};
+

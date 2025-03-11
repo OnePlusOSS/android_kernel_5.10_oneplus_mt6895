@@ -1,0 +1,201 @@
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	consumer_ir_core: consumer_ir_core {
+		compatible = "oplus,kookong_ir_core";
+		status = "okay";
+		vdd-supply = <&mt6368_vmch>;
+		vdd-min-vol = <3100000>;
+		vdd-max-vol = <3100000>;
+	};
+	consumerIr: consumerIr {
+		compatible = "oplus,kookong_ir_pwm";
+		status = "okay";
+		pwm-num = <1>;
+	};
+//	ssc_interactive: ssc_interactive {
+//		report_brightness = <1>;
+//		support_pwm_turbo = <1>;
+//		support_bri_to_scp = <1>;
+//	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+		/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			BMA4XY,
+			SC7A20,
+			ICM4X6XX,
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <5>;//bmi2xy
+			device_name = "bmi2xy";
+			i2c_num = <0>;
+			direction = <7>;
+			eint_num = <15>;
+			gyro_cali_version= <2>;
+			acc_cali_range= <300 300 300>;
+			gyro_cali_range = <350>;
+			sup_range_change = <1>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+			AKM09918,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <2>;//MMC5603
+			i2c_num = <0>;
+			i2c_addr = <48>;
+			direction = <0>;
+			eint_num = <0>;
+			soft-mag-parameter = <9997 0 24 1 225 1 325 0 9751 0 50 1 390 0 732 1 10329 0>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+		};
+		*/
+		proximity_1: proximity_1 {
+			status = "okay";
+			sensor_name = <6>;//STK32600
+			i2c_num = <2>;
+			i2c_addr = <0x48>;
+			direction = <4>;
+			eint_num = <17>;
+			low_step = <300>;
+			high_step = <400>;
+			low_limit = <400>;
+			high_limit = <600>;
+			dirty_low_step = <300>;
+			dirty_high_step = <400>;
+			ps_dirty_limit = <1800>;
+			ps_ir_limit = <2000>;
+			ps_adjust_min = <0>;
+			ps_adjust_max = <1850>;
+			sampling_count = <5>;
+			step_max = <400>;
+			step_min = <100>;
+			step_div = <2000>;
+			anti_shake_delta = <70>;
+			dynamic_cali_max = <2000>;
+			raw2offset_radio = <1000>;
+			offset_max = <60000>;
+			offset_range_min = <0>;
+			offset_range_max = <65535>;
+			force_cali_limit = <2000>;
+			cali_jitter_limit = <20>;
+			cal_offset_margin = <3000>;
+			sensor-reg = <0x03 0x60 0x81 0xa0>;
+		};
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <6>;//STK32600
+			i2c_num = <2>;
+			i2c_addr = <0x48>;
+			direction = <4>;
+			eint_num = <17>;
+			als_buffer_length =<8>;
+			als_ratio = <180>;
+			als_type = <2>;//<1-normal;2-under screen;3-normal needed compensation>
+			device_name = "stk32600";
+			//use_als_c2 = <1>;
+			//use_lb_algo = <1>;
+			//lb_bri_max = <1500>;
+			gold_als_factor = <1001>;
+			//als_spectral_coefficient = <5800>;//bal_coef
+			//als_coef_a = <40000>;
+			//als_coef_b = <3172>;
+			//als_coef_c = <27336>;
+			//als_coef_d = <243>;
+			//als_coef_e = <14131>;
+			//als_coef_ratio = <1000>;
+			//offset_gain = <1800>;
+			//scale_gain = <2500>;
+			//lux_revocer = <4000>;
+			//ir_value0 = <5000>;
+			//ir_value1 = <2800>;
+			//ir_value2 = <1800>;
+			//ir_value3 = <1500>;
+			//atime = <480>;
+			//dbv_1 = <1292>;
+			//dbv_l2h = <1500>;
+			//dbv_h2l = <1450>;
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		free_fall: free_fall{
+			status = "okay";
+			static_judge_length = <400>;
+			static_judge_acc_thresh = <1>;
+			freefall_judge_length = <80>;
+			freefall_judge_acc_thresh = <20>;
+			move_judge_length = <60>;
+			move_judge_acc_thresh = <1>;
+			freefall_start_judge_length  = <50>;
+			freefall_start_acc_thresh = <70>;
+			freefall_throw_judge_length = <700>;
+			freefall_throw_acc_thresh = <50>;
+			freefall_end_acc_thresh = <30>;
+			freefall_valid_time_length = <1000>;
+			freefall_peek_time_length = <200>;
+			freefall_peek_acc_thresh = <98>;
+			freefall_material_thresh = <900>;
+			valid_peek_interval_thresh = <10000>;
+		};
+		lay_detect: lay_detect{
+			status = "okay";
+			max_angel = <90>;
+			min_angel = <30>;
+			lay_in_time = <10>;
+			lay_out_time = <3>;
+		};
+		oplus_measurement: oplus_measurement{
+			status = "okay";
+			support_oplus_measurement = <1>;
+		};
+		pocket: pocket {
+			status = "okay";
+			support_pocket = <1>;
+			use_sub_accgyro = <0>;
+			need_als = <0>;
+		};
+	};
+/* sensor end */
+};

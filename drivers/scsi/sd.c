@@ -47,6 +47,9 @@
 #include <linux/blkdev.h>
 #include <linux/blkpg.h>
 #include <linux/blk-pm.h>
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+#include <linux/blk_types.h>
+#endif
 #include <linux/delay.h>
 #include <linux/mutex.h>
 #include <linux/string_helpers.h>
@@ -72,6 +75,10 @@
 #include "sd.h"
 #include "scsi_priv.h"
 #include "scsi_logging.h"
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+#include "ufs/ufshcd.h"
+#include "ufs/ufs.h"
+#endif
 
 MODULE_AUTHOR("Eric Youngdale");
 MODULE_DESCRIPTION("SCSI disk (sd) driver");
@@ -821,6 +828,24 @@ static void sd_config_discard(struct scsi_disk *sdkp, unsigned int mode)
 	struct request_queue *q = sdkp->disk->queue;
 	unsigned int logical_block_size = sdkp->device->sector_size;
 	unsigned int max_blocks = 0;
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	unsigned int max_segments = 1;
+	unsigned int fastdiscard_enable = 0;
+	struct ufs_hba *hba;
+	struct scsi_device *sdp = sdkp->device;
+	struct scsi_host_template *sht = sdp->host->hostt;
+
+	if (strncmp(sht->name, UFSHCD, strlen(UFSHCD)) == 0) {
+		hba = (struct ufs_hba *)sdp->host->hostdata;
+		if (hba->android_kabi_reserved1 != 0) {
+			struct vendor_box *vendor_box = (struct vendor_box*)hba->android_kabi_reserved1;
+			struct ufs_fastdiscard_hba *fastdiscard_hba = vendor_box->fast_discard_parameter;
+			if (fastdiscard_hba->fastdiscard_enable == 1) {
+				fastdiscard_enable = 1;
+			}
+		}
+	}
+#endif
 
 	q->limits.discard_alignment =
 		sdkp->unmap_alignment * logical_block_size;
@@ -834,12 +859,20 @@ static void sd_config_discard(struct scsi_disk *sdkp, unsigned int mode)
 	case SD_LBP_FULL:
 	case SD_LBP_DISABLE:
 		blk_queue_max_discard_sectors(q, 0);
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+		blk_queue_max_discard_segments(q, 0);
+#endif
 		blk_queue_flag_clear(QUEUE_FLAG_DISCARD, q);
 		return;
 
 	case SD_LBP_UNMAP:
 		max_blocks = min_not_zero(sdkp->max_unmap_blocks,
 					  (u32)SD_MAX_WS16_BLOCKS);
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+		if(fastdiscard_enable == 1)
+			max_segments = clamp(sdkp->max_unmap_descriptors, 1U,
+	   			     (u32)SD_MAX_UNMAP_DESCS);
+#endif
 		break;
 
 	case SD_LBP_WS16:
@@ -867,6 +900,9 @@ static void sd_config_discard(struct scsi_disk *sdkp, unsigned int mode)
 	}
 
 	blk_queue_max_discard_sectors(q, max_blocks * (logical_block_size >> 9));
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+		blk_queue_max_discard_segments(q, max_segments);
+#endif
 	blk_queue_flag_set(QUEUE_FLAG_DISCARD, q);
 }
 
@@ -880,6 +916,13 @@ static blk_status_t sd_setup_unmap_cmnd(struct scsi_cmnd *cmd)
 	unsigned int data_len = 24;
 	char *buf;
 
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	unsigned short segments = blk_rq_nr_discard_segments(rq);
+	unsigned int descriptor_offset = 8;
+	struct bio *bio;
+	data_len = 8 + 16 * segments;
+#endif
+
 	rq->special_vec.bv_page = mempool_alloc(sd_page_pool, GFP_ATOMIC);
 	if (!rq->special_vec.bv_page)
 		return BLK_STS_RESOURCE;
@@ -890,6 +933,31 @@ static blk_status_t sd_setup_unmap_cmnd(struct scsi_cmnd *cmd)
 
 	cmd->cmd_len = 10;
 	cmd->cmnd[0] = UNMAP;
+
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+	cmd->cmnd[7] = data_len>>8;
+	cmd->cmnd[8] = data_len & 0xff;
+
+	buf = page_address(rq->special_vec.bv_page);
+	put_unaligned_be16(6 + 16 * segments, &buf[0]);
+	put_unaligned_be16(16 * segments, &buf[2]);
+
+	/* only device support fastdiscard can execute multi-UNMAP descriptor correctly */
+	if (blk_queue_reserve_device(rq->q)) {
+		__rq_for_each_bio(bio, rq) {
+			lba = sectors_to_logical(sdp, bio->bi_iter.bi_sector);
+			nr_blocks = sectors_to_logical(sdp, bio_sectors(bio));
+
+			put_unaligned_be64(lba, &buf[descriptor_offset]);
+			put_unaligned_be32(nr_blocks, &buf[descriptor_offset + 8]);
+			descriptor_offset += 16;
+		}
+	} else {
+		WARN_ON(segments > 1);
+		put_unaligned_be64(lba, &buf[8]);
+		put_unaligned_be32(nr_blocks, &buf[16]);
+	}
+#else
 	cmd->cmnd[8] = 24;
 
 	buf = page_address(rq->special_vec.bv_page);
@@ -897,6 +965,7 @@ static blk_status_t sd_setup_unmap_cmnd(struct scsi_cmnd *cmd)
 	put_unaligned_be16(16, &buf[2]);
 	put_unaligned_be64(lba, &buf[8]);
 	put_unaligned_be32(nr_blocks, &buf[16]);
+#endif
 
 	cmd->allowed = sdkp->max_retries;
 	cmd->transfersize = data_len;
@@ -1074,6 +1143,7 @@ static blk_status_t sd_setup_write_same_cmnd(struct scsi_cmnd *cmd)
 	struct bio *bio = rq->bio;
 	u64 lba = sectors_to_logical(sdp, blk_rq_pos(rq));
 	u32 nr_blocks = sectors_to_logical(sdp, blk_rq_sectors(rq));
+	unsigned int nr_bytes = blk_rq_bytes(rq);
 	blk_status_t ret;
 
 	if (sdkp->device->no_write_same)
@@ -1110,7 +1180,7 @@ static blk_status_t sd_setup_write_same_cmnd(struct scsi_cmnd *cmd)
 	 */
 	rq->__data_len = sdp->sector_size;
 	ret = scsi_alloc_sgtables(cmd);
-	rq->__data_len = blk_rq_bytes(rq);
+	rq->__data_len = nr_bytes;
 
 	return ret;
 }
@@ -1327,6 +1397,108 @@ fail:
 	return ret;
 }
 
+#ifdef CONFIG_DEVICE_XCOPY
+static int get_element_cnt(struct scsi_cmnd *cmd, struct blk_copy_payload *payload)
+{
+	int cnt = 0;
+
+	while (cnt < BLK_MAX_COPY_RANGE) {
+		if ((payload->src_addr[cnt] != 0) && (payload->dst_addr[cnt] != 0)) {
+			cnt++;
+		} else {
+			break;
+		}
+	}
+
+	return cnt;
+}
+
+static blk_status_t sd_setup_device_copy_cmnd(struct scsi_cmnd *cmd)
+{
+	struct request *rq = cmd->request;
+	struct scsi_device *sdp = cmd->device;
+	struct scsi_disk *sdkp = scsi_disk(rq->rq_disk);
+	blk_status_t ret;
+	char *buf;
+	struct blk_copy_payload *payload = rq->bio->bi_private;
+	int data_len;
+	unsigned int pos;
+	unsigned int payload_index;
+
+	data_len = get_element_cnt(cmd, payload);	/* the couple of src/dst */
+	if (data_len <= 0) {
+		return BLK_STS_RESOURCE;
+	}
+
+	data_len = data_len * 10;	/* one couple need 10 Bytes */
+	data_len += 44;
+	rq->special_vec.bv_page = mempool_alloc(sd_page_pool, GFP_ATOMIC);
+	if (!rq->special_vec.bv_page)
+		return BLK_STS_RESOURCE;
+	clear_highpage(rq->special_vec.bv_page);
+	rq->special_vec.bv_offset = 0;
+	rq->special_vec.bv_len = data_len;
+	rq->rq_flags |= RQF_SPECIAL_PAYLOAD;
+
+	ret = BLK_STS_IOERR;
+	if (!scsi_device_online(sdp) || sdp->changed) {
+		scmd_printk(KERN_ERR, cmd, "device offline or changed\n");
+		goto fail;
+	}
+
+	if (blk_rq_pos(rq) + blk_rq_sectors(rq) > get_capacity(rq->rq_disk)) {
+		scmd_printk(KERN_ERR, cmd, "access beyond end of device\n");
+		goto fail;
+	}
+
+	//head
+	cmd->cmd_len = 10; /* WRITE_BUFFER cmd has 10 bytes */
+	memset(cmd->cmnd, 0, cmd->cmd_len);
+	cmd->cmnd[0]  = WRITE_BUFFER;
+	cmd->cmnd[1]  = 0xA1;	/* RSV(05h)+mode(01h) */
+	cmd->cmnd[2]  = 0x00;
+	/* arrage parameter by manual */
+	cmd->cmnd[3]  = 0x00;
+	cmd->cmnd[4]  = 0x00;
+	cmd->cmnd[5]  = 0x00;
+	cmd->cmnd[6]  = (data_len & 0xff0000) >> 16;
+	cmd->cmnd[7]  = (data_len & 0xff00)   >> 8;
+	cmd->cmnd[8]  = (data_len & 0xff)     >> 0;
+	cmd->cmnd[9]  = 0x00;
+	//parameter list
+	buf = page_address(rq->special_vec.bv_page);
+	//buf = bvec_virt(&rq->special_vec);
+	buf[0] = 0x01;	/* not known */
+	buf[1] = 0xC0;	/* bFunc */
+	put_unaligned_be16(data_len, &buf[2]);
+	/* buf[4]~buf[43] : reserved, clean! */
+	for (pos = 4; pos < 44; pos++) {
+		buf[pos] = 0;
+	}
+	/* fill the parameter list data. */
+	for (pos = 44, payload_index = 0; pos < data_len; pos+=10) {
+		put_unaligned_be16(1, &buf[pos + 0]);
+		put_unaligned_be32(payload->src_addr[payload_index], &buf[pos + 2]);
+		put_unaligned_be32(payload->dst_addr[payload_index], &buf[pos + 6]);
+		payload_index++;
+	}
+	cmd->allowed = sdkp->max_retries;
+	cmd->transfersize = data_len;
+	rq->timeout = SD_TIMEOUT;
+
+	ret = scsi_alloc_sgtables(cmd);
+	if (ret != BLK_STS_OK)
+		return ret;
+	/*
+	 * This indicates that the command is ready from our end to be queued.
+	 */
+	return BLK_STS_OK;
+
+fail:
+	return ret;
+}
+#endif
+
 static blk_status_t sd_init_command(struct scsi_cmnd *cmd)
 {
 	struct request *rq = cmd->request;
@@ -1367,6 +1539,11 @@ static blk_status_t sd_init_command(struct scsi_cmnd *cmd)
 		return sd_zbc_setup_zone_mgmt_cmnd(cmd, ZO_CLOSE_ZONE, false);
 	case REQ_OP_ZONE_FINISH:
 		return sd_zbc_setup_zone_mgmt_cmnd(cmd, ZO_FINISH_ZONE, false);
+#ifdef CONFIG_DEVICE_XCOPY
+	case REQ_OP_DEVICE_COPY:
+		return sd_setup_device_copy_cmnd(cmd);
+#endif
+
 	default:
 		WARN_ON_ONCE(1);
 		return BLK_STS_NOTSUPP;
@@ -2967,8 +3144,15 @@ static void sd_read_block_limits(struct scsi_disk *sdkp)
 		lba_count = get_unaligned_be32(&buffer[20]);
 		desc_count = get_unaligned_be32(&buffer[24]);
 
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+		if (lba_count && desc_count) {
+			sdkp->max_unmap_blocks = lba_count;
+			sdkp->max_unmap_descriptors = desc_count;
+		}
+#else
 		if (lba_count && desc_count)
 			sdkp->max_unmap_blocks = lba_count;
+#endif
 
 		sdkp->unmap_granularity = get_unaligned_be32(&buffer[28]);
 
@@ -3387,6 +3571,13 @@ static int sd_probe(struct device *dev)
 	struct scsi_device *sdp = to_scsi_device(dev);
 	struct scsi_disk *sdkp;
 	struct gendisk *gd;
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+	struct scsi_host_template *sht;
+	struct ufs_hba *hba;
+	struct ufs_dev_info *dev_info;
+	struct request_queue *q;
+	struct para_limit *oem_limit;
+#endif
 	int index;
 	int error;
 
@@ -3462,6 +3653,31 @@ static int sd_probe(struct device *dev)
 	gd->private_data = &sdkp->driver;
 	gd->queue = sdkp->device->request_queue;
 
+#ifdef CONFIG_SCSI_DEVICE_FEATURE
+	sht = sdp->host->hostt;
+	if (strncmp(sht->name, UFSHCD, strlen(UFSHCD)) == 0) {
+		hba = (struct ufs_hba *)sdp->host->hostdata;
+		dev_info = &hba->dev_info;
+		q = sdp->request_queue;
+		if (dev_info->android_kabi_reserved1 == true) {
+			q->limits.android_kabi_reserved1 = (u64)hba->cmd_queue->limits.android_kabi_reserved1;
+			oem_limit = (struct para_limit *)q->limits.android_kabi_reserved1;
+			blk_queue_flag_set(QUEUE_FLAG_DEVICE_COPY, q);
+		}
+#ifdef CONFIG_SCSI_BATCH_UNMAP
+		if (hba->android_kabi_reserved1 != 0) {
+			struct vendor_box *vendor_box = (struct vendor_box*)hba->android_kabi_reserved1;
+			struct ufs_fastdiscard_hba *fastdiscard_hba = vendor_box->fast_discard_parameter;
+			if (fastdiscard_hba->fastdiscard_enable == 1) {
+				blk_queue_flag_set(QUEUE_FLAG_RESERVE, q);
+			} else {
+				blk_queue_flag_clear(QUEUE_FLAG_RESERVE, q);
+			}
+		}
+#endif
+	}
+#endif
+
 	/* defaults, until the device tells us otherwise */
 	sdp->sector_size = 512;
 	sdkp->capacity = 0;
@@ -3511,7 +3727,6 @@ static int sd_probe(struct device *dev)
  out_put:
 	put_disk(gd);
  out_free:
-	sd_zbc_release_disk(sdkp);
 	kfree(sdkp);
  out:
 	scsi_autopm_put_device(sdp);

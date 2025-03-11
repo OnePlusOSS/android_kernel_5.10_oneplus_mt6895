@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+* Copyright (C) 2018-2020 Oplus. All rights reserved.
+*/
+&odm {
+	sensor_fb: sensor_fb {
+		compatible = "oplus,sensor-feedback";
+	};
+	oplus_sensor:oplus_sensor {
+		compatible = "oplus,sensor-devinfo";
+		als-row-coe = <1000>;
+		/* sensor start */
+       	/*
+		enum {
+			LIS3DH,
+			LSM6DS3,
+			BMI160,
+			LIS2HH12,
+			LSM6DSM,
+			BMI2XY,
+			LSM6DSO,
+			ICM4X6XX,
+			ICM4263X,
+			ICM4N607,
+			BMI22X,
+			SC7A20,
+			MC34X9,
+			BMA4XY,
+			STK8329
+		};
+		*/
+		gsensor_1: gsensor_1 {
+			status = "okay";
+			sensor_name = <3>; // lis2hh12
+			device_name = "lis2hh12";
+			i2c_num = <1>;
+			i2c_addr = <0>;
+			direction = <1>;
+			eint_num = <2>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range = <300 300 300>;
+		};
+		gsensor_2: gsensor_2 {
+			status = "okay";
+			sensor_name = <14>; //STK8329
+			device_name = "stk8329";
+			i2c_num = <1>;
+			i2c_addr = <0>;
+			direction = <2>;
+			eint_num = <2>;
+			gyro_cali_version= <2>; //should be always v2 for lsm6dso
+			acc_cali_range= <300 300 300>;
+		};
+		/*
+		enum {
+			AKM09911,
+			MMC3530,
+			MMC5603,
+			MXG4300,
+		};
+		*/
+		msensor_1: msensor_1 {
+			status = "okay";
+			sensor_name = <3>;//MXG4300
+			i2c_num = <0>;
+			i2c_addr = <12>;
+			direction = <3>;
+			eint_num = <0>;
+			soft-mag-parameter = <10375 0 21 0 62 1 62 0 9735 0 43 0 7 0 163 1 10257 0>;
+		};
+		/*
+		enum {
+			SX933x,
+			SX937x,
+			AW9610X,
+		};
+		*/
+		sar_1: sar_1 {
+			status = "okay";
+			sensor_name = <2>;//AW9610X
+			i2c_num = <0>;
+			i2c_addr = <0x12>;
+			direction = <0>;
+			eint_num = <15>;
+			channel_num = <1>;
+			channel_0_min = <7600>;
+			channel_0_max = <11500>;
+			channel_1_min = <12000>;
+			channel_1_max = <16800>;
+			channel_2_min = <0>;
+			channel_2_max = <0>;
+			channel_3_min = <0>;
+			channel_3_max = <0>;
+			reg_table_num = <2>;
+		};
+		/*
+		enum {
+			TMD2725,
+			APSD9922,
+			STK3335,
+			STK3331,
+			STK2232,
+			TCS3701,
+			STK32600,
+			STK33502,
+			MN78911,
+			TCS3720,
+			SIP3515,
+			STK3329,
+		};
+		*/
+		light_1: light_1 {
+			status = "okay";
+			sensor_name = <11>; // STK3329
+			i2c_num = <2>;
+			i2c_addr = <0x48>;
+			direction = <4>;
+			eint_num = <11>;
+			als_ratio = <1000>;
+			als_buffer_length = <10>;
+			als_type = <1>;
+			device_name = "STK3329";
+		};
+		hw_gyro: hw_gyro {
+			status = "okay";
+			hw-gyro-supported = <0>;
+		};
+		pick_up: pick_up {
+			status = "okay";
+			use-proximity = <0>;
+		};
+		lux_aod: lux_aod {
+			status = "okay";
+			use-proximity = <1>;
+		};
+		alsps_arch: alsps_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+		cali_arch: cali_arch {
+			status = "okay";
+			new-arch-supported = <1>;
+		};
+	};
+/* sensor end */
+};

@@ -25,6 +25,7 @@
 #include "mtk_dump.h"
 #include "platform/mtk_drm_6789.h"
 #include "mtk_disp_ccorr.h"
+#include "rgb565.h"
 
 #define UNUSED(expr) (void)(expr)
 #define index_of_color(module) ((module == DDP_COMPONENT_COLOR0) ? 0 : 1)
@@ -35,6 +36,7 @@ static struct DISP_PQ_PARAM g_Color_Param[DISP_COLOR_TOTAL];
 
 // It's a work around for no comp assigned in functions.
 static struct mtk_ddp_comp *default_comp;
+static struct mtk_ddp_comp *default_comp1;
 
 int ncs_tuning_mode;
 
@@ -61,6 +63,9 @@ static int g_color_reg_valid;
 static unsigned int g_width;
 
 bool g_legacy_color_cust;
+#ifdef OPLUS_FEATURE_DISPLAY
+extern bool g_color_probe_ready;
+#endif
 
 #define C1_OFFSET (0)
 #define color_get_offset(module) (0)
@@ -1240,7 +1245,7 @@ void DpEngine_COLORonConfig(struct mtk_ddp_comp *comp, struct cmdq_pkt *handle)
 	unsigned char h_series[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 			0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
-	int id = index_of_color(comp->id);
+	int id = 0;
 	struct mtk_disp_color *color = comp_to_color(comp);
 	struct DISP_PQ_PARAM *pq_param_p = &g_Color_Param[id];
 	int i, j, reg_index;
@@ -1681,7 +1686,7 @@ static void color_write_hw_reg(struct mtk_ddp_comp *comp,
 	unsigned char h_series[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 		, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 	unsigned int u4Temp = 0;
-	int id = index_of_color(comp->id);
+	int id = 0;
 	struct mtk_disp_color *color = comp_to_color(comp);
 	int i, j, reg_index;
 	int wide_gamut_en = 0;
@@ -3064,6 +3069,125 @@ int mtk_drm_ioctl_bypass_color(struct drm_device *dev, void *data,
 	return ret;
 }
 
+int mtk_drm_ioctl_set_paper_mode(int strength, int width, int height, char *buffer)
+{
+	int i = 0;
+	char colorA = 0x11;
+	int range = 0;
+	int base = 0;
+	int G, R, j;
+	unsigned int n = 0;
+	int t1 = width*height;
+	int t2 = width*height/4;
+	int times = t1/t2;
+	int reminder = t1 % t2;
+	char RG,GB;
+
+	while(i < t2)
+	{
+		switch(strength) {
+		case 1:
+			range = 4;
+			base = 10;
+			colorA = 0x14;
+			break;
+		case 2:
+			range = 5;
+			base = 10;
+			colorA = 0x19;
+			break;
+		case 3:
+			range = 5;
+			base = 11;
+			colorA = 0x1E;
+			break;
+		case 4:
+			range = 5;
+			base = 12;
+			colorA = 0x23;
+			break;
+		case 5:
+			range = 6;
+			base = 13;
+			colorA = 0x28;
+			break;
+		case 6:
+			range = 6;
+			base = 14;
+			colorA = 0x2D;
+			break;
+		case 7:
+			range = 6;
+			base = 15;
+			colorA = 0x33;
+			break;
+		case 8:
+			range = 7;
+			base = 15;
+			colorA = 0x38;
+			break;
+		case 9:
+			range = 8;
+			base = 15;
+			colorA = 0x3D;
+			break;
+		case 10:
+			range = 9;
+			base = 15;
+			colorA = 0x42;
+			break;
+		case 11:
+			range = 10;
+			base = 15;
+			colorA = 0x47;
+			break;
+		case 12:
+			range = 10;
+			base = 16;
+			colorA = 0x4C;
+			break;
+		case 13:
+			range = 10;
+			base = 17;
+			colorA = 0x51;
+			break;
+		case 14:
+			range = 10;
+			base = 18;
+			colorA = 0x56;
+			break;
+		case 15:
+			range = 10;
+			base = 19;
+			colorA = 0x5B;
+			break;
+		default:
+			range = 15;
+			base = 15;
+			colorA = 0x16;
+			break;
+		}
+		get_random_bytes(&n, sizeof(n));
+		R = (int)(n%range + base);
+		G = 2*R;
+		if(G%2 == 0)
+			G = G+1;
+		RG = (char)(R + ((G&0x7)<<5));
+		GB = (char)((R<<3) + ((G&0x38)>>3));
+		buffer[i*2] = RG;
+		buffer[i*2+1] = GB;
+		i++;
+	}
+	for (j = 1; j < times; j++)
+		memcpy(buffer + j*t2*2, buffer, 2*t2*sizeof(char));
+	if (reminder != 0)
+		memcpy(buffer + times*t2*2, buffer, sizeof(char)*reminder);
+
+	return colorA;
+
+
+}
+
 int mtk_drm_ioctl_pq_set_window(struct drm_device *dev, void *data,
 		struct drm_file *file_priv)
 {
@@ -3385,6 +3509,7 @@ static void ddp_color_restore(struct mtk_ddp_comp *comp)
 static void mtk_color_prepare(struct mtk_ddp_comp *comp)
 {
 	struct mtk_disp_color *color = comp_to_color(comp);
+	bool is_color_restore = (g_color_backup.COLOR_CFG_MAIN != 0);
 
 	mtk_ddp_comp_clk_prepare(comp);
 	atomic_set(&g_color_is_clock_on[index_of_color(comp->id)], 1);
@@ -3395,7 +3520,8 @@ static void mtk_color_prepare(struct mtk_ddp_comp *comp)
 			DISP_COLOR_SHADOW_CTRL, COLOR_BYPASS_SHADOW);
 
 	// restore DISP_COLOR_CFG_MAIN register
-	ddp_color_restore(comp);
+	if (is_color_restore)
+		ddp_color_restore(comp);
 }
 
 static void mtk_color_unprepare(struct mtk_ddp_comp *comp)
@@ -3437,6 +3563,37 @@ void mtk_color_dump(struct mtk_ddp_comp *comp)
 	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
 	mtk_serial_dump_reg(baddr, 0x400, 3);
 	mtk_serial_dump_reg(baddr, 0xC50, 2);
+}
+
+void mtk_color_regdump(void)
+{
+	void __iomem *baddr = default_comp->regs;
+	int k;
+
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(default_comp),
+			default_comp->regs_pa);
+	DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp));
+	for (k = 0x400; k <= 0xd5c; k += 16) {
+		DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+			readl(baddr + k),
+			readl(baddr + k + 0x4),
+			readl(baddr + k + 0x8),
+			readl(baddr + k + 0xc));
+	}
+	DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp));
+	if (default_comp->mtk_crtc->is_dual_pipe) {
+		baddr = default_comp1->regs;
+		DDPDUMP("== %s REGS ==\n", mtk_dump_comp_str(default_comp1));
+		DDPDUMP("[%s REGS Start Dump]\n", mtk_dump_comp_str(default_comp1));
+		for (k = 0x400; k <= 0xd5c; k += 16) {
+			DDPDUMP("0x%04x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
+				readl(baddr + k),
+				readl(baddr + k + 0x4),
+				readl(baddr + k + 0x8),
+				readl(baddr + k + 0xc));
+		}
+		DDPDUMP("[%s REGS End Dump]\n", mtk_dump_comp_str(default_comp1));
+	}
 }
 
 static int mtk_disp_color_bind(struct device *dev, struct device *master,
@@ -3497,6 +3654,8 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 
 	if (!default_comp)
 		default_comp = &priv->ddp_comp;
+	if (comp_id == DDP_COMPONENT_COLOR1)
+		default_comp1 = &priv->ddp_comp;
 
 	priv->data = of_device_get_match_data(dev);
 
@@ -3511,6 +3670,9 @@ static int mtk_disp_color_probe(struct platform_device *pdev)
 	}
 
 	g_legacy_color_cust = false;
+#ifdef OPLUS_FEATURE_DISPLAY
+	g_color_probe_ready = true;
+#endif
 	DDPINFO("%s-\n", __func__);
 
 	return ret;

@@ -49,6 +49,9 @@ struct mtk_base_dsp_mem {
 	unsigned char ipi_payload_buf[MAX_PAYLOAD_SIZE];
 	unsigned int dsp_feature_counter;
 	int underflowed;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	int underflow_cnt;
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 	spinlock_t ringbuf_lock;
 	void *dsp_copy_buf;
 };

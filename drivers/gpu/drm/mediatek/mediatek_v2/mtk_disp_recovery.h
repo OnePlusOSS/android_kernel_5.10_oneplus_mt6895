@@ -22,11 +22,17 @@ struct mtk_drm_esd_ctx {
 	atomic_t int_te_event;
 	atomic_t check_wakeup;
 	atomic_t target_time;
+
+	/* #ifdef OPLUS_FEATURE_DISPLAY */
+	atomic_t target_flag;
+	/* #endif */
+
 	int eint_irq;
 	u32 chk_active;
 	u32 chk_mode;
 	u32 chk_sta;
 	u32 chk_en;
+	int need_release_eint;
 };
 
 void mtk_disp_esd_check_switch(struct drm_crtc *crtc, bool enable);

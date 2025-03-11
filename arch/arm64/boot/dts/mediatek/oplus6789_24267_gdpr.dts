@@ -1,0 +1,543 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+/*
+ * Copyright (C) 2021 MediaTek Inc.
+ */
+/dts-v1/;
+/plugin/;
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/mt6789-pinfunc.h>
+#include "mediatek/oplus6789_charger_24267_gdpr.dtsi"
+#include "mediatek/oplus_sensor_24267.dtsi"
+#include "mediatek/nfc/mt6789_milkyway_s3_4g_pn560.dtsi"
+#include "mediatek/mt6789-sia8109.dtsi"
+#include "mediatek/cust_mt6789_camera_24267.dtsi"
+#include "mediatek/oplus_touch_24267.dtsi"
+/* #ifdef OPLUS_FEATURE_FINGERPRINT */
+#include "mediatek/oplus_uff_24267.dtsi"
+/* #endif */
+
+&chosen {
+
+};
+
+/*start tee*/
+&mobicore {
+	trustonic,real-drv = <1>;
+};
+/*end tee*/
+
+&odm {
+	led0:led@0 {
+		compatible = "mediatek,red";
+		led_mode = <0>;
+		data = <1>;
+		pwm_config = <0 0 0 0 0>;
+	};
+	led1:led@1 {
+		compatible = "mediatek,green";
+		led_mode = <0>;
+		data = <1>;
+		pwm_config = <0 0 0 0 0>;
+	};
+	led2:led@2 {
+		compatible = "mediatek,blue";
+		led_mode = <0>;
+		data = <1>;
+		pwm_config = <0 0 0 0 0>;
+	};
+	led3:led@3 {
+		compatible = "mediatek,jogball-backlight";
+		led_mode = <0>;
+		data = <1>;
+		pwm_config = <0 0 0 0 0>;
+	};
+	led4:led@4 {
+		compatible = "mediatek,keyboard-backlight";
+		led_mode = <0>;
+		data = <1>;
+		pwm_config = <0 0 0 0 0>;
+	};
+	led5:led@5 {
+		compatible = "mediatek,button-backlight";
+		led_mode = <0>;
+		data = <1>;
+		pwm_config = <0 0 0 0 0>;
+	};
+	led6:led@6 {
+		compatible = "mediatek,lcd-backlight";
+		led_mode = <4>;
+		data = <1>;
+		pwm_config = <0 1 0 0 0>;
+	};
+	vibrator0:vibrator@0 {
+		compatible = "mediatek,vibrator";
+		vib_timer = <25>;
+		vib_limit = <9>;
+		vib_vol= <9>;
+	};
+
+	usb_c_pinctrl:usb_c_pinctrl {
+		compatible = "mediatek,usb_c_pinctrl";
+	};
+};
+
+/* accdet start */
+&accdet {
+    /* accdet micbias voltage: 0x07,2.7v;0x05,2.5v;0x02,1.9v */
+    accdet-mic-vol = <7>;
+    /* accdet pwm_width, pwm_thresh, fall_delay, rise_delay
+     * debounce0, debounce1, debounce3, debounce4
+     * eint pwm_width, eint pwm_thresh
+     * eint deb(debounce0, debounce1, debounce2, debounce3), inv_debounce
+     */
+    headset-mode-setting = <0x500 0x500 1 0x1f0
+                0x800 0x800 0x20 0x44
+                0x4 0x1
+                0x5 0x3 0x3 0x5 0xe>;
+    accdet-plugout-debounce = <1>;
+    /*0--MD_MAX--UP_MAX--DW_MAX*/
+    headset-three-key-threshold = <0 82 170 400>;
+    headset-three-key-threshold-CDD = <0 121 192 600>;
+    /*0--MD_MAX--VOICE_MAX--UP_MAX--DW_MAX*/
+    headset-four-key-threshold = <0 58 121 192 400>;
+    status = "okay";
+};
+/* accdet end */
+
+&mtk_leds {
+		compatible = "mediatek,disp-leds";
+		backlight {
+			label = "lcd-backlight";
+			led_mode = <4>;
+			max-brightness = <4095>;
+			max-hw-brightness = <4095>;
+			led-bits = <12>;
+			trans-bits = <12>;
+			default-state = "on";
+			apollo-state = "disable";
+	};
+};
+
+&pio {
+	mtkfb_pins_lcm_led_en1: lcm_led_en1_gpio {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO12__FUNC_GPIO12>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+
+	mtkfb_pins_lcm_led_en0: lcm_led_en0_gpio {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO12__FUNC_GPIO12>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+
+	mtkfb_pins_lcm_rst_out1_gpio: lcm_rst_out1_gpio {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO85__FUNC_GPIO85>;
+			slew-rate = <1>;
+			output-high;
+		};
+	};
+
+	mtkfb_pins_lcm_rst_out0_gpio: lcm_rst_out0_gpio {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO85__FUNC_GPIO85>;
+			slew-rate = <1>;
+			output-low;
+		};
+	};
+	mtkfb_pins_lcm_dsi_te: lcm_dsi_te {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO83__FUNC_DSI_TE>;
+		};
+	};
+};
+
+&mtkfb {
+	pinctrl-names = "lcm_led_en1_gpio", "lcm_led_en0_gpio",
+		"lcm_rst_out1_gpio", "lcm_rst_out0_gpio",
+		"mode_te_te";
+	pinctrl-0 = <&mtkfb_pins_lcm_led_en1>;
+	pinctrl-1 = <&mtkfb_pins_lcm_led_en0>;
+	pinctrl-2 = <&mtkfb_pins_lcm_rst_out1_gpio>;
+	pinctrl-3 = <&mtkfb_pins_lcm_rst_out0_gpio>;
+	pinctrl-4 = <&mtkfb_pins_lcm_dsi_te>;
+	status = "okay";
+};
+
+&dispsys_config {
+	pinctrl-names =
+		"lcm_rst_out1_gpio", "lcm_rst_out0_gpio",
+		"mode_te_te";
+	pinctrl-0 = <&mtkfb_pins_lcm_rst_out1_gpio>;
+	pinctrl-1 = <&mtkfb_pins_lcm_rst_out0_gpio>;
+	pinctrl-2 = <&mtkfb_pins_lcm_dsi_te>;
+	status = "okay";
+	helper-value = <0>, /*MTK_DRM_OPT_STAGE*/
+	<1>, /*MTK_DRM_OPT_USE_CMDQ*/
+	<1>, /*MTK_DRM_OPT_USE_M4U*/
+	<1>, /*MTK_DRM_OPT_MMQOS_SUPPORT*/
+	<1>, /*MTK_DRM_OPT_MMDVFS_SUPPORT*/
+	<0>, /*MTK_DRM_OPT_SODI_SUPPORT*/
+	<1>, /*MTK_DRM_OPT_IDLE_MGR*/
+	<0>, /*MTK_DRM_OPT_IDLEMGR_SWTCH_DECOUPLE*/
+	<1>, /*MTK_DRM_OPT_IDLEMGR_BY_REPAINT*/
+	<0>, /*MTK_DRM_OPT_IDLEMGR_ENTER_ULPS*/
+	<0>, /*MTK_DRM_OPT_IDLEMGR_KEEP_LP11*/
+	<0>, /*MTK_DRM_OPT_DYNAMIC_RDMA_GOLDEN_SETTING*/
+	<1>, /*MTK_DRM_OPT_IDLEMGR_DISABLE_ROUTINE_IRQ*/
+	<0>, /*MTK_DRM_OPT_MET_LOG*/
+	<1>, /*MTK_DRM_OPT_USE_PQ*/
+	<1>, /*MTK_DRM_OPT_ESD_CHECK_RECOVERY*/
+	<1>, /*MTK_DRM_OPT_ESD_CHECK_SWITCH*/
+	<1>, /*MTK_DRM_OPT_PRESENT_FENCE*/
+	<0>, /*MTK_DRM_OPT_RDMA_UNDERFLOW_AEE*/
+	<1>, /*MTK_DRM_OPT_DSI_UNDERRUN_AEE*/
+	<1>, /*MTK_DRM_OPT_HRT*/
+	<1>, /*MTK_DRM_OPT_HRT_MODE*/
+	<0>, /*MTK_DRM_OPT_DELAYED_TRIGGER*/
+	<1>, /*MTK_DRM_OPT_OVL_EXT_LAYER*/
+	<0>, /*MTK_DRM_OPT_AOD*/
+	<1>, /*MTK_DRM_OPT_RPO*/
+	<0>, /*MTK_DRM_OPT_DUAL_PIPE*/
+	<0>, /*MTK_DRM_OPT_PAPER_MODE*/
+	<0>, /*MTK_DRM_OPT_DC_BY_HRT*/
+	<0>, /*MTK_DRM_OPT_OVL_WCG*/
+	<0>, /*MTK_DRM_OPT_OVL_SBCH*/
+	<1>, /*MTK_DRM_OPT_COMMIT_NO_WAIT_VBLANK*/
+	<0>, /*MTK_DRM_OPT_MET*/
+	<0>, /*MTK_DRM_OPT_REG_PARSER_RAW_DUMP*/
+	<0>, /*MTK_DRM_OPT_VP_PQ*/
+	<0>, /*MTK_DRM_OPT_GAME_PQ*/
+	<0>, /*MTK_DRM_OPT_MMPATH*/
+	<1>, /*MTK_DRM_OPT_HBM*/
+	<0>, /*MTK_DRM_OPT_VDS_PATH_SWITCH*/
+	<0>, /*MTK_DRM_OPT_LAYER_REC*/
+	<1>, /*MTK_DRM_OPT_CLEAR_LAYER*/
+	<1>, /*MTK_DRM_OPT_LFR*/
+	<0>, /*MTK_DRM_OPT_SF_PF*/
+	<1>, /*MTK_DRM_OPT_DYN_MIPI_CHANGE*/
+	<0>, /*MTK_DRM_OPT_PRIM_DUAL_PIPE*/
+	<0>, /*MTK_DRM_OPT_MSYNC2_0*/
+	<0>, /*MTK_DRM_OPT_VIRTUAL_DISP*/
+	<0>; /*MTK_DRM_OPT_MML_PRIMARY*/
+};
+
+&dsi0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	panel8@7 {
+		compatible = "ac242,p_1,a0017,fhd,vdo";
+		reg = <0>;
+		reset-gpios = <&pio 85 0>;
+		vddr-gpios = <&pio 110 0>;
+		vci-gpios = <&pio 154 0>;
+		lcm-esd-err-fg-gpios = <&pio 8 0>;
+		pinctrl-names = "default";
+		port {
+			panel_in8: endpoint {
+				remote-endpoint = <&dsi_out>;
+			};
+		};
+	};
+	ports {
+		port {
+			dsi_out: endpoint {
+				remote-endpoint = <&panel_in8>;
+			};
+		};
+	};
+};
+
+/* GPS GPIO standardization start */
+&pio {
+	gps_pins_default: gps_default {
+	};
+	gps_l1_lna_pins_ol: gps_l1_lna@0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO25__FUNC_GPIO25>;
+			output-low;
+		};
+	};
+	gps_l1_lna_pins_dsp_ctrl: gps_l1_lna@1 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO25__FUNC_GPS_L1_ELNA_EN>;
+		};
+	};
+	gps_l1_lna_pins_oh: gps_l1_lna@2 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO25__FUNC_GPIO25>;
+			output-high;
+		};
+	};
+	gps_l5_lna_pins_ol: gps_l5_lna@0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO26__FUNC_GPIO26>;
+			output-low;
+		};
+	};
+	gps_l5_lna_pins_dsp_ctrl: gps_l5_lna@1 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO26__FUNC_GPS_L5_ELNA_EN>;
+		};
+	};
+	gps_l5_lna_pins_oh: gps_l5_lna@2 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO26__FUNC_GPIO26>;
+			output-high;
+		};
+	};
+};
+&gps {
+	pinctrl-names = "default",
+		"gps_l1_lna_disable",
+		"gps_l1_lna_dsp_ctrl",
+		"gps_l1_lna_enable",
+		"gps_l5_lna_disable",
+		"gps_l5_lna_dsp_ctrl",
+		"gps_l5_lna_enable";
+	pinctrl-0 = <&gps_pins_default>;
+	pinctrl-1 = <&gps_l1_lna_pins_ol>;
+	pinctrl-2 = <&gps_l1_lna_pins_dsp_ctrl>;
+	pinctrl-3 = <&gps_l1_lna_pins_oh>;
+	pinctrl-4 = <&gps_l5_lna_pins_ol>;
+	pinctrl-5 = <&gps_l5_lna_pins_dsp_ctrl>;
+	pinctrl-6 = <&gps_l5_lna_pins_oh>;
+	status = "okay";
+};
+/* GPS GPIO standardization end */
+
+#include "mediatek/cust_mt6789_touch_1080x2400.dtsi"
+
+&i2c6 {
+	spk: speaker_amp@5c {
+		compatible = "richtek,rt5512";
+		#sound-dai-cells = <0>;
+		reg = <0x5c>;
+		status = "okay";
+		sound-name-prefix = "Left";
+	};
+
+	aw210xx_led@20 {
+		compatible = "awinic,aw210xx_led";
+		reg = <0x20>;
+		enable-gpio = <&pio 104 0>;
+		vbled-enable-gpio = <&pio 103 0>;
+		global_current = <0xcc>;
+		osc_clk = <1>;
+		br_res = <1>;
+		status = "disabled";
+		pinctrl-names = "default";
+		//pinctrl-0 = <&aw21xx_enable_pin_default>;
+		aw210xx,red {
+			aw210xx,name = "red";
+			aw210xx,id = <0>;
+			aw210xx,imax = <1>;
+			aw210xx,led_default_trigger = "none";
+			aw210xx,brightness = <0>;
+			aw210xx,max-brightness = <255>;
+			aw210xx,rise-time-ms = <5>;
+			aw210xx,hold-time-ms = <0>;
+			aw210xx,fall-time-ms = <0>;
+			aw210xx,off-time-ms = <0>;
+		};
+		aw210xx,green {
+			aw210xx,name = "green";
+			aw210xx,id = <1>;
+			aw210xx,imax = <1>;
+			aw210xx,led_default_trigger = "none";
+			aw210xx,brightness = <0>;
+			aw210xx,max-brightness = <255>;
+			aw210xx,rise-time-ms = <5>;
+			aw210xx,hold-time-ms = <0>;
+			aw210xx,fall-time-ms = <0>;
+			aw210xx,off-time-ms = <0>;
+		};
+		aw210xx,blue {
+			aw210xx,name = "blue";
+			aw210xx,id = <2>;
+			aw210xx,imax = <1>;
+			aw210xx,led_default_trigger = "none";
+			aw210xx,brightness = <0>;
+			aw210xx,max-brightness = <255>;
+			aw210xx,rise-time-ms = <5>;
+			aw210xx,hold-time-ms = <0>;
+			aw210xx,fall-time-ms = <0>;
+			aw210xx,off-time-ms = <0>;
+		};
+	};
+};
+
+&sound {
+	mediatek,spk-i2s = <3 0>;
+	mediatek,speaker-codec {
+		sound-dai = <&spk>;
+	};
+};
+
+&pio {
+	hw_pins_default:default@hw_sub_id {
+	};
+	aboard_pin_gpio0_sleep:sleep@id0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO103__FUNC_GPIO103>;
+			slew-rate = <0>;
+			bias-pull-down;
+			input-enable;
+		};
+	};
+
+	aboard_pin_gpio0_active:active@id0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO103__FUNC_GPIO103>;
+			slew-rate = <0>;
+			bias-pull-up;
+			input-enable;
+		};
+	};
+
+	aboard_pin_gpio0_idle:idle@id0 {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO103__FUNC_GPIO103>;
+			slew-rate = <0>;
+			bias-disable;
+			input-enable;
+		};
+	};
+
+	/*aw21xx_enable_pin_default: enable_pin_default {
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO104__FUNC_GPIO104>,
+					<PINMUX_GPIO103__FUNC_GPIO103>;
+			slew-rate = <0>;
+			bias-disable;
+			input-enable;
+		};
+	};*/
+};
+/*#endif OPLUS_FEATURE_TP_BASIC*/
+
+&odm {
+/*OPLUS_BUG_STABILITY oplus project start */
+	oplus_project:oplus_project {
+		compatible = "oplus,oplus_project";
+	};
+/*endif*/
+
+	oplus_devinfo:oplus_devinfo {
+		compatible = "oplus-devinfo";
+		pinctrl-names = "default", "aboard_gpio0_sleep", "aboard_gpio0_active", "aboard_gpio0_idle";
+		pinctrl-0 = <&hw_pins_default>;
+		pinctrl-1 = <&aboard_pin_gpio0_sleep>;
+		pinctrl-2 = <&aboard_pin_gpio0_active>;
+		pinctrl-3 = <&aboard_pin_gpio0_idle>;
+		main-sub {
+			use_tristate_gpio;
+			compatible = "hw-match, main-sub";
+			aboard-gpio0 = <&pio 103 0x00>;
+			aboard-patterns = <0>;	/*0[high-resistance] 1[pull-down] 2[pull-up]*/
+			/*main board*/
+			match-projects = <24267>;
+		};
+	};
+	/*#endif OPLUS_FEATURE_TP_BASIC*/
+
+	kpd_volume_down:kpd_volume_down {
+                compatible = "mediatek, VOLUME_DOWN-eint";
+                interrupt-parent = <&pio>;
+                interrupts = <26 IRQ_TYPE_EDGE_FALLING 26 0>;
+                debounce = <32000>;
+                status = "okay";
+        };
+
+	pmic_history_count:pmic_history_count {
+	};
+	pmic_history0:pmic_history0 {
+	};
+	pmic_history1:pmic_history1 {
+	};
+	pmic_history2:pmic_history2 {
+	};
+	pmic_history3:pmic_history3 {
+	};
+
+};
+
+&odm {
+    oplus_sim_detect {
+        compatible = "oplus, sim_detect";
+        Hw,sim_det = <&pio 23 0x00>;
+    };
+};
+
+&keypad {
+	keypad,volume-down = <&pio 26 0x00>;
+	pinctrl-names = "volume_down_as_int";
+	pinctrl-0 = <&volume_down_gpio_eint>;
+	status = "okay";
+};
+&pio {
+	volume_down_gpio_eint:volume_down@0{
+		pins_cmd_dat {
+			pinmux = <PINMUX_GPIO26__FUNC_GPIO26>;
+			slew-rate = <0>;  /*direction 0:in, 1:out*/
+			input-enable;
+		};
+	};
+};
+//ifdef OPLUS_FEATURE_SECURITY_COMMON
+&mtee_svp {
+     mtee: MTEE {
+         compatible = "mediatek,mtk_svp_on_mtee_support";
+    };
+    svp: SecureVideoPath {
+        compatible = "mediatek,mtk_sec_video_path_support";
+    };
+};
+//endif /* OPLUS_FEATURE_SECURITY_COMMON */
+//#ifdef OPLUS_FEATURE_SWTP
+&swtp {
+	compatible = "mediatek, swtp-eint";
+	debounce = <512000>;
+};
+&swtp_1 {
+	compatible = "mediatek, swtp_1-eint";
+	debounce = <512000>;
+};
+//#endif  /* OPLUS_FEATURE_SWTP */
+
+/*add flash_led_ntc for thermal  begin*/
+&thermal_zones {
+	flash_led_ntc: flash_led_ntc {
+			polling-delay = <0>; /* milliseconds */
+			polling-delay-passive = <0>; /* milliseconds */
+			thermal-sensors = <&tboard_thermistor7>;
+		};
+};
+/*add flash_led_ntc for thermal end*/
+
+/*add for shell-temp begin*/
+&soc {
+	//#ifdef OPLUS_FEATURE_THERMAL_HORAE
+	shell_front {
+			compatible = "oplus,shell-temp";
+		};
+	shell_frame {
+			compatible = "oplus,shell-temp";
+		};
+	shell_back {
+			compatible = "oplus,shell-temp";
+		};
+	//#endif
+};
+/*add for shell-temp end*/
+
+#include <oplus6789_24267/cust.dtsi>
+#include "mediatek/oplus6789_Milkyway_S3_audio.dtsi"
+/*End of this file, DO NOT ADD ANYTHING HERE*/

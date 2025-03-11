@@ -24,4 +24,61 @@ source "drivers/soc/xilinx/Kconfig"
 source "drivers/soc/zte/Kconfig"
 source "drivers/soc/kendryte/Kconfig"
 
+#ifdef OPLUS_BUG_STABILITY
+source "drivers/soc/oplus/system/Kconfig"
+#endif /* OPLUS_BUG_STABILITY */
+
+#ifdef OPLUS_DFR_FEATURE
+source "drivers/soc/oplus/dfr/Kconfig"
+#endif /* OPLUS_DFR_FEATURE */
+
+#ifdef OPLUS_BOOT_FEATURE
+source "drivers/soc/oplus/boot/Kconfig"
+#endif /* OPLUS_BOOT_FEATURE */
+
+#ifdef OPLUS_DFT_FEATURE
+source "drivers/soc/oplus/dft/Kconfig"
+#endif /* OPLUS_DFT_FEATURE */
+
+#ifdef OPLUS_TP_BASIC
+source "drivers/soc/oplus/device_info/Kconfig"
+#endif /*#ifdef OPLUS_TP_BASIC*/
+
+#ifdef OPLUS_FEATURE_MIDAS_GKI
+source "drivers/soc/oplus/midas/Kconfig"
+#endif /* OPLUS_FEATURE_MIDAS_GKI */
+
+#ifdef OPLUS_FEATURE_HANS
+source "drivers/soc/oplus/hans/Kconfig"
+#endif /* OPLUS_FEATURE_HANS */
+
+#ifdef OPLUS_FEATURE_OMRG
+source "kernel/oplus_cpu/oplus_omrg/Kconfig"
+#endif /* OPLUS_FEATURE_OMRG */
+
+#ifdef OPLUS_FEATURE_FREQQOS_MONITOR
+source "kernel/oplus_cpu/freqqos_monitor/Kconfig"
+#endif /* OPLUS_FEATURE_FREQQOS_MONITOR */
+
+#ifdef OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING
+source "kernel/oplus_cpu/cpufreq_bouncing/Kconfig"
+#endif /* OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING */
+
+#ifdef OPLUS_FEATURE_ABNORMAL_FLAG
+source "kernel/oplus_cpu/oplus_overload/Kconfig"
+#endif /* OPLUS_FEATURE_ABNORMAL_FLAG*/
+
+source "drivers/soc/oplus/uad/Kconfig"
+#ifdef OPLUS_FEATURE_MM_FEEDBACK
+source "drivers/soc/oplus/oplus_mm_fb/Kconfig"
+#endif /* OPLUS_FEATURE_MM_FEEDBACK */
+
+#ifdef OPLUS_FEATURE_STORAGE_IO_METRICS
+source "drivers/soc/oplus/storage/Kconfig"
+#endif /*OPLUS_FEATURE_STORAGE_IO_METRICS*/
+
+#ifdef OPLUS_FEATURE_WAKER_IDENTIFY
+source "kernel/oplus_cpu/waker_identify/Kconfig"
+#endif /*OPLUS_FEATURE_WAKER_IDENTIFY*/
+
 endmenu
