@@ -48,6 +48,9 @@
 #define OPLUS_OFP_GET_VIDEO_MODE_AOD_FOD_CONFIG(fp_type)	((fp_type) & OPLUS_OFP_FP_TYPE_VIDEO_MODE_AOD_FOD)
 /* notifier event */
 #define DRM_PANEL_EVENT_HBM_STATE 1
+#define VSYNC_PERIOD_120HZ 8333
+#define VSYNC_PERIOD_90HZ  11111
+#define VSYNC_PERIOD_60HZ  16666
 
 /* -------------------- parameters -------------------- */
 /* log level config */
@@ -826,10 +829,17 @@ int oplus_ofp_notify_uiready(void *mtk_drm_crtc)
 }
 
 /* need filter backlight in hbm state and aod unlocking process */
+unsigned int hbm_force_off_when_backlight_0 = 0;
+EXPORT_SYMBOL(hbm_force_off_when_backlight_0);
 bool oplus_ofp_backlight_filter(int bl_level)
 {
 	bool need_filter_backlight = false;
 	struct oplus_ofp_params *p_oplus_ofp_params = oplus_ofp_get_params();
+	struct drm_crtc *crtc;
+	struct drm_device *ddev = get_drm_device();
+	int refresh_rate = 0;
+	struct mtk_drm_crtc *mtk_crtc = NULL;
+	int delay = 0;
 
 	OFP_DEBUG("start\n");
 
@@ -838,16 +848,52 @@ bool oplus_ofp_backlight_filter(int bl_level)
 		return -EINVAL;
 	}
 
+	/* this debug cmd only for crtc0 */
+	crtc = list_first_entry(&(ddev)->mode_config.crtc_list,
+				typeof(*crtc), head);
+	if (!crtc) {
+		OFP_ERR("find crtc fail\n");
+		return -EINVAL;
+	}
+
+	mtk_crtc = to_mtk_crtc(crtc);
+	if (!mtk_crtc || !mtk_crtc->panel_ext || !mtk_crtc->panel_ext->params) {
+		OFP_ERR("falied to get lcd proc info\n");
+		return -EINVAL;
+	}
+
+	refresh_rate = mtk_crtc->panel_ext->params->dyn_fps.vact_timing_fps;
+	if (refresh_rate == 120)
+		delay = VSYNC_PERIOD_120HZ * 2;
+	else if (refresh_rate == 90)
+		delay = VSYNC_PERIOD_90HZ * 2;
+	else if (refresh_rate == 60)
+		delay = VSYNC_PERIOD_60HZ * 2;
+
 	mtk_drm_trace_begin("oplus_ofp_backlight_filter");
 
 	if (oplus_ofp_get_hbm_state()) {
 		if (bl_level == 0) {
-			oplus_ofp_set_hbm_state(false);
-			OFP_DEBUG("backlight is 0, set hbm state to false\n");
-			if (p_oplus_ofp_params->aod_unlocking == true) {
-				p_oplus_ofp_params->aod_unlocking = false;
-				OFP_INFO("oplus_ofp_aod_unlocking: %d\n", p_oplus_ofp_params->aod_unlocking);
-				mtk_drm_trace_c("%d|oplus_ofp_aod_unlocking|%d", g_commit_pid, p_oplus_ofp_params->aod_unlocking);
+			if (!strcmp(mtk_crtc->panel_ext->params->vendor, "22823_Tianma_NT37705")) {
+				OFP_INFO("backlight is 0, set hbm state to false,and flush hbm off cmd,delay %d us\n", delay);
+				if (p_oplus_ofp_params->aod_unlocking == true) {
+					p_oplus_ofp_params->aod_unlocking = false;
+					OFP_INFO("oplus_ofp_aod_unlocking: %d\n", p_oplus_ofp_params->aod_unlocking);
+					mtk_drm_trace_c("%d|oplus_ofp_aod_unlocking|%d", g_commit_pid, p_oplus_ofp_params->aod_unlocking);
+				}
+				hbm_force_off_when_backlight_0 = 1;
+				oplus_ofp_set_panel_hbm(crtc, false);
+				hbm_force_off_when_backlight_0 = 0;
+				oplus_ofp_set_hbm_state(false);
+				usleep_range(delay, delay+100);
+			} else {
+				oplus_ofp_set_hbm_state(false);
+				OFP_DEBUG("backlight is 0, set hbm state to false\n");
+				if (p_oplus_ofp_params->aod_unlocking == true) {
+					p_oplus_ofp_params->aod_unlocking = false;
+					OFP_INFO("oplus_ofp_aod_unlocking: %d\n", p_oplus_ofp_params->aod_unlocking);
+					mtk_drm_trace_c("%d|oplus_ofp_aod_unlocking|%d", g_commit_pid, p_oplus_ofp_params->aod_unlocking);
+				}
 			}
 			need_filter_backlight = false;
 		} else {

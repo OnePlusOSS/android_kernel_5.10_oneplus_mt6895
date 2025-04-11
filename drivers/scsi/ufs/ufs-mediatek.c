@@ -93,6 +93,8 @@ static struct ufs_dev_fix ufs_mtk_dev_fixups[] = {
 		UFS_DEVICE_QUIRK_SUPPORT_EXTENDED_FEATURES),
 	UFS_FIX(UFS_VENDOR_SKHYNIX, "H9HQ15AFAMBDAR",
 		UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM | UFS_DEVICE_QUIRK_DELAY_AFTER_LPM),
+	UFS_FIX(UFS_VENDOR_SAMSUNG, "KLUFG4LHGC-B0E1",
+		UFS_DEVICE_QUIRK_SAMSUNG_QLC),
 	END_FIX
 };
 
@@ -1035,6 +1037,17 @@ static void ufs_mtk_trace_vh_compl_command(void *data, struct ufs_hba *hba, stru
 		}
 	}
         /*feature-devinfo-v001-4-end*/
+
+        /* if cost more than 100ms, print out in dmesg for IO analyze */
+	if ((cmd->cmnd[0] == READ_10 || cmd->cmnd[0] == WRITE_10 || cmd->cmnd[0] == READ_16 || cmd->cmnd[0] == WRITE_16) &&
+	    ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp) > 100000) {
+		printk_ratelimited(
+			KERN_WARNING "%s cost more than 100ms, it's %dms\n",
+			cmd->cmnd[0] == READ_10 ? "READ_10" :
+			cmd->cmnd[0] == WRITE_10 ? "WRITE_10" :
+			cmd->cmnd[0] == READ_16 ? "READ_16" : "WRITE_16",
+			ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp) / 1000);
+	}
 }
 
 static struct tracepoints_table interests[] = {
@@ -2899,8 +2912,10 @@ static void ufs_mtk_fixup_dev_quirks(struct ufs_hba *hba)
 	}
 
 #if defined(CONFIG_UFSFEATURE)
-	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SAMSUNG) {
+	if (hba->dev_quirks & UFS_DEVICE_QUIRK_SAMSUNG_QLC) {
 		host->ufsf.hba = hba;
+		if (hba->caps & UFSHCD_CAP_WB_EN)
+			hba->caps &= ~UFSHCD_CAP_WB_EN;
 		ufsf_set_init_state(ufs_mtk_get_ufsf(hba));
 	}
 #endif

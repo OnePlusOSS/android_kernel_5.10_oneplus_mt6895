@@ -259,4 +259,9 @@ config BLOCKIO_UX_OPT
 	  optimize the runnable problem caused by kverityd, and protect the
 	  dm-buf cache when available memory is sufficient
 
+config BLK_MQ_USE_LOCAL_THREAD
+	bool
+	select BLOCKIO_UX_OPT
+	default y
+
 source "block/Kconfig.iosched"

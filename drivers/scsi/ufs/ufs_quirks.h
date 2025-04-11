@@ -125,4 +125,5 @@ struct ufs_dev_fix {
  */
 #define UFS_DEVICE_QUIRK_SWAP_L2P_ENTRY_FOR_HPB_READ (1 << 12)
 
+#define UFS_DEVICE_QUIRK_SAMSUNG_QLC (1 << 13)
 #endif /* UFS_QUIRKS_H_ */

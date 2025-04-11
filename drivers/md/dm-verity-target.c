@@ -1237,8 +1237,7 @@ static int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	 * doesn't have required hashes).
 	 */
 #ifdef CONFIG_BLOCKIO_UX_OPT
-	atomic_add(1, &verity_wq_id);
-	verity_wq_name = kasprintf(GFP_KERNEL, "kverityd%d", atomic_read(&verity_wq_id));
+	verity_wq_name = kasprintf(GFP_KERNEL, "kverityd%d", atomic_add_return(1, &verity_wq_id));
 	v->verify_wq = alloc_workqueue(verity_wq_name, WQ_MEM_RECLAIM | WQ_HIGHPRI | WQ_UX | WQ_UNBOUND | WQ_SYSFS, 0);
 #else
 	v->verify_wq = alloc_workqueue("kverityd", WQ_MEM_RECLAIM | WQ_HIGHPRI, 0);

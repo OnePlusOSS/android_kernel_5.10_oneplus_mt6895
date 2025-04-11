@@ -52,8 +52,8 @@ oplus_spec,vooc_strategy1_low_current1 = <61>;
 oplus_spec,vooc_strategy1_low_current0 = <80>;
 
 oplus_spec,voocphy_freq_mincore = <925000>;
-oplus_spec,voocphy_freq_midcore = <1718000>;
-oplus_spec,voocphy_freq_maxcore = <1718000>;
+oplus_spec,voocphy_freq_midcore = <2300000>;
+oplus_spec,voocphy_freq_maxcore = <2300000>;
 oplus_spec,voocphy_current_change_timeout = <100>;
 oplus_spec,copycat_vooc_support;
 oplus_spec,copycat_vooc_accuracy_value = <105>;

@@ -89,6 +89,7 @@
 struct rq;
 struct cpuidle_state;
 
+extern unsigned long stop_fair_group;
 /* task_struct::on_rq states: */
 #define TASK_ON_RQ_QUEUED	1
 #define TASK_ON_RQ_MIGRATING	2

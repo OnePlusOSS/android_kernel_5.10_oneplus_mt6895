@@ -316,6 +316,8 @@
 		compatible = "sc,sc8547-master";
 		reg = <0x6F 0>;
 
+		ovp_reg = <0x36>;
+
 		qcom,irq_gpio = <&pio 12 0x00>;
 		interrupt-parent = <&pio>;
 		interrupts = <12 0>;

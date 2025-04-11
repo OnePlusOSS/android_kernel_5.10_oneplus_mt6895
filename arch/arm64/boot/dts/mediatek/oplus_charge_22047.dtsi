@@ -697,6 +697,7 @@
 	charging_host_charger_current = <1500000>;
 	ta_ac_charger_current = <1500000>;
 	pd_charger_current = <500000>;
+	over_high_temp_thr = <60>;
 };
 
 &i2c1 {
@@ -728,13 +729,19 @@
 		oplus,adc_info_name = "100k_1840mv";
 		oplus_spec,usbtemp_batttemp_gap = <12>;
 
+		/* BSP.CHG.Basic, 2024/09/27, Add for:
+		High temperature long-term solution for Battery bulge from MTK*/
+		high-temp-scheme;
+
 		/* support for V2.0 usbtemp protect. */
 		oplus,support_usbtemp_protect_v2;
 		oplus_spec,usbtemp_batt_temp_low = <50>;
 		oplus_spec,usbtemp_batt_temp_high = <50>;
+		oplus_spec,usbtemp_batt_temp_over_hot = <60>;
 		oplus_spec,usbtemp_ntc_temp_low = <57>;
 		oplus_spec,usbtemp_ntc_temp_high = <69>;
 		oplus_spec,usbtemp_temp_gap_low_with_batt_temp = <7>;
+		oplus_spec,usbtemp_temp_gap_with_batt_temp_in_over_hot = <15>;
 		oplus_spec,usbtemp_temp_gap_high_with_batt_temp = <12>;
 		oplus_spec,usbtemp_temp_gap_low_without_batt_temp = <12>;
 		oplus_spec,usbtemp_temp_gap_high_without_batt_temp = <24>;
@@ -914,6 +921,8 @@
 		oplus,gauge_stuck_time = <50>;
 		oplus,smooth_switch;
 		oplus,reserve_chg_soc = <3>;
+		oplus_spec,poweroff_high_batt_temp = <720>;
+		oplus_spec,poweroff_emergency_batt_temp = <770>;
 	};
 
 	oplus_monitor: oplus,monitor {

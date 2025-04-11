@@ -642,6 +642,10 @@ static struct LCM_setting_table HBM_off_setting[] = {
 static struct LCM_setting_table AOD_off_setting[] = {
         {REGFLAG_CMD, 2, {0x65, 0x00}},
         {REGFLAG_CMD, 1, {0x38}},
+        /*AOD no black*/
+        {REGFLAG_CMD, 6, {0xF0,0x55,0xAA,0x52,0x08,0x01}},
+        {REGFLAG_CMD, 2, {0x6F,0x01}},
+        {REGFLAG_CMD, 2, {0xD2,0x00}},
 };
 
 static struct LCM_setting_table AOD_on_setting[] = {
@@ -651,7 +655,10 @@ static struct LCM_setting_table AOD_on_setting[] = {
         {REGFLAG_CMD, 2, {0x6F, 0x01}},
         {REGFLAG_CMD, 2, {0xD2, 0x22}},
         {REGFLAG_CMD, 1, {0x39}},
-        {REGFLAG_CMD, 2, {0x65,0x01}},
+        /*AOD no black*/
+        {REGFLAG_CMD, 6, {0xF0,0x55,0xAA,0x52,0x08,0x01}},
+        {REGFLAG_CMD, 2, {0x6F,0x01}},
+        {REGFLAG_CMD, 2, {0xD2,0x00}},
 };
 
 static struct LCM_setting_table aod_high_bl_level[] = {

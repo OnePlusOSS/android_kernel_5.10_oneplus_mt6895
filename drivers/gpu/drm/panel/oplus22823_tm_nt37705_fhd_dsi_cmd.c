@@ -76,6 +76,7 @@ static unsigned int CurrentFrameRate = 0;
 #define DRM_PANEL_EVENT_PWM_TURBO  0x14
 DEFINE_MUTEX(oplus_pwm_lock);
 extern unsigned int hpwm_90nit_set_temp;
+extern int hbm_force_off_when_backlight_0;
 
 static struct regulator *vmc_ldo;
 static struct regulator *vrfio18_aif;
@@ -1585,6 +1586,10 @@ static int panel_hbm_set_cmdq(struct drm_panel *panel, void *dsi,
 	}
 
 	if (!en) {
+		if (hbm_force_off_when_backlight_0 == 1) {
+			pr_info("backlight set 0, force hbm off, but not set backlight\n");
+			return 0;
+		}
 		lcm_setbacklight_cmdq(dsi, cb, handle, oplus_display_brightness);
 		if (get_pwm_status(g_pwm_en)) {
 			pwm_power_on = true;

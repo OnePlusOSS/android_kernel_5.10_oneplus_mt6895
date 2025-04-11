@@ -538,6 +538,12 @@
 };
 /*add for shell-temp end*/
 
+&soc {
+	oplus,blk-mq {
+		kblockd_ux_unbound_enable = "y";
+	};
+};
+
 #include <oplus6789_24267/cust.dtsi>
 #include "mediatek/oplus6789_Milkyway_S3_audio.dtsi"
 /*End of this file, DO NOT ADD ANYTHING HERE*/

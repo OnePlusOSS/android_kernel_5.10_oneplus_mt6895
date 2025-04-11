@@ -664,6 +664,8 @@
 		status = "okay";
 		compatible = "chip,hl7138-standalone";
 		reg = <0x67>;
+                ovp_reg = <0x3C>;
+                reg_ctrl_1 = <0xFC>;
 
 		qcom,irq_gpio = <&pio 149 0x00>;
 		interrupt-parent = <&pio>;

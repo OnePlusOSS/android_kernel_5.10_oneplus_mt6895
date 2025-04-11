@@ -4072,6 +4072,22 @@ unsigned int blk_mq_rq_cpu(struct request *rq)
 }
 EXPORT_SYMBOL(blk_mq_rq_cpu);
 
+#ifdef CONFIG_BLK_MQ_USE_LOCAL_THREAD
+const char *of_blk_feature_read(char *name)
+{
+	const char *value = NULL;
+
+	if (name) {
+		struct device_node *np = of_find_node_opts_by_path(BLK_MQ_DTS_PATH, NULL);
+		if (np) {
+			of_property_read_string(np, name, &value);
+		}
+	}
+
+	return value;
+}
+#endif
+
 static int __init blk_mq_init(void)
 {
 	int i;

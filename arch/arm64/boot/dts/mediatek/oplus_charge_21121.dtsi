@@ -930,6 +930,7 @@
 		oplus,vooc_curr_max = <CURR_LIMIT_7BIT_7_5A>;
 		oplus,support_vooc_by_normal_charger_path;
 		oplus,vooc_project = <7>;
+		oplus,vooc_power_max_w = <80>;
 
 		oplus,smart_chg_bcc_support;
 

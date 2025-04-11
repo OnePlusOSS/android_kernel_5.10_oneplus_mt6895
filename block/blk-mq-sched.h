@@ -83,3 +83,12 @@ static inline bool blk_mq_sched_needs_restart(struct blk_mq_hw_ctx *hctx)
 }
 
 #endif
+#ifdef CONFIG_BLK_MQ_USE_LOCAL_THREAD
+#define BLK_MQ_DTS_PATH "/soc/oplus,blk-mq"
+struct device_node;
+int of_property_read_string(const struct device_node *np, const char *propname,
+				const char **out_string);
+struct device_node *of_find_node_opts_by_path(const char *path,
+	const char **opts);
+const char *of_blk_feature_read(char *name);
+#endif

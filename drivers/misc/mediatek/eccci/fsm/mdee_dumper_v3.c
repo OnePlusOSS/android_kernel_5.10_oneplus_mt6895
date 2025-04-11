@@ -27,6 +27,15 @@
 #define DB_OPT_FTRACE   (0)	/* Dummy macro define to avoid build error */
 #endif
 
+//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
+#define MCU_CORE_MSG "(MCU_core"
+#define ADDRESS_POINTER_PREFIX1 "p1:0x"
+#define ADDRESS_POINTER_PREFIX2 "p1:0X"
+#define ADDRESS_POINTER_PREFIX3 "P1:0x"
+#define ADDRESS_POINTER_PREFIX4 "P1:0X"
+#define ELM_STR "ELM "
+//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
+
 static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	char *aed_str, int db_opt)
 {
@@ -57,6 +66,8 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	unsigned int hashId = 0;
 	char *logBuf;
 	char *aed_str_for_hash = NULL;
+	int cursor_idx = 0;
+	int continu_line_breaks = 0;
 	//#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/
 
 	int ret = 0;
@@ -84,16 +95,59 @@ static void ccci_aed_v3(struct ccci_fsm_ee *mdee, unsigned int dump_flag,
 	}
 	memset(mdee->ex_start_time, 0x0, sizeof(mdee->ex_start_time));
 	//#ifdef OPLUS_FEATURE_MODEM_MINIDUMP
-	#define MCU_CORE_MSG "(MCU_core"
 	aed_str_for_hash = aed_str;
 	if( aed_str_for_hash != NULL ) {
-		if( (strncmp(aed_str_for_hash, MCU_CORE_MSG, strlen(MCU_CORE_MSG)) == 0) ) {
-			while(aed_str_for_hash[0] != '\n') {
+		/* only startwith "(MCU_core" */
+		if((strncmp(aed_str_for_hash, MCU_CORE_MSG, strlen(MCU_CORE_MSG)) == 0)) {
+			/* find first '\n' to giving up the first line */
+			while (aed_str_for_hash[0] != '\n') {
 				++aed_str_for_hash;
 			}
 			++aed_str_for_hash; //skip '\n'
 		}
-		hashId = BKDRHash(aed_str_for_hash, strlen(aed_str_for_hash));
+		/* replace '\n' to " " */
+		cursor_idx = 0;
+		while (aed_str_for_hash[cursor_idx] != '\0') {
+			if (aed_str_for_hash[cursor_idx] == '\n' && continu_line_breaks == 0) { /* the first '\n' */
+				continu_line_breaks += 1;
+				aed_str_for_hash[cursor_idx] = 32; /* ASCII */
+				cursor_idx++;
+			}
+			else if (aed_str_for_hash[cursor_idx] == 10 && continu_line_breaks != 0) {
+				deleteChar(aed_str_for_hash, strlen(aed_str_for_hash), cursor_idx); /* only leave one space */
+			}
+			else if (aed_str_for_hash[cursor_idx] != 10 && continu_line_breaks != 0) {
+				continu_line_breaks = 0;
+				cursor_idx++;
+			}
+			else {
+				cursor_idx++;
+			}
+		}
+		/* give up the string from "p1:0x" or p1:0X or P1:0x or P1:0X */
+		if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX1) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX1);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx-1] = '\0';
+		}
+		else if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX2) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX2);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx - 1] = '\0';
+		}
+		else if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX3) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX3);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx - 1] = '\0';
+		}
+		else if (strstr(aed_str_for_hash, ADDRESS_POINTER_PREFIX4) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ADDRESS_POINTER_PREFIX4);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx - 1] = '\0';
+		}
+		/* give up the string from ELM */
+		else if (strstr(aed_str_for_hash, ELM_STR) != NULL) {
+			cursor_idx = getSubstrIndex(aed_str_for_hash, ELM_STR);
+			if (cursor_idx >= 0)aed_str_for_hash[cursor_idx-1] = '\0';
+		}
+		/* calculate hashid */
+		hashId = BKDRHash(aed_str_for_hash, strlen(aed_str_for_hash), mdee->md_id);
 	}
 	else {
 		CCCI_ERROR_LOG(md_id, FSM, "aed_str_for_hash is null!!");
@@ -946,3 +1000,6 @@ int mdee_dumper_v3_alloc(struct ccci_fsm_ee *mdee)
 	mdee->ops = &mdee_ops_v3;
 	return 0;
 }
+
+
+

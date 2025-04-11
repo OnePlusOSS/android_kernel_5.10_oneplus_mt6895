@@ -1118,7 +1118,7 @@ unsigned int BKDRHash(const char* str, unsigned int len, int md_id) {
 		hash = (hash * seed) + (unsigned int)(*str);
 		hash = hash & 0xffffffff;
 	}
-	CCCI_ERROR_LOG(md_id, FSM, "BKDRHash hash: %u\n", hash);
+	CCCI_ERROR_LOG(md_id, FSM, "BKDRHash hash v5: %u\n", hash);
 	return hash;
 }
 //#endif /*OPLUS_FEATURE_MODEM_MINIDUMP*/

@@ -887,7 +887,7 @@ void ufshid_remove(struct ufsf_feature *ufsf)
 void ufshid_suspend(struct ufsf_feature *ufsf, bool is_system_pm)
 {
 	struct ufshid_dev *hid = ufsf->hid_dev;
-	struct ufs_hba *hba = hid->ufsf->hba;
+	struct ufs_hba *hba = NULL;
 	int ret;
 
 	if (!hid)
@@ -897,6 +897,7 @@ void ufshid_suspend(struct ufsf_feature *ufsf, bool is_system_pm)
 		goto out;
 
 	if (is_system_pm) {
+		hba = hid->ufsf->hba;
 		if (hba->spm_lvl <= SPM_ACTIVE_POWER_LEVEL &&
 		    strncmp(hba->sdev_ufs_device->rev, "1800", strlen("1800")) >= 0) {
 			if (ufshid_is_in_progress(hid))

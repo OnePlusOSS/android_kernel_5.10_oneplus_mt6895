@@ -295,6 +295,7 @@
 	charging_host_charger_current = <1500000>;
 	ta_ac_charger_current = <1500000>;
 	pd_charger_current = <500000>;
+	en_vol_ctrl_vibrate = <3200>;
 };
 
 &i2c5 {

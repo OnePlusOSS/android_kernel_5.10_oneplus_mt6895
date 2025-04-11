@@ -26,8 +26,13 @@
 	FUELGAGUE_APPLY = <(1)>;
 	IS_SUBBOARD_TEMP_SUPPORT = <(0)>;
 	Enable_Is_Force_Full = <(1)>;
+	RBAT_PULL_DOWN_R = <(24000)>;
+	RBAT_PULL_UP_R = <(12000)>;
+	USE_MORE_PRECISE_NTC_TABLE = <(1)>;
 	R_FG_VALUE = <(1)>;
-	CAR_TUNE_VALUE = <(106)>;
+	CAR_TUNE_VALUE = <(109)>;
+	AGING_FACTOR_MIN = <(93)>;
+	AGING_FACTOR_DIFF = <(1)>;
 	#include "mediatek/bat_setting/mt6895_23081_battery_table_ext.dtsi"
 	#include "mediatek/bat_setting/mt6895_23081_battery_prop_dim2_ext.dtsi"
 };
@@ -743,6 +748,10 @@
 
 		oplus,use_audio_switch;
 	};
+	oplus_smart_charge: oplus,smart_charge {
+		compatible = "oplus,smart_charge";
+		oplus,quick_mode_gain_support;
+	};
 };
 
 &soc {
@@ -812,6 +821,7 @@
 
 		oplus,target_vbus_mv = <11000>;
 		oplus,curr_max_ma = <3000>;
+		oplus,high_imp_compensation_setting_mv = <100>;
 
 		oplus,curr_table_type = <UFCS_CURR_CP_TABLE>;
 

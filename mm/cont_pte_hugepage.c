@@ -769,28 +769,18 @@ bool handle_chp_prctl_user_addrs(const char __user *uname, unsigned long start,
 	if (find_uid_in_blacklist(from_kuid(&init_user_ns, task_uid(current))))
 		return ret;
 
-	if (address->dalvik_main == uaddr ||
-	    address->scudo_primary == uaddr || address->scudo_secondary == uaddr)
-		return true;
-
-	if (address->dalvik_main && address->scudo_primary &&
-	    address->scudo_secondary)
+	/* remove dalvik_main cause android_V disable chp on dalvik heap. */
+	if (address->libc_malloc) {
+		if (address->libc_malloc == uaddr)
+			return true;
 		return false;
+	}
 
 	name = strndup_user(uname, MAX_LEN_CHP_VMA_NAME);
 	if (IS_ERR(name))
 		return ret;
 
 	switch (name[0]) {
-	case 'd':
-		/* dalvik_main only have one in a process */
-		ret = is_vma_name_valid(false, VMA_NAME_DALVIK_MAIN_V, name,
-					SZ_256M, len, mm, uaddr,
-					&address->dalvik_main) ||
-			is_vma_name_valid(false, VMA_NAME_DALVIK_MAIN, name,
-					  SZ_256M, len, mm, uaddr,
-					  &address->dalvik_main);
-		break;
 	case 'l':
 		/* jemalloc set all vma name with libc_malloc */
 		ret = is_vma_name_valid(true, VMA_NAME_JEMALLOC, name,
@@ -798,18 +788,6 @@ bool handle_chp_prctl_user_addrs(const char __user *uname, unsigned long start,
 					&address->libc_malloc);
 		if (ret)
 			address->libc_malloc_pad = address->libc_malloc;
-		break;
-	case 's':
-		/*
-		 * scudo also support scudo:ringbuffer, scudo:primary_reserve
-		 * which are for debug only
-		 */
-		ret = is_vma_name_valid(true, VMA_NAME_SCUDO_PRIMARY, name,
-					SZ_256K, len, mm, uaddr,
-					&address->scudo_primary) ||
-			is_vma_name_valid(true, VMA_NAME_SCUDO_SECONDARY, name,
-					  SZ_64K, len, mm, uaddr,
-					  &address->scudo_secondary);
 		break;
 	default:
 		break;
@@ -3138,7 +3116,7 @@ static int __init cmdline_parse_prjname(char *p)
 	static const char *cn_prjs[] = {
 		"22047", "23021",
 		"22017", "21121", "21861",
-		"22921", "22021", "21007", "22823",
+		"22921", "22021", "21007",
 		"23081",
 		NULL,
 	};
@@ -3201,6 +3179,9 @@ void __init cont_pte_cma_reserve(void)
 		chp_logi("device does not support cont_pte_huge_page\n");
 		return;
 	}
+
+	/* remove 512M if disable chp on dalvik heap. */
+	cont_pte_pool_cma_size -= ALIGN_DOWN(SZ_512M, CONT_PTE_CMA_CHUNK_SIZE);
 
 	res = cma_declare_contiguous(0, cont_pte_pool_cma_size, 0, 0,
 			HPAGE_CONT_PTE_ORDER, false, "cont_pte",
