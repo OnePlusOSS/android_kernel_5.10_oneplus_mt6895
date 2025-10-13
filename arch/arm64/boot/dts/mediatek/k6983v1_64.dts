@@ -550,7 +550,7 @@
        regulator-max-microvolt = <3000000>;
 };
 
-/* wangzhi12@oplus.com, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
+/* wangzhi12, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
 /* ifdef OPLUS_FEATURE_FINGERPRINT */
 &oplus_fp_common {
     compatible = "oplus,fp_common";

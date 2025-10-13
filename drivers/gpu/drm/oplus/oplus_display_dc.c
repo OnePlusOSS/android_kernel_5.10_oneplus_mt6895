@@ -85,7 +85,7 @@ int oplus_display_panel_set_dim_dc_alpha(void *buf)
 	return 0;
 }
 
-MODULE_AUTHOR("Xiaolei Gao <gaoxiaolei@oplus.com>");
+MODULE_AUTHOR("Xiaolei Gao");
 MODULE_DESCRIPTION("OPLUS dc device");
 MODULE_LICENSE("GPL v2");
 

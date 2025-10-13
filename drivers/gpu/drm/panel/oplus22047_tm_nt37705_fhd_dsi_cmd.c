@@ -2098,6 +2098,6 @@ static void __exit lcm_drv_exit(void)
 module_init(lcm_drv_init);
 module_exit(lcm_drv_exit);
 
-MODULE_AUTHOR("linzhenghe <linzhenghe@oplus.com>");
+MODULE_AUTHOR("linzhenghe");
 MODULE_DESCRIPTION("oplus22047,tm,nt37705,OLED Driver");
 MODULE_LICENSE("GPL v2");

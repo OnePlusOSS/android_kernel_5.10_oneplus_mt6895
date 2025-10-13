@@ -33954,7 +33954,7 @@ static kal_uint16 addr_data_pair_cus3_hm2[] = {
 static kal_uint16 addr_data_pair_cus4_hm2_otp_sensor[] = {
 //===================================================
 // product: HM6sx
-// customer: realme
+// customer: oplus
 // provider: SONG
 // date : 20220711
 // reference version :

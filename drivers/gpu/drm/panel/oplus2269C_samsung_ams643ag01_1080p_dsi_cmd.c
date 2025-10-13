@@ -965,6 +965,9 @@ static int lcm_setbacklight_cmdq(void *dsi, dcs_write_gce cb,
 		if (aod_state == 1) {
 			cb(dsi, handle, post_backlight_on1, ARRAY_SIZE(post_backlight_on1));
 		}
+	} else if(aod_state == 1) {
+		pr_info("enter aod mode, ignore set backlight to %d\n", level);
+		cb(dsi, handle, post_backlight_on1, ARRAY_SIZE(post_backlight_on1));
 	} else if (level <= BRIGHTNESS_HALF){
 	    if(flag_hbm == 1){
 			bl_tb1[1] = 0x20;

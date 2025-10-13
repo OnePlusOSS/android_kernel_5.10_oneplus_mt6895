@@ -49,6 +49,26 @@ static struct dmabuf_info bufInfo[HW_CORE_NUMBER];
 int jpg_dbg_level;
 module_param(jpg_dbg_level, int, 0644);
 
+static void jpeg_drv_hybrid_dec_dump_register_setting(int id)
+{
+	unsigned int regs[8];
+	int i = 0, j = 0;
+
+	JPEG_LOG(0, "start dump id: %d", id);
+	for (i = 0x90; i < 0x370; i += 32) {
+		for (j = 0; j < 8; j++)
+			regs[j] = IMG_REG_READ(JPEG_HYBRID_DEC_BASE(id) + i + j * 4);
+
+		JPEG_LOG(0, "0x%03x: 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x",
+			 i, regs[0], regs[1], regs[2], regs[3],
+			 regs[4], regs[5], regs[6], regs[7]);
+	}
+	for (i = 0; i < 6; i++)
+		regs[i] = IMG_REG_READ(JPEG_HYBRID_DEC_BASE(id) + 0x370 + i * 4);
+	JPEG_LOG(0, "0x370: 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x 0x%08x",
+		 regs[0], regs[1], regs[2], regs[3], regs[4], regs[5]);
+}
+
 static int jpeg_isr_hybrid_dec_lisr(int id)
 {
 	unsigned int tmp = 0;
@@ -361,10 +381,10 @@ static int jpeg_drv_hybrid_dec_lock(int *hwid)
 			continue;
 		} else {
 			*hwid = id;
-			dec_hwlocked[id] = true;
 			JPEG_LOG(1, "jpeg dec get %d HW core", id);
 			_jpeg_hybrid_dec_int_status[id] = 0;
 			jpeg_drv_hybrid_dec_power_on(id);
+			dec_hwlocked[id] = true;
 			enable_irq(gJpegqDev.hybriddecIrqId[id]);
 			break;
 		}
@@ -386,10 +406,10 @@ static void jpeg_drv_hybrid_dec_unlock(unsigned int hwid)
 	if (!dec_hwlocked[hwid]) {
 		JPEG_LOG(0, "try to unlock a free core %d", hwid);
 	} else {
-		dec_hwlocked[hwid] = false;
-		JPEG_LOG(1, "jpeg dec HW core %d is unlocked", hwid);
-		jpeg_drv_hybrid_dec_power_off(hwid);
 		disable_irq(gJpegqDev.hybriddecIrqId[hwid]);
+		dec_hwlocked[hwid] = false;
+		jpeg_drv_hybrid_dec_power_off(hwid);
+		JPEG_LOG(1, "jpeg dec HW core %d is unlocked", hwid);
 		jpg_dmabuf_free_iova(bufInfo[hwid].i_dbuf,
 			bufInfo[hwid].i_attach,
 			bufInfo[hwid].i_sgt);
@@ -600,9 +620,19 @@ static int jpeg_hybrid_dec_ioctl(unsigned int cmd, unsigned long arg,
 					hybrid_dec_wait_queue[hwid],
 					_jpeg_hybrid_dec_int_status[hwid],
 					timeout_jiff);
-				if (ret == 0)
-					JPEG_LOG(0,
-					"JPEG Hybrid Dec Wait timeout!");
+				if (ret == 0) {
+					JPEG_LOG(0, "JPEG Hybrid Dec Wait timeout!");
+					mutex_lock(&jpeg_hybrid_dec_lock);
+					if (dec_hwlocked[hwid]) {
+						jpeg_drv_hybrid_dec_dump_register_setting(hwid);
+
+						/*trigger smi dump to get more info.*/
+						mtk_smi_dbg_hang_detect("JPEG DEC");
+					} else {
+						JPEG_LOG(0, "wait dec_hwlocked hw: %d", hwid);
+					}
+					mutex_unlock(&jpeg_hybrid_dec_lock);
+				}
 				if (ret < 0) {
 					waitfailcnt++;
 					JPEG_LOG(0,

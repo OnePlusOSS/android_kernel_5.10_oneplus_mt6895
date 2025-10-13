@@ -2938,6 +2938,9 @@ static irqreturn_t dpmaif_isr(int irq, void *data)
 static int dpmaif_rx_buf_init(struct dpmaif_rx_queue *rxq)
 {
 	int ret = 0;
+#ifdef PIT_USING_CACHE_MEM
+	unsigned int retry;
+#endif
 
 	/* PIT buffer init */
 	rxq->pit_size_cnt = dpmaif_ctrl->dl_pit_entry_size;
@@ -2964,8 +2967,16 @@ static int dpmaif_rx_buf_init(struct dpmaif_rx_queue *rxq)
 	}
 #else
 	CCCI_BOOTUP_LOG(-1, TAG, "Using cacheable PIT memory\r\n");
-	rxq->pit_base = kmalloc((rxq->pit_size_cnt
-			* sizeof(struct dpmaifq_normal_pit)), GFP_KERNEL);
+
+	for (retry = 0; retry < 5; retry++) {
+		rxq->pit_base = kmalloc((rxq->pit_size_cnt
+			* sizeof(struct dpmaifq_normal_pit)), GFP_KERNEL|__GFP_RETRY_MAYFAIL);
+		if (rxq->pit_base)
+			break;
+		CCCI_ERROR_LOG(-1, TAG, "alloc PIT memory fail %d\n", retry);
+		mdelay(1000);
+	}
+        CCCI_ERROR_LOG(-1, TAG, "alloc PIT memory end retry %d\n", retry);
 	if (!rxq->pit_base) {
 		CCCI_ERROR_LOG(-1, TAG, "alloc PIT memory fail\r\n");
 		return LOW_MEMORY_PIT;

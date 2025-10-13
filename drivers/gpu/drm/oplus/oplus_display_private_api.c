@@ -1892,4 +1892,4 @@ MODULE_PARM_DESC(oplus_lcm_id2, "mediatek-drm.oplus_lcm_id2=<oplus_lcm_id2>");
 //module_init(oplus_display_private_api_init);
 //module_exit(oplus_display_private_api_exit);
 //MODULE_LICENSE("GPL v2");
-//MODULE_AUTHOR("Hujie <hujie@oplus.com>");
+//MODULE_AUTHOR("Hujie");

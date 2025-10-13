@@ -690,6 +690,7 @@ static struct mtk_panel_params ext_params_60Hz = {
 	.oplus_ofp_hbm_on_delay = 0,
 	.oplus_ofp_pre_hbm_off_delay = 2,
 	.oplus_ofp_hbm_off_delay = 0,
+	.oplus_te_count = 1,
 	.oplus_ofp_need_to_sync_data_in_aod_unlocking = true,
 	.oplus_ofp_aod_off_insert_black = 1,
 	.oplus_ofp_aod_off_black_frame_total_time = 42,
@@ -699,6 +700,7 @@ static struct mtk_panel_params ext_params_60Hz = {
 		.apollo_limit_superior_us = 10000, .apollo_limit_inferior_us = 16600,
 		.apollo_transfer_time_us = 8200,
 	},
+	.first_prete_delay_time = 7000,
 	.panel_bpp = 10,
 };
 
@@ -795,6 +797,7 @@ static struct mtk_panel_params ext_params_90Hz = {
     .oplus_ofp_hbm_on_delay = 0,
     .oplus_ofp_pre_hbm_off_delay = 2,
     .oplus_ofp_hbm_off_delay = 0,
+    .oplus_te_count = 1,
     .oplus_ofp_need_to_sync_data_in_aod_unlocking = true,
     .oplus_ofp_aod_off_insert_black = 1,
     .oplus_ofp_aod_off_black_frame_total_time = 42,
@@ -804,6 +807,7 @@ static struct mtk_panel_params ext_params_90Hz = {
 	.apollo_limit_superior_us = 8400, .apollo_limit_inferior_us = 11100,
 	.apollo_transfer_time_us = 8400,
     },
+    .first_prete_delay_time = 7000,
     .panel_bpp = 10,
 };
 
@@ -900,6 +904,7 @@ static struct mtk_panel_params ext_params_120Hz = {
     .oplus_ofp_hbm_on_delay = 0,
     .oplus_ofp_pre_hbm_off_delay = 2,
     .oplus_ofp_hbm_off_delay = 0,
+    .oplus_te_count = 1,
     .oplus_ofp_need_to_sync_data_in_aod_unlocking = true,
     .oplus_ofp_aod_off_insert_black = 1,
     .oplus_ofp_aod_off_black_frame_total_time = 42,

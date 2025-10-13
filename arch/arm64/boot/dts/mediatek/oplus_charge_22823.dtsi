@@ -91,7 +91,7 @@
 	qcom,hv_flashled_support;
 	qcom,chargerid_support;
 	qcom,smart_chg_soh_support;
-	oplus,aging_ffc_version = <1>;
+	oplus_spec,dec-vol-fv-mv = <40>;
 	qcom,smart_charging_screenoff;
 	qcom,support_usbtemp_protect_v2;
 	qcom,usbtemp_batt_temp_low = <50>;

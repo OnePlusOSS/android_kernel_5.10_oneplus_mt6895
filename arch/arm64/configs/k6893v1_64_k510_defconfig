@@ -291,7 +291,7 @@ CONFIG_MTK_SDA=y
 CONFIG_MTK_IRQ_DBG=m
 CONFIG_MTK_CQDMA=m
 
-#/* wangzhi12@oplus.com, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
+#/* wangzhi12, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
 #ifdef OPLUS_FEATURE_FINGERPRINT
 CONFIG_OPLUS_FINGERPRINT=y
 CONFIG_OPLUS_FINGERPRINT_GKI_ENABLE=y

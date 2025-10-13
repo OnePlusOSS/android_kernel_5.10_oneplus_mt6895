@@ -930,6 +930,9 @@
 		status = "okay";
 		compatible = "oplus,sy6610-fastcg";
 		reg = <0x06 0>;
+		oplus,full_limit_curr_support;
+		oplus,vooc_1time_full_volt = <4491>;
+		oplus,vooc_ntime_full_volt = <4490>;
 		qcom,oplus_batt_4250mv;
 		qcom,support_vooc_by_normal_charger_path;
 		qcom,vooc_fw_update_newmethod;
@@ -2271,6 +2274,7 @@
 		oplus,ic_index = <0>;
 
 		qcom,mps_otg_en-gpio = <&pio 106 0x00>;
+		support_icl_optimization;
 
 		pinctrl-names = "mps_otg_en_active", "mps_otg_en_sleep", "mps_otg_en_default";
 		pinctrl-0 = <&mps_otg_en_active>;
@@ -2523,12 +2527,17 @@
 	};
 };
 
+&mt6375_chg {
+	support_icl_optimization;
+};
+
 &lk_charger {
 	charger_by_buckboost;
 	support_tuv_authentication;
 	charger_no_wiress;
         support_sdp_screenoff;
 	sub_board_temp_support;
+	support_chg_time_cnt;
 
 	led_brightness = <102>;
 	max_charger_voltage = <15000000>;
@@ -2541,6 +2550,7 @@
 	ta_ac_charger_current = <1500000>;
 	pd_charger_current = <500000>;
         en_vol_ctrl_vibrate = <3200>;
+	support_icl_optimization;
 };
 
 /*&phy_tuning {

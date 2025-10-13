@@ -169,6 +169,7 @@
 					OPLUS_IC_FUNC_BUCK_SET_AICL_POINT
 					OPLUS_IC_FUNC_SET_OTG_BOOST_CURR_LIMIT
 					OPLUS_IC_FUNC_GET_TYPEC_ROLE
+					OPLUS_IC_FUNC_BUCK_GET_USB_AICL_ENHANCE
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -298,6 +299,7 @@
 	/* ntc_resistance:100k internal_pull_up:100k voltage:1.84v */
 	oplus,ntc_temp_volt_1840mv;
 
+	oplus,usb_aicl_enhance;
 	oplus,ic_type = <OPLUS_CHG_IC_BUCK>;
 	oplus,ic_index = <0>;
 

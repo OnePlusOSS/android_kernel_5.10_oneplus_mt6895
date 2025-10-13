@@ -429,9 +429,9 @@ static struct SET_PD_BLOCK_INFO_T imgsensor_pd_info = {
     .i4BlockNumY = 0,
     .i4LeFirst = 0,
     .iMirrorFlip = 0,
-    .i4Crop = { {0, 0}, {0, 0}, {8, 304}, {0, 0}, {0, 0},
-                {0, 0}, {0, 0}, {0, 0}, {0, 0}, {824, 620},
-                {8, 304}, {0, 0},{8, 304}, {0, 0}, {824, 620},
+    .i4Crop = { {0, 0}, {0, 0}, {0, 384}, {0, 384}, {0, 0},
+                {0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
+                {8, 304}, {0, 0},{8, 304}, {0, 0}, {0, 0},
                 {8, 8}, {2048, 1536}},
 };
 
@@ -2484,7 +2484,7 @@ static int feature_control(struct subdrv_ctx *ctx, MSDK_SENSOR_FEATURE_ENUM feat
 	MSDK_SENSOR_REG_INFO_STRUCT *sensor_reg_data =
 		(MSDK_SENSOR_REG_INFO_STRUCT *) feature_para;
 
-	// LOG_INF("feature_id = %d\n", feature_id);
+	LOG_INF("feature_id = %d\n", feature_id);
 	switch (feature_id) {
 	case SENSOR_FEATURE_GET_SENSOR_OTP_ALL:
 		{
@@ -2498,6 +2498,16 @@ static int feature_control(struct subdrv_ctx *ctx, MSDK_SENSOR_FEATURE_ENUM feat
 			*feature_para_len = sizeof(otp_data);
 			break;
 		}
+	case SENSOR_FEATURE_GET_CUST_PIXEL_RATE:
+        LOG_INF("SENSOR_FEATURE_GET_CUST_PIXEL_RATE setting = %d", *feature_data);
+        switch (*feature_data) {
+            case SENSOR_SCENARIO_ID_NORMAL_PREVIEW:
+                *(MUINT32 *)(uintptr_t)(*(feature_data + 1)) = 956000000;
+                break;
+            default:
+                break;
+	}
+	break;
 	case SENSOR_FEATURE_GET_OUTPUT_FORMAT_BY_SCENARIO:
 		switch (*feature_data) {
 		case SENSOR_SCENARIO_ID_NORMAL_CAPTURE:

@@ -157,7 +157,6 @@ static bool get_pwm_status(void)
 		return false;
 }
 
-#ifdef PANEL_SUPPORT_READBACK
 static int lcm_dcs_read(struct lcm *ctx, u8 cmd, void *data, size_t len)
 {
 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
@@ -190,7 +189,6 @@ static void lcm_panel_get_data(struct lcm *ctx)
 			ret, buffer[0] | (buffer[1] << 8));
 	}
 }
-#endif
 
 static void lcm_dcs_write(struct lcm *ctx, const void *data, size_t len)
 {
@@ -261,6 +259,17 @@ static int lcm_panel_vufs_ldo_enable(struct device *dev)
         return retval;
 }
 
+static unsigned int lcm_get_reg_vufs_ldo(void)
+{
+	unsigned int volt = 0;
+
+	if (regulator_is_enabled(vufs_ldo))
+		/* regulator_get_voltage return volt with uV */
+		volt = regulator_get_voltage(vufs_ldo);
+
+	return volt;
+}
+
 static int lcm_panel_vufs_ldo_disable(struct device *dev)
 {
 	int ret = 0;
@@ -322,6 +331,17 @@ static int lcm_panel_wl2868c_ldo_enable(struct device *dev)
 	DISP_INFO("get lcm_panel_wl2868c_ldo_enable\n");
 
         return retval;
+}
+
+static unsigned int lcm_get_reg_wl2868c_ldo(void)
+{
+	unsigned int volt = 0;
+
+	if (regulator_is_enabled(wl2868c_ldo))
+		/* regulator_get_voltage return volt with uV */
+		volt = regulator_get_voltage(wl2868c_ldo);
+
+	return volt;
 }
 
 static int lcm_panel_wl2868c_ldo_disable(struct device *dev)
@@ -659,6 +679,7 @@ static struct mtk_panel_params ext_params[MODE_NUM] = {
 	.cust_esd_check = 0,
 	.esd_check_enable = 1,
 	.esd_check_multi = 1,
+	.move_esd_readdate_back = 1,
 	.lcm_esd_check_table[0] = {
 		.cmd = 0x0A, .count = 1, .para_list[0] = 0x9C, .mask_list[0] = 0xDC,
 	},
@@ -769,6 +790,7 @@ static struct mtk_panel_params ext_params[MODE_NUM] = {
 	.cust_esd_check = 0,
 	.esd_check_enable = 1,
 	.esd_check_multi = 1,
+	.move_esd_readdate_back = 1,
 	.lcm_esd_check_table[0] = {
 		.cmd = 0x0A, .count = 1, .para_list[0] = 0x9C, .mask_list[0] = 0xDC,
 	},
@@ -880,6 +902,7 @@ static struct mtk_panel_params ext_params[MODE_NUM] = {
 	.cust_esd_check = 0,
 	.esd_check_enable = 1,
 	.esd_check_multi = 1,
+	.move_esd_readdate_back = 1,
 	.lcm_esd_check_table[0] = {
 		.cmd = 0x0A, .count = 1, .para_list[0] = 0x9C, .mask_list[0] = 0xDC,
 	},
@@ -1456,6 +1479,51 @@ static int lcm_panel_reset(struct drm_panel *panel)
 
 	return 0;
 }
+
+void lcm_read_info(struct drm_panel *panel, int read_ic)
+{
+	unsigned int ret = 0;
+	struct lcm *ctx = panel_to_lcm(panel);
+
+	DISP_DEBUG("%s++\n",__func__);
+	/*get iovcc 1.8*/
+	ret = lcm_get_reg_vufs_ldo();
+	if(ret > 0)
+		DISP_DEBUG("vufs_ldo voltage = %d\n",ret);
+	else
+		DISP_ERR("vufs_ldo get voltage failed\n");
+
+	/*get vci 3.0*/
+	ret = lcm_get_reg_wl2868c_ldo();
+	if(ret > 0)
+		DISP_DEBUG("wl2868c_ldo voltage = %d\n",ret);
+	else
+		DISP_ERR("wl2868c_ldo get voltage failed\n");
+
+	/* vddr1p2 GPIO enable */
+	if (IS_ERR(ctx->vddr1p2_enable_gpio))
+		DISP_ERR("get vddr1p2 gpio failed\n");
+	else {
+		ret = gpiod_get_value(ctx->vddr1p2_enable_gpio);
+		DISP_DEBUG("vddr1p2_gpio = %d\n", ret);
+	}
+
+	/* Reset GPIO enable */
+	if (IS_ERR(ctx->reset_gpio))
+		DISP_ERR("get reset gpio failed\n");
+	else {
+		ret = gpiod_get_value(ctx->reset_gpio);
+		DISP_DEBUG("reset_gpio = %d\n", ret);
+	}
+	DISP_ERR("read_ic = %d\n", read_ic);
+	/* DDIC register detect */
+	if (read_ic > 0) {
+		lcm_panel_get_data(ctx);
+	}
+	DISP_DEBUG("%s--\n",__func__);
+	return;
+}
+
 static int lcm_panel_poweron(struct drm_panel *panel)
 {
 	struct lcm *ctx = panel_to_lcm(panel);
@@ -1893,6 +1961,7 @@ static struct mtk_panel_funcs ext_funcs = {
 #if 1
 	.set_hbm = lcm_set_hbm,
 	.hbm_set_cmdq = panel_hbm_set_cmdq,
+	.oplus_get_info = lcm_read_info,
 	.doze_disable = panel_doze_disable,
 	.doze_enable = panel_doze_enable,
 	.set_aod_light_mode = panel_set_aod_light_mode,
@@ -2150,6 +2219,6 @@ static void __exit lcm_drv_exit(void)
 module_init(lcm_drv_init);
 module_exit(lcm_drv_exit);
 
-MODULE_AUTHOR("linzhenghe <linzhenghe@oplus.com>");
+MODULE_AUTHOR("linzhenghe");
 MODULE_DESCRIPTION("oplus22047,boe,nt37705,OLED Driver");
 MODULE_LICENSE("GPL v2");

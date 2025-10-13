@@ -1208,6 +1208,11 @@
 &pdc {
 	pd_vbus_upper_bound = <12000000>;
 };
+
+&memory_ssmr_features {
+	svp-page-based-size = <0 0x1D000000>;
+};
+
 &mddriver {
     ref_args = "md_disable";
 };

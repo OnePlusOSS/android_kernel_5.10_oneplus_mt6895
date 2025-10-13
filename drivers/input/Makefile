@@ -30,7 +30,7 @@ obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 
 obj-$(CONFIG_RMI4_CORE)		+= rmi4/
 obj-y += hall/
-#/* wangzhi12@oplus.com, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
+#/* wangzhi12, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
 #ifdef OPLUS_FEATURE_FINGERPRINT
 obj-$(CONFIG_OPLUS_FINGERPRINT)  += fp_drivers/
 obj-$(CONFIG_UFF_FINGERPRINT)  += uff_fp_drivers/

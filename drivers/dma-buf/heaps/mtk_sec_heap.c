@@ -191,6 +191,11 @@ static int sec_buf_priv_dump(const struct dma_buf *dmabuf,
 
 static bool region_heap_is_aligned(struct dma_heap *heap)
 {
+	if (strstr(dma_heap_get_name(heap), "mtk_wfd_region")) {
+		pr_info("%s, force wfd region to aligned\n", __func__);
+		return true;
+	}
+
 	if (strstr(dma_heap_get_name(heap), "aligned"))
 		return true;
 

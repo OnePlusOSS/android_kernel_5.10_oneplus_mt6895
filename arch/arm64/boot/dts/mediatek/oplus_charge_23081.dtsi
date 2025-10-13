@@ -46,6 +46,7 @@
 		oplus,ic_index = <0>;
 		oplus,batt_num = <1>;
 		oplus,mtk_gauge_power_sel_support;
+		oplus,mtk_gauge_cali_track_support;
 	};
 };
 
@@ -182,6 +183,7 @@
 					OPLUS_IC_FUNC_BUCK_SET_AICL_POINT
 					OPLUS_IC_FUNC_SET_OTG_BOOST_CURR_LIMIT
 					OPLUS_IC_FUNC_GET_TYPEC_ROLE
+					OPLUS_IC_FUNC_BUCK_GET_USB_AICL_ENHANCE
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -259,6 +261,7 @@
 					OPLUS_IC_FUNC_GAUGE_GET_QMAX
 					OPLUS_IC_FUNC_GAUGE_GET_QMAX_PASSED_Q
 					OPLUS_IC_FUNC_GAUGE_SET_BATTERY_CURVE
+					OPLUS_IC_FUNC_GAUGE_GET_GAUGE_CAR_C
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -355,6 +358,8 @@
 	/* ntc_resistance:100k internal_pull_up:100k voltage:1.84v */
 	oplus,ntc_temp_volt_1840mv;
 
+	oplus,usb_aicl_enhance;
+
 	oplus,ic_type = <OPLUS_CHG_IC_BUCK>;
 	oplus,ic_index = <0>;
 
@@ -383,6 +388,7 @@
 		compatible = "oplus,nu2112a";
 		reg = <0x6E>;
 
+		oplus,osc_ctrl_support;
 		ocp_reg = <0x2E>;
 		ovp_reg = <0x70>;
 		#include "mediatek/oplus_charge_23081_charging_curve.dtsi"
@@ -417,6 +423,7 @@
 		compatible = "oplus,nu2112a-slave";
 		reg = <0x6E>;
 
+		oplus,osc_ctrl_support;
 		ocp_reg = <0x2E>;
 		ovp_reg = <0x70>;
 		oplus_nu2112a_slave_cp: oplus,nu2112a_slave_cp {
@@ -729,6 +736,12 @@
 						375 395 CP_CURR_LIMIT_7BIT_12_6A 2 0
 						385 420 CP_CURR_LIMIT_7BIT_8_0A 3 1
 						410 440 CP_CURR_LIMIT_7BIT_6_0A 3 2 >;
+
+		oplus,bypass_strategy_name = "cgcl";
+		oplus,bypass_strategy_data = <OPLUS_STRATEGY_USE_SHELL_TEMP
+						0   350 CP_CURR_LIMIT_7BIT_4_0A  1 0
+						330 370 CP_CURR_LIMIT_7BIT_3_4A  2 0
+						350 440 CP_CURR_LIMIT_7BIT_2_4A  2 1>;
 
 		oplus_virtual_vphy: oplus,virtual_vphy {
 			compatible = "oplus,virtual_vphy";

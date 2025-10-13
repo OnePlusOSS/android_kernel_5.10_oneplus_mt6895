@@ -341,6 +341,7 @@ static int dpmaif_bat_init(struct dpmaif_bat_request *bat_req,
 {
 	int sw_buf_size = is_frag ? sizeof(struct dpmaif_bat_page_t) :
 		sizeof(struct dpmaif_bat_skb_t);
+        int retry = 0;
 
 	bat_req->bat_size_cnt = dpmaif_ctrl->dl_bat_entry_size;
 	bat_req->skb_pkt_cnt = bat_req->bat_size_cnt;
@@ -349,24 +350,39 @@ static int dpmaif_bat_init(struct dpmaif_bat_request *bat_req,
 
 	/* alloc buffer for HW && AP SW */
 	if (dpmaif_ctrl->dl_bat_size > PAGE_SIZE) {
+            for (retry=0;retry<5;retry++) {
 		bat_req->bat_base = dma_alloc_coherent(
 			ccci_md_get_dev_by_id(dpmaif_ctrl->md_id),
 			(bat_req->bat_size_cnt * sizeof(struct dpmaif_bat_t)),
 			&bat_req->bat_phy_addr, GFP_KERNEL);
+                if (bat_req->bat_base)
+                    break;
+                mdelay(1000);
+            }
 #ifdef DPMAIF_DEBUG_LOG
 		CCCI_HISTORY_LOG(-1, TAG, "bat dma_alloc_coherent\n");
 #endif
 	} else {
-		bat_req->bat_base = dma_pool_alloc(dpmaif_ctrl->rx_bat_dmapool,
-			GFP_KERNEL, &bat_req->bat_phy_addr);
+                for (retry=0;retry<5;retry++) {
+		    bat_req->bat_base = dma_pool_alloc(dpmaif_ctrl->rx_bat_dmapool,
+			    GFP_KERNEL, &bat_req->bat_phy_addr);
+                if (bat_req->bat_base)
+                    break;
+                    mdelay(1000);
+                }
 #ifdef DPMAIF_DEBUG_LOG
 		CCCI_HISTORY_LOG(-1, TAG, "bat dma_pool_alloc\n");
 #endif
 	}
 	/* alloc buffer for AP SW to record skb information */
+        for (retry = 0; retry < 5; retry++) {
 
 	bat_req->bat_skb_ptr = kzalloc((bat_req->skb_pkt_cnt *
 		sw_buf_size), GFP_KERNEL);
+            if (bat_req->bat_skb_ptr)
+                break;
+             mdelay(1000);
+        }
 	if (bat_req->bat_base == NULL || bat_req->bat_skb_ptr == NULL) {
 		CCCI_ERROR_LOG(-1, TAG, "bat request fail\n");
 		return LOW_MEMORY_BAT;

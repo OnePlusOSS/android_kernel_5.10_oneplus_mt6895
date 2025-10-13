@@ -497,6 +497,7 @@ static struct LCM_setting_table AOD_off_setting[] = {
         {REGFLAG_CMD, 4, {0xFF, 0x08, 0x38, 0x00}},
         {REGFLAG_CMD, 1, {0x38}},
         {REGFLAG_CMD, 5, {0x51, 0x00, 0x00, 0x00, 0x00}},
+        {REGFLAG_DELAY, 10, {}},
 };
 
 static struct LCM_setting_table AOD_on_setting[] = {

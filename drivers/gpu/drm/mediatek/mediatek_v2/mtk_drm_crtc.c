@@ -6482,7 +6482,7 @@ void mtk_crtc_start_event_loop(struct drm_crtc *crtc)
 
 	priv = mtk_crtc->base.dev->dev_private;
 #ifdef OPLUS_FEATURE_DISPLAY
-	if (is_first_prete && first_prete_delay_time != 0 && cur_fps == 60 && pre_fps != cur_fps) {
+	if (is_first_prete && first_prete_delay_time != 0 && (cur_fps == 60 || cur_fps == 90) && pre_fps != cur_fps) {
 		cb_data = kmalloc(sizeof(*cb_data), GFP_KERNEL);
 		if (!cb_data) {
 			DDPPR_ERR("cb data creation failed\n");

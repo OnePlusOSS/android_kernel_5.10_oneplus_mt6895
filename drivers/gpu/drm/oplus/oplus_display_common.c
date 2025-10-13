@@ -771,7 +771,7 @@ int oplus_display_panel_get_panel_type(void *buf)
 	return 0;
 }
 
-MODULE_AUTHOR("Xiaolei Gao <gaoxiaolei@oplus.com>");
+MODULE_AUTHOR("Xiaolei Gao");
 MODULE_DESCRIPTION("OPLUS common device");
 MODULE_LICENSE("GPL v2");
 

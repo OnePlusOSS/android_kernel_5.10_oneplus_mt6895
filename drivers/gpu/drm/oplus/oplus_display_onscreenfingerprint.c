@@ -1873,6 +1873,6 @@ ssize_t oplus_ofp_get_fake_aod_attr(struct kobject *obj,
 	return sprintf(buf, "%u\n", p_oplus_ofp_params->fake_aod_mode);
 }
 
-MODULE_AUTHOR("Liuhe Zhong <zhongliuhe@oplus.com>");
+MODULE_AUTHOR("Liuhe Zhong");
 MODULE_DESCRIPTION("OPLUS ofp device");
 MODULE_LICENSE("GPL v2");

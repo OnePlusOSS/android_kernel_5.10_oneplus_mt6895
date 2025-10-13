@@ -80,6 +80,11 @@ struct kmem_cache *blk_requestq_cachep;
  * Controlling structure to kblockd
  */
 static struct workqueue_struct *kblockd_workqueue;
+#ifdef CONFIG_BLK_MQ_USE_LOCAL_THREAD
+static bool block_oplus_ux_workqueue_enable = true;
+static struct workqueue_struct *oplus_kblockd_workqueue = NULL;
+module_param_named(block_oplus_ux_workqueue_enable, block_oplus_ux_workqueue_enable, bool, 0660);
+#endif
 
 /**
  * blk_queue_flag_set - atomically set a queue flag
@@ -1750,6 +1755,11 @@ EXPORT_SYMBOL(kblockd_schedule_work);
 int kblockd_mod_delayed_work_on(int cpu, struct delayed_work *dwork,
 				unsigned long delay)
 {
+#ifdef CONFIG_BLK_MQ_USE_LOCAL_THREAD
+	if (oplus_kblockd_workqueue && likely(block_oplus_ux_workqueue_enable))
+		return mod_delayed_work_on(cpu, oplus_kblockd_workqueue, dwork, delay);
+	else
+#endif
 	return mod_delayed_work_on(cpu, kblockd_workqueue, dwork, delay);
 }
 EXPORT_SYMBOL(kblockd_mod_delayed_work_on);
@@ -1897,9 +1907,8 @@ int __init blk_dev_init(void)
 
 #ifdef CONFIG_BLK_MQ_USE_LOCAL_THREAD
 	if (config && strcmp(config, "y") == 0)
-		kblockd_workqueue = alloc_workqueue("kblockd",
+		oplus_kblockd_workqueue = alloc_workqueue("opluskblockd",
 					    WQ_MEM_RECLAIM | WQ_HIGHPRI | WQ_UX | WQ_UNBOUND, 0);
-	else
 #endif
 	/* used for unplugging and affects IO latency/throughput - HIGHPRI */
 	kblockd_workqueue = alloc_workqueue("kblockd",

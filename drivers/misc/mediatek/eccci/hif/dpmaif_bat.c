@@ -300,6 +300,7 @@ static int dpmaif_bat_init(struct dpmaif_bat_request *bat_req,
 {
 	int sw_buf_size = is_frag ? sizeof(struct dpmaif_bat_page_t) :
 		sizeof(struct dpmaif_bat_skb_t);
+	unsigned int retry = 0;
 
 	bat_req->bat_size_cnt = DPMAIF_DL_BAT_ENTRY_SIZE;
 	bat_req->skb_pkt_cnt = bat_req->bat_size_cnt;
@@ -324,8 +325,14 @@ static int dpmaif_bat_init(struct dpmaif_bat_request *bat_req,
 #endif
 	/* alloc buffer for AP SW to record skb information */
 
-	bat_req->bat_skb_ptr = kzalloc((bat_req->skb_pkt_cnt *
-		sw_buf_size), GFP_KERNEL);
+	for (retry = 0; retry < 5; retry++) {
+		bat_req->bat_skb_ptr = kzalloc((bat_req->skb_pkt_cnt *
+		sw_buf_size), GFP_KERNEL|__GFP_RETRY_MAYFAIL);
+		if (bat_req->bat_skb_ptr)
+			break;
+		CCCI_ERROR_LOG(-1, TAG, "alloc BAT memory fail retry%d\n", retry);
+		mdelay(1000);
+	}
 	if (bat_req->bat_base == NULL || bat_req->bat_skb_ptr == NULL) {
 		CCCI_ERROR_LOG(-1, TAG, "bat request fail\n");
 		return LOW_MEMORY_BAT;

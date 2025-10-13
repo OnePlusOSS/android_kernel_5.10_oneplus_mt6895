@@ -2540,6 +2540,6 @@ module_init(lcm_drv_init);
 module_exit(lcm_drv_exit);
 
 
-MODULE_AUTHOR("lianghao <lianghao1@oplus.com>");
+MODULE_AUTHOR("lianghao");
 MODULE_DESCRIPTION("oplus22823,tm,nt37705,OLED Driver");
 MODULE_LICENSE("GPL v2");

@@ -446,7 +446,7 @@
 	//#endif /* OPLUS_FEATURE_CAMERA_COMMON */
 
     //#ifdef OPLUS_FEATURE_FINGERPRINT
-    /* wangzhi12@oplus.com, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
+    /* wangzhi12, BSP.Biometrics.Fingerprint, 2021-07-29, for fingerprint */
     oplus_fp_common:oplus_fp_common { //Slave driver and CS ID
     };
 

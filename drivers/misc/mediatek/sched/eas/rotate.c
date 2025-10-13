@@ -21,6 +21,9 @@
 #include "sched_sys_common.h"
 #include "eas_plus.h"
 #include "eas_trace.h"
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#endif
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
 #include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
 #endif
@@ -206,6 +209,11 @@ void task_check_for_rotation(struct rq *src_rq)
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
 		if (fbg_skip_migration(rq->curr, i, src_cpu))
+			continue;
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+		if (test_task_ux(rq->curr))
 			continue;
 #endif
 

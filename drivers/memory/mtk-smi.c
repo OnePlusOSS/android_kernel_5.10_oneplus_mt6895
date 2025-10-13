@@ -233,20 +233,32 @@ static void power_reset_imp(struct mtk_smi_pd *smi_pd)
 void mtk_smi_common_bw_set(struct device *dev, const u32 port, const u32 val)
 {
 	struct mtk_smi_larb *larb = dev_get_drvdata(dev);
-	struct mtk_smi *common = dev_get_drvdata(larb->smi_common);
+	u32 orig_val, write_val;
 
-	if (port >= SMI_COMMON_LARB_NR_MAX) { /* max: 8 input larbs. */
-		dev_err(dev, "%s port invalid:%d, val:%u.\n", __func__,
+	if (larb->smi_common) {
+		struct mtk_smi *common = dev_get_drvdata(larb->smi_common);
+		if (port >= SMI_COMMON_LARB_NR_MAX) { /* max: 8 input larbs. */
+			dev_notice(dev, "%s port invalid:%d, val:%u.\n", __func__,
 			port, val);
-		return;
-	}
+			return;
+		}
 
-	if (common->plat->gen == MTK_SMI_GEN3)
-		common->plat->bwl[common->commid * SMI_COMMON_LARB_NR_MAX + port] = val;
-	else if (common->plat->gen == MTK_SMI_GEN2)
-		common->plat->bwl[port] = val;
-	if (atomic_read(&common->ref_count)) {
-		writel(val, common->base + SMI_L1ARB(port));
+		orig_val = common->plat->bwl[common->commid * SMI_COMMON_LARB_NR_MAX + port];
+		write_val = orig_val;
+		write_val &= ~(0x3fff);
+		write_val |= (val & 0x3fff);
+
+		if (log_level & 1 << log_config_bit)
+			pr_info("[SMI]%s val:%#x orig_val:%#x write_val:%#x\n",
+				__func__, val, orig_val, write_val);
+
+		if (common->plat->gen == MTK_SMI_GEN3)
+			common->plat->bwl[common->commid * SMI_COMMON_LARB_NR_MAX + port] = write_val;
+		else if (common->plat->gen == MTK_SMI_GEN2)
+			common->plat->bwl[port] = write_val;
+		if (atomic_read(&common->ref_count)) {
+			writel(write_val, common->base + SMI_L1ARB(port));
+		}
 	}
 }
 EXPORT_SYMBOL_GPL(mtk_smi_common_bw_set);

@@ -28,6 +28,7 @@
 #include <linux/ioctl.h>
 #include <linux/security.h>
 #include <linux/hugetlb.h>
+#include <linux/pgsize_migration.h>
 
 int sysctl_unprivileged_userfaultfd __read_mostly;
 
@@ -358,18 +359,26 @@ static inline long userfaultfd_get_blocking_state(unsigned int flags)
 }
 
 #ifdef CONFIG_SPECULATIVE_PAGE_FAULT
-bool userfaultfd_using_sigbus(struct vm_area_struct *vma)
+bool userfaultfd_using_sigbus(struct vm_fault *vmf)
 {
-	struct userfaultfd_ctx *ctx;
-	bool ret;
+	bool ret = false;
 
 	/*
 	 * Do it inside RCU section to ensure that the ctx doesn't
 	 * disappear under us.
 	 */
 	rcu_read_lock();
-	ctx = rcu_dereference(vma->vm_userfaultfd_ctx.ctx);
-	ret = ctx && (ctx->features & UFFD_FEATURE_SIGBUS);
+	/*
+	 * Ensure that we are not looking at dangling pointer to
+	 * userfaultfd_ctx, which could happen if userfaultfd_release() is
+	 * called and vma is unlinked.
+	 */
+	if (!vma_has_changed(vmf)) {
+		struct userfaultfd_ctx *ctx;
+
+		ctx = rcu_dereference(vmf->vma->vm_userfaultfd_ctx.ctx);
+		ret = ctx && (ctx->features & UFFD_FEATURE_SIGBUS);
+	}
 	rcu_read_unlock();
 	return ret;
 }
@@ -1503,7 +1512,7 @@ static int userfaultfd_register(struct userfaultfd_ctx *ctx,
 		 * the current one has not been updated yet.
 		 */
 		vm_write_begin(vma);
-		WRITE_ONCE(vma->vm_flags, new_flags);
+		WRITE_ONCE(vma->vm_flags, vma_pad_fixup_flags(vma, new_flags));
 		rcu_assign_pointer(vma->vm_userfaultfd_ctx.ctx, ctx);
 		vm_write_end(vma);
 
@@ -1686,7 +1695,7 @@ static int userfaultfd_unregister(struct userfaultfd_ctx *ctx,
 		 * the current one has not been updated yet.
 		 */
 		vm_write_begin(vma);
-		WRITE_ONCE(vma->vm_flags, new_flags);
+		WRITE_ONCE(vma->vm_flags, vma_pad_fixup_flags(vma, new_flags));
 		rcu_assign_pointer(vma->vm_userfaultfd_ctx.ctx, NULL);
 		vm_write_end(vma);
 

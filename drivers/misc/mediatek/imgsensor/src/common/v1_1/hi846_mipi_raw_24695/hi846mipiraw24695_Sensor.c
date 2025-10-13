@@ -2122,7 +2122,7 @@ static void normal_video_setting(void)
 	//Sensor Information////////////////////////////
 	//Sensor	  : Hi-846
 	//Date		  : 2021-06-02
-	//Customer        : OPPO
+	//Customer        : OPLUS
 	//Image size	  : 3264x1836
 	//MCLK/PCLK       : 24MHz /288Mhz
 	//MIPI speed(Mbps): 680Mbps x 4Lane

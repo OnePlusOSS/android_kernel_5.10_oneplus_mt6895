@@ -733,6 +733,7 @@ static struct mtk_panel_params ext_params_60Hz = {
 		.apollo_limit_superior_us = 10000, .apollo_limit_inferior_us = 13596,
 		.apollo_transfer_time_us = 8200,
 	},
+	.first_prete_delay_time = 7000,
 	.panel_bpp = 10,
 };
 
@@ -850,6 +851,7 @@ static struct mtk_panel_params ext_params_90Hz = {
 	.apollo_limit_superior_us = 2910, .apollo_limit_inferior_us = 10000,
 	.apollo_transfer_time_us = 8400,
     },
+    .first_prete_delay_time = 7000,
     .panel_bpp = 10,
 };
 

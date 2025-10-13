@@ -332,7 +332,7 @@ static int boot_mode_proc_show(struct seq_file *p, void *v)
 
 #if 0
 #ifdef OPLUS_BUG_STABILITY
-OPPO_BOOTMODE oplus_boot_mode = OPLUS_NORMAL_BOOT;
+OPLUS_BOOTMODE oplus_boot_mode = OPLUS_NORMAL_BOOT;
 static int oplus_get_boot_mode(char *oplus_boot_mode_char)
 {
 	int  boot_mode_temp = 0;

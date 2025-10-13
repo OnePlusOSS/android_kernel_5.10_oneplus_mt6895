@@ -1452,7 +1452,7 @@ int ufs_ioctl_monitor(struct scsi_device *dev, void __user *buf_user)
 	req = scsi_req(rq);
 
 	cmdlen = COMMAND_SIZE(opcode);
-	if ((VENDOR_SPECIFIC_CDB == opcode) &&(0 == strncmp(dev->vendor, "SAMSUNG ", 8)))
+	if (((VENDOR_SPECIFIC_CDB == opcode) && (0 == strncmp(dev->vendor, "SAMSUNG ", 8))) || ((READ_BUFFER == opcode) && (0 == strncmp(dev->vendor, "YMTC ", 5))))
 		cmdlen = 16;
 
 	/*
