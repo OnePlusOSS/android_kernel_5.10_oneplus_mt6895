@@ -44,6 +44,10 @@ struct bp_thl_priv {
 	int bp_thl_lv;
 	int bp_thl_lv_ext;
 	int bp_thl_stop;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct work_struct soc_work;
+	struct power_supply *psy;
+#endif
 };
 
 static struct bp_thl_priv *bp_thl_data;
@@ -248,8 +252,82 @@ int bp_notify_handler(void *unused)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static void soc_handler(struct work_struct *work)
+{
+	struct power_supply *psy;
+	union power_supply_propval val;
+	int ret, uisoc, bat_status;
+
+	if (!bp_thl_data) {
+		pr_info("[%s] bp_thl_data not init\n", __func__);
+		return;
+	}
+
+	if (!bp_thl_data->psy) {
+		pr_info("[%s] psy not init\n", __func__);
+		return;
+	}
+
+	psy =  bp_thl_data->psy;
+
+	if (strcmp(psy->desc->name, "battery") != 0)
+		return;
+
+	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &val);
+	if (ret)
+		return;
+
+	uisoc = val.intval;
+
+	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_STATUS, &val);
+	if (ret)
+		return;
+
+	bat_status = val.intval;
+
+	if ((bat_status != POWER_SUPPLY_STATUS_CHARGING && bat_status != -1) &&
+		(bp_thl_data->bp_thl_lv == BATTERY_PERCENT_LEVEL_0) &&
+		(uisoc <= bp_thl_data->soc_limit && uisoc >= 0)) {
+		bp_thl_data->bp_thl_lv = BATTERY_PERCENT_LEVEL_1;
+		bp_notify_flag = true;
+		pr_info("bp_notify called, l=%d s=%d soc=%d\n", bp_thl_data->bp_thl_lv,
+			bat_status, uisoc);
+	} else if (((bat_status == POWER_SUPPLY_STATUS_CHARGING) ||
+		(uisoc > bp_thl_data->soc_limit)) &&
+		(bp_thl_data->bp_thl_lv == BATTERY_PERCENT_LEVEL_1)) {
+		bp_thl_data->bp_thl_lv = BATTERY_PERCENT_LEVEL_0;
+		bp_notify_flag = true;
+		pr_info("bp_notify called, l=%d s=%d soc=%d\n", bp_thl_data->bp_thl_lv,
+			bat_status, uisoc);
+	}
+
+	if ((bat_status != -1) && (bp_thl_data->bp_thl_lv_ext == BATTERY_PERCENT_LEVEL_0) &&
+		(uisoc <= bp_thl_data->soc_limit_ext && uisoc > 0)) {
+		bp_thl_data->bp_thl_lv_ext = BATTERY_PERCENT_LEVEL_1;
+		bp_notify_flag_ext = true;
+		pr_info("bp_notify_ext called, l=%d s=%d soc=%d\n", bp_thl_data->bp_thl_lv_ext,
+			bat_status, uisoc);
+	} else if ((uisoc >= bp_thl_data->soc_limit_ext_release) &&
+		(bp_thl_data->bp_thl_lv_ext == BATTERY_PERCENT_LEVEL_1)) {
+		bp_thl_data->bp_thl_lv_ext = BATTERY_PERCENT_LEVEL_0;
+		bp_notify_flag_ext = true;
+		pr_info("bp_notify_ext called, l=%d s=%d soc=%d\n",
+			bp_thl_data->bp_thl_lv_ext, bat_status, uisoc);
+	}
+
+	pr_info("bp_notify called, l=%d s=%d soc=%d\n", bp_thl_data->bp_thl_lv,
+			bat_status, uisoc);
+	if (bp_notify_flag_ext || bp_notify_flag)
+		wake_up_interruptible(&bp_notify_waiter);
+
+	return;
+}
+#endif
+
 int bp_psy_event(struct notifier_block *nb, unsigned long event, void *v)
 {
+#ifndef OPLUS_FEATURE_CHG_BASIC
 	struct power_supply *psy = v;
 	union power_supply_propval val;
 	int ret, uisoc, bat_status;
@@ -301,7 +379,16 @@ int bp_psy_event(struct notifier_block *nb, unsigned long event, void *v)
 
 	if (bp_notify_flag_ext || bp_notify_flag)
 		wake_up_interruptible(&bp_notify_waiter);
+#else // OPLUS_FEATURE_CHG_BASIC
 
+	if (!bp_thl_data) {
+		pr_info("[%s] bp_thl_data not init\n", __func__);
+		return NOTIFY_DONE;
+	}
+
+	bp_thl_data->psy = v;
+	schedule_work(&bp_thl_data->soc_work);
+#endif
 	return NOTIFY_DONE;
 }
 
@@ -333,6 +420,9 @@ static int bp_thl_probe(struct platform_device *pdev)
 		priv->soc_limit_ext_release = BAT_PERCENT_LIMIT_RELEASE_EXT;
 
 	bp_thl_data = priv;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	INIT_WORK(&bp_thl_data->soc_work, soc_handler);
+#endif
 
 	bp_notify_lock = wakeup_source_register(NULL, "bp_notify_lock wakelock");
 	if (!bp_notify_lock) {

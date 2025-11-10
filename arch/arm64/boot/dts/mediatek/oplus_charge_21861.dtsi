@@ -293,6 +293,8 @@
 	qcom,default_temp_little_cool_vfloat_mv = <4435>;
 	qcom,default_little_cool_vfloat_over_sw_limit = <4445>;
 
+	oplus_spec,dec-vol-fv-mv = <40>;
+
 	qcom,vooc_show_ui_soc_decimal;
 	qcom,ui_soc_decimal_speedmin = <20>;//2A
 	qcom,check_batt_full_by_sw;

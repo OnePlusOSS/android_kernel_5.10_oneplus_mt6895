@@ -341,3 +341,8 @@
 /* ufcs current table type */
 #define UFCS_CURR_BIDIRECT_TABLE	0
 #define UFCS_CURR_CP_TABLE		1
+
+/* oplus_plc_strategy_type */
+#define PLC_STRATEGY_STEP	0
+#define PLC_STRATEGY_SIMPLE	1
+#define PLC_STRATEGY_PID	2

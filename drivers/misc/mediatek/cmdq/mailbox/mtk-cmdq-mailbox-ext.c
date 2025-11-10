@@ -650,8 +650,17 @@ static void cmdq_task_connect_buffer(struct cmdq_task *task,
 	struct cmdq_pkt_buffer *buf;
 	u64 inst;
 
+	if (list_empty(&task->pkt->buf)) {
+		cmdq_err("invalid pkt buf list!");
+		return;
+	}
+
 	/* let previous task jump to this task */
 	buf = list_last_entry(&task->pkt->buf, typeof(*buf), list_entry);
+	if (!buf || !buf->va_base) {
+		cmdq_err("pkt:%p buf is not ready!", task->pkt);
+		return;
+	}
 	task_base = (u64 *)(buf->va_base + CMDQ_CMD_BUFFER_SIZE -
 		task->pkt->avail_buf_size - CMDQ_INST_SIZE);
 	inst = *task_base;

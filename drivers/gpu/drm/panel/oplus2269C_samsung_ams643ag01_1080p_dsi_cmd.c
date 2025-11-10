@@ -32,7 +32,7 @@
 #ifdef CONFIG_MTK_ROUND_CORNER_SUPPORT
 #include "../mediatek/mediatek_v2/mtk_corner_pattern/oplus2269C_AMS643AG01_data_hw_roundedpattern.h"
 #endif
-
+#include "../mediatek/mediatek_v2/mtk_dsi.h"
 u32 flag_writ = 0;
 EXPORT_SYMBOL(flag_writ);
 u32 flag_hbm = 0;
@@ -123,6 +123,7 @@ static struct ba brightness_seed_alpha_lut_dc[] = {
 	BUILD_BUG_ON_MSG(ARRAY_SIZE(d) > 64, "DCS sequence too big for stack");\
 	lcm_dcs_write(ctx, d, ARRAY_SIZE(d));\
 })
+static int lcm_setbacklight_cmdq(void *dsi, dcs_write_gce cb,void *handle, unsigned int level);
 
 #define lcm_dcs_write_seq_static(ctx, seq...) \
 ({\
@@ -679,7 +680,11 @@ static int panel_doze_disable(struct drm_panel *panel, void *dsi, dcs_write_gce 
 {
 	//struct lcm *ctx = panel_to_lcm(panel);
 	unsigned int i=0;
-
+	struct drm_crtc *crtc = NULL;
+	struct mtk_dsi *mtk_dsi = dsi;
+	struct mtk_drm_crtc *mtk_crtc = NULL;
+	crtc = mtk_dsi->encoder.crtc;
+	mtk_crtc = to_mtk_crtc(crtc);
 	pr_err("debug for lcm %s\n", __func__);
 
 	/* Switch back to VDO mode */
@@ -715,6 +720,10 @@ static int panel_doze_disable(struct drm_panel *panel, void *dsi, dcs_write_gce 
 	}
 	panel_set_seed(dsi, cb, handle, seed_mode);
 	aod_state = false;
+	if (mtk_crtc && mtk_crtc->enabled) {
+		pr_err("disable aod and set backlight %lu\n", oplus_display_brightness);
+		lcm_setbacklight_cmdq(dsi, cb, handle, oplus_display_brightness);
+	}
 	return 0;
 }
 

@@ -6064,6 +6064,7 @@
 		reg = <0x5c 0>;
 
 		qcom,mps_otg_en-gpio = <&pio 30 0x00>;
+		support_icl_optimization;
 
 		pinctrl-names = "mps_otg_en_active", "mps_otg_en_sleep", "mps_otg_en_default";
 		pinctrl-0 = <&mps_otg_en_active>;
@@ -6507,6 +6508,10 @@
 	};
 };
 
+&mt6375_chg {
+	support_icl_optimization;
+};
+
 &lk_charger {
 	charger_by_buckboost;
 	support_tuv_authentication;
@@ -6524,6 +6529,7 @@
 	charging_host_charger_current = <1500000>;
 	ta_ac_charger_current = <1500000>;
 	pd_charger_current = <500000>;
+	support_icl_optimization;
 };
 
 /*&phy_tuning {

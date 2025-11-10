@@ -247,6 +247,9 @@
 	qcom,vbatt_num = <1>;
 	qcom,new_ui_warning_support;
 	qcom,voocphy_support = <2>;
+	oplus,full_limit_curr_support;
+	oplus,fcl_index = <0>;
+	oplus,vb_offset = <50>;
 	qcom,ffc_support;
 	qcom,dual_ffc;
 	/* recharge_after_full; */
@@ -1153,6 +1156,7 @@
 	support_sdp_screenoff;
 	support_4p48_single_battery;
 	support_sdp_backlight;
+	support_chg_time_cnt;
 
 	parallel_vbat_gap = <400>;
 	activation_ibat_main_limit = <3000>;

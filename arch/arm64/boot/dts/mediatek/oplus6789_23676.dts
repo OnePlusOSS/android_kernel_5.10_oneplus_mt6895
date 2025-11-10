@@ -78,6 +78,7 @@
 		high_resolution_support;
 		high_resolution_support_x8;
 		//esd_handle_support;
+		suspend_work_support;
 		lcd_tp_refresh_support;
 		/*
 		 *Virtual Key Config:
