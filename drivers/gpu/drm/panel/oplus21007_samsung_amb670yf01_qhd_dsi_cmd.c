@@ -60,6 +60,10 @@
 #define FHD_LCM_WIDTH  1080
 #define FHD_LCM_HEIGHT 2412
 
+#define AMB670YF01     0
+#define AMB670YF08     1
+extern unsigned int m_dc;
+
 #define lcm_dcs_write_seq(ctx, seq...)				\
 	({												\
 		const u8 d[] = { seq };						\
@@ -283,6 +287,16 @@ static unsigned int lcm_enable_reg_vmch3p0(int en)
 }
 #endif
 
+static int inline get_panel_ddic_ver(void)
+{
+	int ret = 0;
+	if (m_dc == 0x2)
+		ret = AMB670YF08;
+	else
+		ret = AMB670YF01;
+	return ret;
+}
+
 //#ifdef OPLUS_ADFR
 static int get_mode_enum(struct drm_display_mode *m)
 {
@@ -326,37 +340,72 @@ static void lcm_panel_init(struct lcm *ctx)
 	int mode_id = -1;
 	struct drm_display_mode *m = ctx->m;
 
+	pr_info("%s version=%d\n", __func__, get_panel_ddic_ver());
+
 	mode_id = get_mode_enum(m);
 
-	switch (mode_id) {
-	case FHD_SDC60:
-		DISP_DEBUG("fhd_dsi_on_cmd_sdc60\n");
-		push_table(ctx, fhd_dsi_on_cmd_sdc60, sizeof(fhd_dsi_on_cmd_sdc60)/sizeof(struct LCM_setting_table));
-		break;
-	case FHD_SDC90:
-		DISP_DEBUG("fhd_dsi_on_cmd_sdc90\n");
-		push_table(ctx, fhd_dsi_on_cmd_sdc90, sizeof(fhd_dsi_on_cmd_sdc90)/sizeof(struct LCM_setting_table));
-		break;
-	case FHD_SDC120:
-		DISP_DEBUG("fhd_dsi_on_cmd_sdc120\n");
-		push_table(ctx, fhd_dsi_on_cmd_sdc120, sizeof(fhd_dsi_on_cmd_sdc120)/sizeof(struct LCM_setting_table));
-		break;
-	case WQHD_SDC60:
-		DISP_DEBUG("wqhd_dsi_on_cmd_sdc60\n");
-		push_table(ctx, wqhd_dsi_on_cmd_sdc60, sizeof(wqhd_dsi_on_cmd_sdc60)/sizeof(struct LCM_setting_table));
-		break;
-	case WQHD_SDC90:
-		DISP_DEBUG("wqhd_dsi_on_cmd_sdc90\n");
-		push_table(ctx, wqhd_dsi_on_cmd_sdc90, sizeof(wqhd_dsi_on_cmd_sdc90)/sizeof(struct LCM_setting_table));
-		break;
-	case WQHD_SDC120:
-		DISP_DEBUG("wqhd_dsi_on_cmd_sdc120\n");
-		push_table(ctx, wqhd_dsi_on_cmd_sdc120, sizeof(wqhd_dsi_on_cmd_sdc120)/sizeof(struct LCM_setting_table));
-		break;
-	default:
-		DISP_DEBUG(" default mode_id\n");
-		push_table(ctx, fhd_dsi_on_cmd_sdc120, sizeof(fhd_dsi_on_cmd_sdc120)/sizeof(struct LCM_setting_table));
-		break;
+	if (get_panel_ddic_ver() == AMB670YF08) {
+		switch (mode_id) {
+			case FHD_SDC60:
+				DISP_DEBUG("fhd_dsi_on_cmd_sdc60_v2\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc60_v2, sizeof(fhd_dsi_on_cmd_sdc60_v2)/sizeof(struct LCM_setting_table));
+				break;
+			case FHD_SDC90:
+				DISP_DEBUG("fhd_dsi_on_cmd_sdc90_v2\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc90_v2, sizeof(fhd_dsi_on_cmd_sdc90_v2)/sizeof(struct LCM_setting_table));
+				break;
+			case FHD_SDC120:
+				DISP_DEBUG("fhd_dsi_on_cmd_sdc120_v2\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc120_v2, sizeof(fhd_dsi_on_cmd_sdc120_v2)/sizeof(struct LCM_setting_table));
+				break;
+			case WQHD_SDC60:
+				DISP_DEBUG("wqhd_dsi_on_cmd_sdc60_v2\n");
+				push_table(ctx, wqhd_dsi_on_cmd_sdc60_v2, sizeof(wqhd_dsi_on_cmd_sdc60_v2)/sizeof(struct LCM_setting_table));
+				break;
+			case WQHD_SDC90:
+				DISP_DEBUG("wqhd_dsi_on_cmd_sdc90_v2\n");
+				push_table(ctx, wqhd_dsi_on_cmd_sdc90_v2, sizeof(wqhd_dsi_on_cmd_sdc90_v2)/sizeof(struct LCM_setting_table));
+				break;
+			case WQHD_SDC120:
+				DISP_DEBUG("wqhd_dsi_on_cmd_sdc120_v2\n");
+				push_table(ctx, wqhd_dsi_on_cmd_sdc120_v2, sizeof(wqhd_dsi_on_cmd_sdc120_v2)/sizeof(struct LCM_setting_table));
+				break;
+			default:
+				DISP_DEBUG(" default mode_id_v2\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc120_v2, sizeof(fhd_dsi_on_cmd_sdc120_v2)/sizeof(struct LCM_setting_table));
+				break;
+		}
+	} else {
+		switch (mode_id) {
+			case FHD_SDC60:
+				DISP_DEBUG("fhd_dsi_on_cmd_sdc60\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc60, sizeof(fhd_dsi_on_cmd_sdc60)/sizeof(struct LCM_setting_table));
+				break;
+			case FHD_SDC90:
+				DISP_DEBUG("fhd_dsi_on_cmd_sdc90\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc90, sizeof(fhd_dsi_on_cmd_sdc90)/sizeof(struct LCM_setting_table));
+				break;
+			case FHD_SDC120:
+				DISP_DEBUG("fhd_dsi_on_cmd_sdc120\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc120, sizeof(fhd_dsi_on_cmd_sdc120)/sizeof(struct LCM_setting_table));
+				break;
+			case WQHD_SDC60:
+				DISP_DEBUG("wqhd_dsi_on_cmd_sdc60\n");
+				push_table(ctx, wqhd_dsi_on_cmd_sdc60, sizeof(wqhd_dsi_on_cmd_sdc60)/sizeof(struct LCM_setting_table));
+				break;
+			case WQHD_SDC90:
+				DISP_DEBUG("wqhd_dsi_on_cmd_sdc90\n");
+				push_table(ctx, wqhd_dsi_on_cmd_sdc90, sizeof(wqhd_dsi_on_cmd_sdc90)/sizeof(struct LCM_setting_table));
+				break;
+			case WQHD_SDC120:
+				DISP_DEBUG("wqhd_dsi_on_cmd_sdc120\n");
+				push_table(ctx, wqhd_dsi_on_cmd_sdc120, sizeof(wqhd_dsi_on_cmd_sdc120)/sizeof(struct LCM_setting_table));
+				break;
+			default:
+				DISP_DEBUG(" default mode_id\n");
+				push_table(ctx, fhd_dsi_on_cmd_sdc120, sizeof(fhd_dsi_on_cmd_sdc120)/sizeof(struct LCM_setting_table));
+				break;
+		}
 	}
 
 //#ifdef OPLUS_ADFR
@@ -1581,56 +1630,112 @@ static int mode_switch_hs(struct drm_panel *panel, struct drm_connector *connect
 			push_table(ctx, fhd_dsc_cmd, sizeof(fhd_dsc_cmd)/sizeof(struct LCM_setting_table));
 		}
 
-		if (m->hdisplay == WQHD_LCM_WIDTH && m->vdisplay == WQHD_LCM_HEIGHT) {
-			if (m->hskew == SDC_MFR || m->hskew == SDC_ADFR) {
-				if (m_vrefresh == 60) {
-					//pr_info("timing switch to wqhdsdc60\n");
-					lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc60) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc60, lcm_cmd_count, cb, NULL);
-					lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc60) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc60, lcm_cmd_count, cb, NULL);
-				} else if (m_vrefresh == 90) {
-					//pr_info("timing switch to wqhdsdc90\n");
-					lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc90) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc90, lcm_cmd_count, cb, NULL);
-					lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc90) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc90, lcm_cmd_count, cb, NULL);
-				} else if (m_vrefresh == 120) {
-					//pr_info("timing switch to wqhdsdc120\n");
-					lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc120) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc120, lcm_cmd_count, cb, NULL);
-					lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc120) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc120, lcm_cmd_count, cb, NULL);
+		if (get_panel_ddic_ver() == AMB670YF08) {
+			if (m->hdisplay == WQHD_LCM_WIDTH && m->vdisplay == WQHD_LCM_HEIGHT) {
+				if (m->hskew == SDC_MFR || m->hskew == SDC_ADFR) {
+					if (m_vrefresh == 60) {
+						//pr_info("timing switch to wqhdsdc60\n");
+						lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc60_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc60_v2, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc60_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc60_v2, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 90) {
+						//pr_info("timing switch to wqhdsdc90\n");
+						lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc90_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc90_v2, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc90_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc90_v2, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 120) {
+						//pr_info("timing switch to wqhdsdc120\n");
+						lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc120_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc120_v2, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc120_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc120_v2, lcm_cmd_count, cb, NULL);
+					}
+				} else if (m->hskew == OPLUS_MFR || m->hskew == OPLUS_ADFR) {
+					if (m_vrefresh == 118) {
+						/* send OA120 timing-switch cmd */
+					}
 				}
-			} else if (m->hskew == OPLUS_MFR || m->hskew == OPLUS_ADFR) {
-				if (m_vrefresh == 118) {
-					/* send OA120 timing-switch cmd */
+			} else if (m->hdisplay == FHD_LCM_WIDTH && m->vdisplay == FHD_LCM_HEIGHT) {
+				if (m->hskew == SDC_MFR || m->hskew == SDC_ADFR) {
+					if (m_vrefresh == 60) {
+						//pr_info("timing switch to fhdsdc60\n");
+						lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc60_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc60_v2, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc60_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc60_v2, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 90) {
+						//pr_info("timing switch to fhdsdc90\n");
+						lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc90_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc90_v2, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc90_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc90_v2, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 120) {
+						//pr_info("timing switch to fhdsdc120\n");
+						lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc120_v2) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc120_v2, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc120_v2) / sizeof(struct LCM_setting_table);
+					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc120_v2, lcm_cmd_count, cb, NULL);
+					}
+				} else if (m->hskew == OPLUS_MFR || m->hskew == OPLUS_ADFR) {
+					if (m_vrefresh == 118) {
+						/* send OA120 timing-switch cmd */
+					}
 				}
 			}
-		} else if (m->hdisplay == FHD_LCM_WIDTH && m->vdisplay == FHD_LCM_HEIGHT) {
-			if (m->hskew == SDC_MFR || m->hskew == SDC_ADFR) {
-				if (m_vrefresh == 60) {
-					//pr_info("timing switch to fhdsdc60\n");
-					lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc60) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc60, lcm_cmd_count, cb, NULL);
-					lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc60) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc60, lcm_cmd_count, cb, NULL);
-				} else if (m_vrefresh == 90) {
-					//pr_info("timing switch to fhdsdc90\n");
-					lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc90) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc90, lcm_cmd_count, cb, NULL);
-					lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc90) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc90, lcm_cmd_count, cb, NULL);
-				} else if (m_vrefresh == 120) {
-					//pr_info("timing switch to fhdsdc120\n");
-					lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc120) / sizeof(struct LCM_setting_table);
-					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc120, lcm_cmd_count, cb, NULL);
-					lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc120) / sizeof(struct LCM_setting_table);
-				panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc120, lcm_cmd_count, cb, NULL);
+		} else {
+			if (m->hdisplay == WQHD_LCM_WIDTH && m->vdisplay == WQHD_LCM_HEIGHT) {
+				if (m->hskew == SDC_MFR || m->hskew == SDC_ADFR) {
+					if (m_vrefresh == 60) {
+						//pr_info("timing switch to wqhdsdc60\n");
+						lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc60) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc60, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc60) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc60, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 90) {
+						//pr_info("timing switch to wqhdsdc90\n");
+						lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc90) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc90, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc90) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc90, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 120) {
+						//pr_info("timing switch to wqhdsdc120\n");
+						lcm_cmd_count = sizeof(wqhd_timing_switch_1_cmd_sdc120) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_1_cmd_sdc120, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(wqhd_timing_switch_2_cmd_sdc120) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, wqhd_timing_switch_2_cmd_sdc120, lcm_cmd_count, cb, NULL);
+					}
+				} else if (m->hskew == OPLUS_MFR || m->hskew == OPLUS_ADFR) {
+					if (m_vrefresh == 118) {
+						/* send OA120 timing-switch cmd */
+					}
 				}
-			} else if (m->hskew == OPLUS_MFR || m->hskew == OPLUS_ADFR) {
-				if (m_vrefresh == 118) {
-					/* send OA120 timing-switch cmd */
+			} else if (m->hdisplay == FHD_LCM_WIDTH && m->vdisplay == FHD_LCM_HEIGHT) {
+				if (m->hskew == SDC_MFR || m->hskew == SDC_ADFR) {
+					if (m_vrefresh == 60) {
+						//pr_info("timing switch to fhdsdc60\n");
+						lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc60) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc60, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc60) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc60, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 90) {
+						//pr_info("timing switch to fhdsdc90\n");
+						lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc90) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc90, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc90) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc90, lcm_cmd_count, cb, NULL);
+					} else if (m_vrefresh == 120) {
+						//pr_info("timing switch to fhdsdc120\n");
+						lcm_cmd_count = sizeof(fhd_timing_switch_1_cmd_sdc120) / sizeof(struct LCM_setting_table);
+						panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_1_cmd_sdc120, lcm_cmd_count, cb, NULL);
+						lcm_cmd_count = sizeof(fhd_timing_switch_2_cmd_sdc120) / sizeof(struct LCM_setting_table);
+					panel_send_pack_hs_cmd(dsi_drv, fhd_timing_switch_2_cmd_sdc120, lcm_cmd_count, cb, NULL);
+					}
+				} else if (m->hskew == OPLUS_MFR || m->hskew == OPLUS_ADFR) {
+					if (m_vrefresh == 118) {
+						/* send OA120 timing-switch cmd */
+					}
 				}
 			}
 		}

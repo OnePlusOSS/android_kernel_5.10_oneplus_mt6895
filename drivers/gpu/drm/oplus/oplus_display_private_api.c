@@ -118,6 +118,7 @@ unsigned int oplus_enhance_mipi_strength = 0;
 unsigned int m_da;
 unsigned int m_db;
 unsigned int m_dc;
+EXPORT_SYMBOL(m_dc);
 bool g_dp_support;
 int lcm_id2 = 0;
 int lcm_id1 = 0;

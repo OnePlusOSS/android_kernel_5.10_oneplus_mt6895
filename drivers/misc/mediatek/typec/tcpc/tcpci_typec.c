@@ -2720,7 +2720,11 @@ int tcpc_typec_handle_pe_pr_swap(struct tcpc_device *tcpc)
 		TYPEC_NEW_STATE(typec_attached_src);
 		tcpc->typec_is_attached_src = true;
 		tcpc->typec_attach_new = TYPEC_ATTACHED_SRC;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		tcpci_set_cc(tcpc, TYPEC_CC_PULL(tcpc->typec_local_rp_level, TYPEC_CC_RP));
+#else
 		tcpci_set_cc(tcpc, tcpc->typec_local_rp_level);
+#endif
 		break;
 	case typec_attached_src:
 		TYPEC_NEW_STATE(typec_attached_snk);

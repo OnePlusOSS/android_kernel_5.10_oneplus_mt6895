@@ -33,6 +33,8 @@
 #include <scsi/scsi_ioctl.h>
 #include <scsi/scsi_cmnd.h>
 #include <linux/async.h>
+#include "../../../block/blk-mq.h"
+#include <linux/blk-mq.h>
 
 #include "mtk_blocktag.h"
 #include "ufshcd.h"
@@ -981,13 +983,17 @@ static void ufs_mtk_trace_vh_send_command(void *data, struct ufs_hba *hba, struc
 {
 	struct scsi_cmnd *cmd = lrbp->cmd;
 
+	struct ufs_mtk_host *host = ufshcd_get_variant(hba);
+
 	if (!cmd)
 		return;
 
-	if (lrbp && lrbp->cmd && lrbp->cmd->cmnd[0]) {
-		struct request *rq = blk_mq_rq_from_pdu(lrbp->cmd);
-		if (rq)
-			rq->cmd_flags |= REQ_HIPRI;
+	if (host->caps & UFS_MTK_CAP_LOCAL_PROCESS) {
+		if (lrbp && lrbp->cmd && lrbp->cmd->cmnd[0] == READ_10) {
+			struct request *rq = blk_mq_rq_from_pdu(lrbp->cmd);
+			if (rq && rq->mq_ctx->cpu < 6)
+				rq->cmd_flags |= REQ_HIPRI;
+		}
 	}
 	if (ufs_mtk_is_data_cmd(cmd)) {
 		ufs_mtk_biolog_send_command(lrbp->task_tag, cmd);
@@ -2864,6 +2870,7 @@ static void ufs_mtk_fixup_dev_quirks(struct ufs_hba *hba)
 {
 	struct ufs_dev_info *dev_info = &hba->dev_info;
 	struct ufs_mtk_host *host = ufshcd_get_variant(hba);
+	struct cpumask dstp;
 
 	/*
 	 * If VCC setting is no yet enable,
@@ -2884,6 +2891,9 @@ static void ufs_mtk_fixup_dev_quirks(struct ufs_hba *hba)
 
 	if (STR_PRFX_EQUAL("H9HQ15AFAMBDAR", dev_info->model))
 		host->caps |= UFS_MTK_CAP_BROKEN_VCC | UFS_MTK_CAP_FORCE_VSx_LPM;
+
+	if (STR_PRFX_EQUAL("KLUFG4LHGC", dev_info->model))
+		host->caps |= UFS_MTK_CAP_LOCAL_PROCESS;
 
 	if (ufs_mtk_is_delay_after_vcc_off(hba) && hba->vreg_info.vcc) {
 		/*
@@ -2909,6 +2919,14 @@ static void ufs_mtk_fixup_dev_quirks(struct ufs_hba *hba)
 	if (STR_PRFX_EQUAL("KLUFG4LHGC-B0E1", dev_info->model)) {
 		hba->rpm_lvl = UFS_PM_LVL_1;
 		hba->spm_lvl = UFS_PM_LVL_1;
+		/* set affinity to cpu6 */
+		cpumask_clear(&dstp);
+		cpumask_set_cpu(6, &dstp);
+		irq_modify_status(hba->irq, 0, IRQ_NO_BALANCING);
+		irq_set_affinity_hint(hba->irq, &dstp);
+	} else {
+		/* set affinity to cpu3 */
+		irq_set_affinity_hint(hba->irq, get_cpu_mask(3));
 	}
 
 #if defined(CONFIG_UFSFEATURE)

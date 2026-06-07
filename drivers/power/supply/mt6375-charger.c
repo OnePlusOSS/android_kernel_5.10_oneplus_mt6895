@@ -46,7 +46,9 @@
 static bool dbg_log_en = true;
 struct mt6375_chg_data *oplus_ddata;
 bool is_mtksvooc_project = false;
+#ifdef OPLUS_FEATURE_CHG_BASIC
 bool g_support_icl_optimization = false;
+#endif
 module_param(dbg_log_en, bool, 0644);
 #define mt_dbg(dev, fmt, ...) \
 	do { \
@@ -2942,6 +2944,13 @@ static int mt6375_chg_apply_dt(struct mt6375_chg_data *ddata)
 	for (i = 0; i < ARRAY_SIZE(mt6375_chg_dtprops); i++) {
 		dp = &mt6375_chg_dtprops[i];
 		val = pdata_get_val(dev_get_platdata(ddata->dev), dp);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if (g_support_icl_optimization &&
+		   (strncmp(dp->name, "aicr", 4) == 0)) {
+			dev_err(ddata->dev, "dont set icl, keep icl setting in lk\n");
+			continue;
+		}
+#endif
 		ret = mt6375_chg_field_set(ddata, dp->field, val);
 		if (ret < 0) {
 			dev_err(ddata->dev, "failed to write dtprop %s\n",

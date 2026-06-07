@@ -304,6 +304,10 @@
 	//for PD9V or QC9V
 	qcom,vbatt_pdqc_to_5v_thr = <4435>;
 	qcom,vbatt_pdqc_to_9v_thr = <4435>;
+	oplus_spec,dec-vol-fv-mv = <40>;
+	oplus,full_limit_curr_support;
+	oplus,fcl_index = <0>;
+	oplus,vb_offset = <0>;
 
 	//for control:
 	//qcom,suspend_after_full;
@@ -743,7 +747,13 @@
 	ircmp_v = <32>;
 };
 
+&mt6375_chg {
+	support_icl_optimization;
+};
+
 &lk_charger {
+	support_chg_time_cnt;
+	support_icl_optimization;
 	en_vol_ctrl_vibrate = <3200>;
 	single_batt_external_gauge_support;
 	support_tuv_authentication;

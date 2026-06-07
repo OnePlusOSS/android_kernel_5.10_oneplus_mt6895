@@ -271,6 +271,8 @@
 					OPLUS_IC_FUNC_BUCK_WDT_ENABLE
 					OPLUS_IC_FUNC_BUCK_KICK_WDT
 					OPLUS_IC_FUNC_BUCK_HARDWARE_INIT
+					OPLUS_IC_FUNC_BUCK_SET_BURST_MODE
+					OPLUS_IC_FUNC_BUCK_SET_LOW_VSYS_THR
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -667,6 +669,7 @@
 
 		oplus,ic_type = <OPLUS_CHG_IC_BUCK>;
 		oplus,ic_index = <1>;
+		support_icl_optimization;
 	};
 };
 
@@ -676,6 +679,8 @@
 };
 
 &lk_charger {
+	support_chg_time_cnt;
+	support_icl_optimization;
 	charger_by_buckboost;
 	support_tuv_authentication;
 	charger_no_wiress;
@@ -867,6 +872,13 @@
 
 	oplus_chg_comm: oplus,comm {
 		compatible = "oplus,common-charge";
+		oplus_spec,dec-vol-cc-thr = <0 400 800>;
+		oplus_spec,dec-vol-fv-mv = <0  0  0  0  0  0  0  0  0
+					    20 20 20 20 20 20 20 0  0
+					    40 40 40 40 40 40 20 0  0>;
+		oplus_spec,dec-vol-wired-ffc-mv = <0  0  0
+						   20 20 20
+						   40 40 20>;
 		oplus_spec,batt-them-thr = <(-100) 0 50 120 160 450 530>;
 		oplus_spec,iterm-ma = <121>; /* 2220*0.05+10 */
 		oplus_spec,removed_bat_decidegc = <390>; /*-39 degree*/
@@ -880,7 +892,7 @@
 		oplus_spec,non-standard-hw-fv-inc-mv = <18>;
 		oplus_spec,non-standard-sw-over-fv-mv = <3990>;
 		oplus_spec,non-standard-vbatdet-mv = <3600>;
-		oplus_spec,wired-vbatdet-mv = <0 4170 4270 4370 4370 4370 4030 0>;
+		oplus_spec,wired-vbatdet-mv = <0 3870 3970 4070 4070 4070 3730 0>;
 		oplus_spec,wls-vbatdet-mv = <0 3675 4235 4370 4370 4370 4030 0>;
 		oplus_spec,fcc-gear-thr-mv = <4180>;
 		oplus_spec,vbatt-ov-thr-mv = <4600>;
@@ -950,6 +962,8 @@
 		oplus,vooc_project = <8>; /* 100W MCU */
 		oplus,smart_chg_bcc_support;
 		oplus,support_fake_vooc_check;
+		oplus,vooc_1time_full_volt = <4500>;
+		oplus,vooc_ntime_full_volt = <4490>;
 
 		oplus,abnormal_adapter_current = <CURR_LIMIT_7BIT_9_5A CURR_LIMIT_7BIT_9_5A
 						CURR_LIMIT_7BIT_5_0A CURR_LIMIT_7BIT_5_0A
